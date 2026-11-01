@@ -18,15 +18,19 @@ alfred SHALL call the model through an OpenAI-compatible chat completions API, u
 - **THEN** turns go to the new server with no code change
 
 ### Requirement: Telegram-oriented system prompt
-Every turn SHALL include a system prompt telling the model it is chatting with its owner over Telegram and must keep answers short and to the point. The prompt text SHALL be configurable, with a built-in default.
+Every turn SHALL include a system prompt made of two parts: a persona, which sets alfred's voice and is configurable with a built-in default, followed by built-in operating rules that cannot be configured. The operating rules SHALL tell the model it is chatting with its owner over Telegram, how to use tools, and how to read service notices and `/ask` messages.
 
 #### Scenario: Default prompt
-- **WHEN** no custom system prompt is configured
-- **THEN** the built-in prompt asking for short, plain chat replies is sent
+- **WHEN** no custom persona is configured
+- **THEN** the system prompt contains the built-in persona followed by the built-in operating rules
 
 #### Scenario: Custom prompt
-- **WHEN** a custom system prompt is configured
-- **THEN** it replaces the built-in prompt
+- **WHEN** a custom persona is configured
+- **THEN** it replaces only the built-in persona, and the built-in operating rules are still sent after it
+
+#### Scenario: Operating rules survive a custom persona
+- **WHEN** a custom persona is configured and the owner asks about an earlier `[notice:backup]` message
+- **THEN** the system prompt still explains that `[notice:<service>]` messages are notifications the owner has already seen
 
 ### Requirement: Turn context
 Each turn SHALL send the system prompt, the current conversation's recent history, and the new input. For an `/ask` turn, the input SHALL be labelled with the service name and the model told about the `NO_REPLY` convention.

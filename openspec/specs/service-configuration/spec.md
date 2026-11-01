@@ -18,7 +18,7 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, request timeout, maximum model requests per turn, system prompt, context window size, retry delays, listen host and port, log level, services and MCP servers. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, request timeout, maximum model requests per turn, persona, the owner's form of address, context window size, retry delays, listen host and port, log level, services and MCP servers. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
 - **WHEN** the file sets only the owner user ID, model, services and MCP servers
@@ -27,6 +27,10 @@ Every non-secret setting SHALL be settable in the config file, including the own
 #### Scenario: Change a limit without code
 - **WHEN** the context window size is changed from 30 to 50 in the file and alfred restarts
 - **THEN** the model receives up to 50 entries
+
+#### Scenario: Old system prompt key
+- **WHEN** the file still sets the removed `system_prompt` key under `[ai]`
+- **THEN** alfred exits at startup with an error naming the unknown key
 
 ### Requirement: Secrets only from the environment
 Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), and the tokens of services and MCP servers. Services and MCP servers SHALL name their secret's variable with `token_env`.
