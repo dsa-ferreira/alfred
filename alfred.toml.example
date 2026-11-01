@@ -1,0 +1,60 @@
+# alfred configuration. Copy to alfred.toml (git-ignored) and adjust.
+# Only non-secret settings live here. Secrets come from ALFRED_* environment
+# variables; services and MCP servers name theirs with `token_env`.
+# Every value shown is the default, except where marked "required".
+
+[telegram]
+# Your Telegram user ID (required). Only this user's private chat is answered.
+owner_user_id = 123456789
+
+[ai]
+# OpenAI-compatible server; alfred posts to {base_url}/v1/chat/completions.
+base_url = "http://ai.lan"
+model = "gemma4:12b-it-qat"
+# Seconds per model request. Long enough for the AI server to wake and load the model.
+request_timeout_s = 300
+# Model requests allowed in one turn before it is stopped.
+max_requests_per_turn = 8
+# Tool results are cut to this many characters before they reach the model.
+tool_result_max_chars = 4000
+# Replaces the built-in system prompt when set.
+# system_prompt = """..."""
+
+[history]
+# Most recent conversation entries sent to the model each turn.
+max_entries = 30
+
+[queue]
+# Retry delay while the AI is unreachable: starts here and doubles up to retry_max_s.
+retry_initial_s = 30
+retry_max_s = 900
+
+[mcp]
+# Seconds to wait for each server's tool list at the start of a turn.
+list_timeout_s = 10
+# Seconds to wait for one tool call.
+call_timeout_s = 60
+
+[server]
+host = "0.0.0.0"
+port = 8080
+log_level = "INFO"
+
+# Services allowed to call /notify and /ask. Default: none.
+[[services]]
+name = "backup"
+token_env = "ALFRED_SERVICE_TOKEN_BACKUP"
+
+# MCP servers whose tools the model is offered. Default: none.
+[[mcp_servers]]
+name = "mcparr"
+url = "http://mcparr.lan:8090/mcp"
+token_env = "ALFRED_MCP_TOKEN_MCPARR"
+exclude_tools = []
+
+[[mcp_servers]]
+name = "cookbook"
+url = "http://cookbook.lan:8080/mcp"
+token_env = "ALFRED_MCP_TOKEN_COOKBOOK"
+# cookbook has no token scopes; hide the tools alfred shouldn't use.
+exclude_tools = ["delete_recipe"]

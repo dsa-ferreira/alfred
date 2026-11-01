@@ -1,0 +1,10 @@
+.venv
+.git
+.claude
+.pytest_cache
+.ruff_cache
+**/__pycache__
+openspec
+tests
+alfred.toml
+.env

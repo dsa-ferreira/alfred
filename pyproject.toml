@@ -1,0 +1,46 @@
+[project]
+name = "alfred"
+version = "0.1.0"
+description = "Telegram bot and service API in front of the local AI, with its own MCP agent loop"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "aiogram",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "mcp>=2,<3",
+    "sqlalchemy[asyncio]>=2,<3",
+    "alembic",
+    "psycopg[binary]>=3,<4",
+    "pydantic>=2,<3",
+    "pydantic-settings",
+]
+
+[project.scripts]
+alfred = "alfred.cli:run"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
+    "testcontainers[postgres]",
+    "ruff",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC"]
