@@ -1,0 +1,41 @@
+schema: spec-driven
+
+context: |
+  alfred is a Python service: a Telegram bot and HTTP API in front of a local
+  AI, with its own agent loop over MCP tools.
+  - Use only the MCP Python SDK v2 (`mcp>=2,<3`). Never use SDK v1 APIs.
+  - Check every SDK API against the official SDK v2 docs. Never rely on v1
+    examples, tutorials or memory.
+  - Never commit secrets, `.env` files, real tokens, or a real `alfred.toml`
+    (only `alfred.toml.example`).
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
