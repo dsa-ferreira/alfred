@@ -55,7 +55,7 @@
 - [x] 9.1 Implement the FastAPI app: service bearer auth (constant-time comparison, 401 for missing, empty or unknown tokens) and an unauthenticated `GET /healthz` that contacts nothing. Verify with ASGI tests for "Service authentication" and "Health endpoint"
 - [x] 9.2 Implement `POST /notify` (non-empty `text`, `[<service>]` prefix, sent outside the queue, 200 only after Telegram accepts it, 502 and no history entry on failure, recorded as a notice on success). Verify with tests for "Direct notification" and "Notify delivery result"
 - [x] 9.3 Implement `POST /ask` (non-empty `prompt`, enqueue, 202 with item ID) and delivery of non-`NO_REPLY` answers prefixed with the service name. Verify with tests for "Ask the AI" and "AI decides whether to notify"
-- [ ] 9.4 Fill the README "Service API" section with request and response formats and curl examples for `/notify` and `/ask`. Verify the examples work against a locally running alfred
+- [x] 9.4 Fill the README "Service API" section with request and response formats and curl examples for `/notify` and `/ask`. Verify the examples work against a locally running alfred
 
 ## 10. Serve and packaging
 
@@ -66,8 +66,8 @@
 ## 11. Integration check
 
 - [x] 11.1 Run the image against the real stack (Ollama on `ai.lan`, mcparr, cookbook). From Telegram, verify: a plain question gets a short reply; "what's downloading?" calls `mcparr_get_downloads` and answers with real data; `exclude_tools` hides the configured cookbook tool; saying the conversation is over produces the reply and the `— new conversation —` marker, and the next message has no earlier context
-- [ ] 11.2 Verify the service API end to end: `curl /notify` reaches Telegram, and a follow-up question about it is answered with the notice in context; `/ask` with an unremarkable prompt stays silent; `/ask` with a remarkable one reaches Telegram
-- [ ] 11.3 Verify the outage behaviour: with the AI unreachable (wrong base URL or server down), send two messages, restore it, and confirm both are answered in order. Tune the default system prompt against the real model if replies are too long, and record the final prompt in the README
+- [x] 11.2 Verify the service API end to end: `curl /notify` reaches Telegram, and a follow-up question about it is answered with the notice in context; `/ask` with an unremarkable prompt stays silent; `/ask` with a remarkable one reaches Telegram
+- [x] 11.3 Verify the outage behaviour: with the AI unreachable (wrong base URL or server down), send two messages, restore it, and confirm both are answered in order. Tune the default system prompt against the real model if replies are too long, and record the final prompt in the README
 
 ## Workflow follow-up
 
