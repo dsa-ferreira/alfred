@@ -22,7 +22,7 @@
 ## 4. Integration and release
 
 - [x] 4.1 Run `make lint` and `make test`; both pass
-- [ ] 4.2 Manual check against the real model: run `make run`, send a question, an action and a non-text message, and trigger an `/ask`; confirm replies are formal, short, use "sir" at most once, and that the `/ask` reply opens with an acknowledgement of the interruption; tune the built-in persona wording if needed
+- [x] 4.2 Manual check against the real model: run `make run`, send a question, an action and a non-text message, and trigger an `/ask`; confirm replies are formal, short, use "sir" at most once, and that the `/ask` reply opens with an acknowledgement of the interruption; tune the built-in persona wording if needed
 - [x] 4.3 Bump the version to 0.2.0 in `pyproject.toml` (breaking config rename); verify `make image` tags `alfred:0.2.0`
 - [x] 4.4 Write the handover update with the `homelab-handover` skill: rename `ai.system_prompt` to `ai.persona` if set, optional `ai.owner_address`; verify the update file exists under `handover/`
 
