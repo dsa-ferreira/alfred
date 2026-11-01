@@ -35,8 +35,8 @@ def test_example_shows_every_default() -> None:
         if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
             continue
         for key, info in annotation.model_fields.items():
-            if key == "system_prompt":
-                assert re.search(r"^# system_prompt =", EXAMPLE.read_text(), re.M)
+            if key == "persona":
+                assert re.search(r"^# persona =", EXAMPLE.read_text(), re.M)
                 continue
             assert key in data[section], f"{section}.{key} missing from the example"
             if not info.is_required():

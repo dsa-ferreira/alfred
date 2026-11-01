@@ -18,6 +18,7 @@ from typing import Protocol
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred import notices
 from alfred.agent.prompts import is_no_reply
 from alfred.agent.turn import TurnFailed, TurnInput, TurnResult
 from alfred.config import QueueConfig
@@ -27,7 +28,6 @@ from alfred.history import History
 log = logging.getLogger(__name__)
 
 NEW_CONVERSATION_MARKER = "— new conversation —"
-GENERIC_FAILURE = "Sorry, that request failed."
 
 
 class Outbox(Protocol):
@@ -102,6 +102,7 @@ class Worker:
         outbox: Outbox,
         config: QueueConfig,
         *,
+        owner_address: str,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._queue = queue
@@ -109,6 +110,7 @@ class Worker:
         self._history = history
         self._outbox = outbox
         self._config = config
+        self._owner_address = owner_address
         self._now = now
 
     async def run_forever(self) -> None:
@@ -148,7 +150,7 @@ class Worker:
                 item,
                 TurnFailed(
                     f"internal error: {type(exc).__name__}",
-                    GENERIC_FAILURE,
+                    notices.failed(self._owner_address),
                     retryable=False,
                     side_effects_possible=True,
                 ),

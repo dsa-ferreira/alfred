@@ -62,7 +62,8 @@ reported together and alfred exits. Error messages never contain secret values.
 | `ai.request_timeout_s` | number | `300` | Timeout of one model request, in seconds. Long enough for the AI server to wake and load the model. |
 | `ai.max_requests_per_turn` | integer | `8` | Model requests allowed in one turn. A turn that needs more is stopped and the owner is told. |
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |
-| `ai.system_prompt` | string | built-in | Replaces the built-in system prompt. |
+| `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
+| `ai.owner_address` | string | `"sir"` | How alfred addresses you, at most once per reply. Also ends the fixed notices (failures, text only). Used as written. |
 | `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices) sent to the model. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |

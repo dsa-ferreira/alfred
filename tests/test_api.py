@@ -129,7 +129,9 @@ async def test_notify_while_ai_busy(env: Env) -> None:
             await release.wait()
             return TurnResult("done", False, False)
 
-    worker = Worker(env.queue, BusyAgent(), env.history, env.outbox, make_config().queue)
+    worker = Worker(
+        env.queue, BusyAgent(), env.history, env.outbox, make_config().queue, owner_address="sir"
+    )
     await env.queue.enqueue_owner("long job")
     task = asyncio.create_task(worker.step())
     await asyncio.wait_for(started.wait(), 5)
@@ -183,7 +185,9 @@ async def test_ask_empty_prompt(env: Env, body: dict) -> None:
 async def run_ask(env: Env, answer: str) -> None:
     cfg = make_config()
     agent = Agent(cfg, FakeModel([text(answer)]), env.history, env.sessions, in_process({}))
-    worker = Worker(env.queue, agent, env.history, env.outbox, cfg.queue)
+    worker = Worker(
+        env.queue, agent, env.history, env.outbox, cfg.queue, owner_address=cfg.ai.owner_address
+    )
     await env.client.post("/ask", json={"prompt": "usage report"}, headers=DISK)
     while await worker.step():
         pass

@@ -1,4 +1,8 @@
-"""System prompt and the per-turn additions to it."""
+"""System prompt and the per-turn additions to it.
+
+The prompt is layered (design D1): the persona (alfred's voice, replaceable
+from config), then the built-in operating rules, then this turn's additions.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,30 @@ from collections.abc import Sequence
 
 NO_REPLY = "NO_REPLY"
 
-DEFAULT_SYSTEM_PROMPT = """\
-You are alfred, a personal assistant chatting with your owner over Telegram.
-Keep answers short and to the point, like a chat message: a sentence or a few \
-short lines. No preamble, no repeating the question, no closing offers of more help. \
+# Formatted with the owner's form of address. Only this built-in text is
+# formatted; a configured persona is sent as written (design D3).
+BUTLER_PERSONA = """\
+You are alfred, the owner's butler.
+Speak in a formal, composed English register: courteous, never servile, never chatty. \
+Address the owner as "{address}", at most once per reply.
+Keep answers short, like a chat message: a sentence or a few short lines. \
+No preamble, no repeating the question, no closing offers of further service. \
+A dry remark is allowed only rarely, and never in place of the answer. \
 Use Markdown sparingly (bold, inline code, short lists) when it helps.
+When you write to the owner on a service's behalf, you are interrupting them \
+unprompted: open with a brief acknowledgement of the interruption, such as \
+"Pardon the interruption, {address}.", then give the news.
+
+Examples of the register:
+Owner: what's downloading?
+alfred: Two items, {address}. Dune finishes within the hour; the other is stalled.
+Owner: add a recipe for pancakes
+alfred: Done, {address}. Saved as "Pancakes", 4 servings.
+Service backup asks about a failed nightly backup:
+alfred: Pardon the interruption, {address}. Last night's backup failed: the disk is full."""
+
+OPERATING_RULES = """\
+You are chatting with your owner over Telegram.
 
 You can use tools to look things up or act in the owner's homelab. Use them when \
 the request needs real data or an action; never invent results. If a tool fails, \
@@ -31,6 +54,10 @@ and nothing else. Otherwise write the short message the owner should receive; it
 will be sent to them as is."""
 
 
+def butler_persona(owner_address: str) -> str:
+    return BUTLER_PERSONA.format(address=owner_address)
+
+
 def unavailable_note(servers: Sequence[str]) -> str:
     names = ", ".join(servers)
     return (
@@ -39,9 +66,15 @@ def unavailable_note(servers: Sequence[str]) -> str:
     )
 
 
-def system_prompt(configured: str | None, *, ask: bool, unavailable: Sequence[str] = ()) -> str:
-    """The configured prompt (or the built-in one) plus this turn's additions."""
-    parts = [configured or DEFAULT_SYSTEM_PROMPT]
+def system_prompt(
+    persona: str | None,
+    *,
+    owner_address: str,
+    ask: bool,
+    unavailable: Sequence[str] = (),
+) -> str:
+    """Persona (configured or built-in), operating rules, then this turn's additions."""
+    parts = [persona or butler_persona(owner_address), OPERATING_RULES]
     if unavailable:
         parts.append(unavailable_note(unavailable))
     if ask:

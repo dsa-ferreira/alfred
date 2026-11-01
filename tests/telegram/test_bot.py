@@ -7,9 +7,10 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred import notices
 from alfred.db.models import QueueItem
 from alfred.queue import Queue
-from alfred.telegram.bot import TEXT_ONLY, TelegramOutbox, make_dispatcher
+from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from tests.telegram.fake_bot import OWNER, make_bot, message_update
 
 
@@ -23,7 +24,7 @@ async def queued(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
 
 async def test_owner_message_is_queued(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions))
+    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
     update = message_update(text="what's downloading?")
     await dispatcher.feed_update(bot, update)
     (item,) = await queued(sessions)
@@ -39,7 +40,7 @@ async def test_stranger_ignored(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions))
+    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
     with caplog.at_level(logging.INFO):
         await dispatcher.feed_update(bot, message_update(user_id=999, text="secret plans"))
     assert await queued(sessions) == []
@@ -50,7 +51,7 @@ async def test_stranger_ignored(
 
 async def test_group_chat_ignored(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions))
+    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
     await dispatcher.feed_update(bot, message_update(chat_type="group", text="hello bot"))
     assert await queued(sessions) == []
     assert session.requests == []
@@ -61,7 +62,7 @@ async def test_group_chat_ignored(sessions: async_sessionmaker[AsyncSession]) ->
 
 async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, _ = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions))
+    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
     await dispatcher.feed_update(
         bot,
         message_update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}]),
@@ -84,11 +85,22 @@ async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSe
 )  # fmt: skip
 async def test_text_only(sessions: async_sessionmaker[AsyncSession], content: dict) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions))
+    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
     await dispatcher.feed_update(bot, message_update(**content))
     assert await queued(sessions) == []
     (sent,) = session.sent()
-    assert sent.text == TEXT_ONLY and sent.chat_id == OWNER
+    assert sent.text == notices.text_only("sir") and sent.chat_id == OWNER
+
+
+async def test_text_only_uses_configured_address(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, session = make_bot()
+    dispatcher = make_dispatcher(OWNER, Queue(sessions), "Mr. Ferreira")
+    photo = [{"file_id": "p", "file_unique_id": "p", "width": 1, "height": 1}]
+    await dispatcher.feed_update(bot, message_update(photo=photo))
+    (sent,) = session.sent()
+    assert sent.text.endswith(", Mr. Ferreira.")
 
 
 # --- Sending -------------------------------------------------------------------
@@ -152,14 +164,21 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
 
     bot, session = make_bot()
     queue = Queue(sessions)
-    dispatcher = make_dispatcher(OWNER, queue)
+    dispatcher = make_dispatcher(OWNER, queue, "sir")
     model = FakeModel(
         [text("All good."), ModelFailed("model server answered HTTP 400: token=abc Traceback")]
     )
     cfg = make_config()
     history = History(sessions)
     agent = Agent(cfg, model, history, sessions, in_process({}))
-    worker = Worker(queue, agent, history, TelegramOutbox(bot, OWNER), cfg.queue)
+    worker = Worker(
+        queue,
+        agent,
+        history,
+        TelegramOutbox(bot, OWNER),
+        cfg.queue,
+        owner_address=cfg.ai.owner_address,
+    )
 
     await dispatcher.feed_update(bot, message_update(text="status?"))
     await dispatcher.feed_update(bot, message_update(text="and now?"))
@@ -168,5 +187,5 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
 
     first, second = session.sent()
     assert first.text == "All good." and first.chat_id == OWNER
-    assert second.text == "Sorry, that request failed."
+    assert second.text == notices.failed("sir")
     assert "400" not in second.text and "token" not in second.text

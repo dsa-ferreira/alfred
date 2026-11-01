@@ -13,16 +13,16 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message
 
+from alfred import notices
 from alfred.queue import Queue
 from alfred.telegram.formatting import split_for_telegram
 
 log = logging.getLogger(__name__)
 
-TEXT_ONLY = "Sorry, I can only read text messages."
 ALLOWED_UPDATES = ["message"]
 
 
-def make_dispatcher(owner_user_id: int, queue: Queue) -> Dispatcher:
+def make_dispatcher(owner_user_id: int, queue: Queue, owner_address: str) -> Dispatcher:
     dispatcher = Dispatcher()
 
     @dispatcher.message()
@@ -37,7 +37,7 @@ def make_dispatcher(owner_user_id: int, queue: Queue) -> Dispatcher:
             )
             return
         if message.text is None:
-            await message.answer(TEXT_ONLY, parse_mode=None)
+            await message.answer(notices.text_only(owner_address), parse_mode=None)
             return
         item_id = await queue.enqueue_owner(message.text, message.message_id)
         log.info("queued owner message %s as item %s", message.message_id, item_id)

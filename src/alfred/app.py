@@ -57,8 +57,10 @@ async def serve(config: Config) -> None:
     outbox = TelegramOutbox(bot, config.telegram.owner_user_id)
     model = ModelClient(config.ai.base_url, config.ai.model, config.ai.request_timeout_s)
     agent = Agent(config, model, history, sessions, http_connector())
-    worker = Worker(queue, agent, history, outbox, config.queue)
-    dispatcher = make_dispatcher(config.telegram.owner_user_id, queue)
+    worker = Worker(
+        queue, agent, history, outbox, config.queue, owner_address=config.ai.owner_address
+    )
+    dispatcher = make_dispatcher(config.telegram.owner_user_id, queue, config.ai.owner_address)
     server = _Server(
         uvicorn.Config(
             create_app(config.services, queue, history, outbox),

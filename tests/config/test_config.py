@@ -102,7 +102,8 @@ def test_minimal_file_takes_defaults(tmp_path: Path) -> None:
     assert config.ai.request_timeout_s == 300
     assert config.ai.max_requests_per_turn == 8
     assert config.ai.tool_result_max_chars == 4000
-    assert config.ai.system_prompt is None
+    assert config.ai.persona is None
+    assert config.ai.owner_address == "sir"
     assert config.history.max_entries == 30
     assert config.queue.retry_initial_s == 30
     assert config.queue.retry_max_s == 900
@@ -125,7 +126,8 @@ model = "other"
 request_timeout_s = 60
 max_requests_per_turn = 3
 tool_result_max_chars = 100
-system_prompt = "Be terse."
+persona = "Be terse."
+owner_address = "Mr. Ferreira"
 
 [history]
 max_entries = 50
@@ -149,7 +151,8 @@ log_level = "DEBUG"
     assert config.ai.request_timeout_s == 60
     assert config.ai.max_requests_per_turn == 3
     assert config.ai.tool_result_max_chars == 100
-    assert config.ai.system_prompt == "Be terse."
+    assert config.ai.persona == "Be terse."
+    assert config.ai.owner_address == "Mr. Ferreira"
     assert config.history.max_entries == 50
     assert (config.queue.retry_initial_s, config.queue.retry_max_s) == (5, 10)
     assert (config.mcp.list_timeout_s, config.mcp.call_timeout_s) == (2, 3)
@@ -167,6 +170,20 @@ log_level = "DEBUG"
 def test_unknown_key_is_named(tmp_path: Path) -> None:
     found = problems(MINIMAL + "\n[history]\nmax_mesages = 30\n", tmp_path)
     assert any("history.max_mesages" in p and "unknown key" in p for p in found)
+
+
+def test_old_system_prompt_key_is_rejected(tmp_path: Path) -> None:
+    text = MINIMAL.replace(
+        'model = "some-model"', 'model = "some-model"\nsystem_prompt = "Be terse."'
+    )
+    found = problems(text, tmp_path)
+    assert any("ai.system_prompt" in p and "unknown key" in p for p in found)
+
+
+def test_empty_owner_address_is_rejected(tmp_path: Path) -> None:
+    text = MINIMAL.replace('model = "some-model"', 'model = "some-model"\nowner_address = ""')
+    found = problems(text, tmp_path)
+    assert any("ai.owner_address" in p for p in found)
 
 
 def test_wrong_type(tmp_path: Path) -> None:

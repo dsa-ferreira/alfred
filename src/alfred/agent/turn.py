@@ -25,6 +25,7 @@ from typing import Any, Literal, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred import notices
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall
 from alfred.agent.prompts import system_prompt
 from alfred.config import Config
@@ -99,9 +100,6 @@ class TurnFailed(Exception):
         self.side_effects_possible = side_effects_possible
 
 
-PARTIAL = " Some actions may have partly completed."
-
-
 @dataclass
 class _State:
     side_effects: bool = False
@@ -137,7 +135,10 @@ class Agent:
             {
                 "role": "system",
                 "content": system_prompt(
-                    cfg.ai.system_prompt, ask=turn.kind == "ask", unavailable=tools.unavailable
+                    cfg.ai.persona,
+                    owner_address=cfg.ai.owner_address,
+                    ask=turn.kind == "ask",
+                    unavailable=tools.unavailable,
                 ),
             }
         )
@@ -161,8 +162,7 @@ class Agent:
 
         raise TurnFailed(
             f"stopped after {cfg.ai.max_requests_per_turn} model requests",
-            "I stopped that request after too many steps."
-            + (PARTIAL if state.side_effects else ""),
+            notices.too_many_steps(cfg.ai.owner_address, state.side_effects),
             retryable=False,
             side_effects_possible=state.side_effects,
         )
@@ -174,24 +174,23 @@ class Agent:
             if not state.side_effects:
                 raise TurnFailed(
                     str(exc),
-                    "The AI is unreachable.",
+                    notices.unreachable(self._config.ai.owner_address),
                     retryable=True,
                     side_effects_possible=False,
                 ) from None
             raise TurnFailed(
                 f"{exc} (after a tool ran; not retried)",
-                "The AI became unreachable in the middle of that request." + PARTIAL,
+                notices.unreachable_mid(self._config.ai.owner_address),
                 retryable=False,
                 side_effects_possible=True,
             ) from None
         except ModelFailed as exc:
             raise self._failed(state, str(exc)) from None
 
-    @staticmethod
-    def _failed(state: _State, reason: str) -> TurnFailed:
+    def _failed(self, state: _State, reason: str) -> TurnFailed:
         return TurnFailed(
             reason,
-            "Sorry, that request failed." + (PARTIAL if state.side_effects else ""),
+            notices.failed(self._config.ai.owner_address, state.side_effects),
             retryable=False,
             side_effects_possible=state.side_effects,
         )

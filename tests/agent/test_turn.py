@@ -6,8 +6,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
-from alfred.agent.prompts import DEFAULT_SYSTEM_PROMPT, NO_REPLY
+from alfred.agent.prompts import NO_REPLY, OPERATING_RULES, butler_persona
 from alfred.agent.turn import END_CONVERSATION, Agent, TurnFailed, TurnInput
 from alfred.db.models import TurnToolCall
 from alfred.history import History
@@ -47,16 +48,25 @@ async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSess
     result = await agent(sessions, model).run(await owner_turn(sessions, "hi"))
     assert result.reply == "Hello!" and not result.reset_requested
     messages = model.requests[0][0]
-    assert messages[0] == {"role": "system", "content": DEFAULT_SYSTEM_PROMPT}
+    assert messages[0] == {
+        "role": "system",
+        "content": butler_persona("sir") + "\n\n" + OPERATING_RULES,
+    }
     assert [m["content"] for m in messages[1:]] == ["earlier", "earlier reply", "hi"]
 
 
-async def test_custom_prompt(sessions: async_sessionmaker[AsyncSession]) -> None:
+async def test_custom_persona(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel([text("ok")])
-    await agent(sessions, model, ai={"system_prompt": "Be terse."}).run(
+    await agent(sessions, model, ai={"persona": "Be terse."}).run(await owner_turn(sessions, "hi"))
+    assert model.requests[0][0][0]["content"] == "Be terse.\n\n" + OPERATING_RULES
+
+
+async def test_custom_address(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, ai={"owner_address": "Mr. Ferreira"}).run(
         await owner_turn(sessions, "hi")
     )
-    assert model.requests[0][0][0]["content"] == "Be terse."
+    assert model.requests[0][0][0]["content"].startswith(butler_persona("Mr. Ferreira"))
 
 
 async def test_context_window_limit(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -166,7 +176,7 @@ async def test_runaway_tool_use(sessions: async_sessionmaker[AsyncSession]) -> N
             await owner_turn(sessions, "loop")
         )
     assert len(model.requests) == 3
-    assert "too many steps" in exc.value.notice
+    assert exc.value.notice == notices.too_many_steps("sir", partial=True)
     assert not exc.value.retryable
 
 
@@ -177,6 +187,7 @@ async def test_unreachable_before_tools_is_retryable(
     with pytest.raises(TurnFailed) as exc:
         await agent(sessions, model).run(await owner_turn(sessions, "hi"))
     assert exc.value.retryable and not exc.value.side_effects_possible
+    assert exc.value.notice == notices.unreachable("sir")
 
 
 async def test_unreachable_after_tool_is_not_retried(
@@ -186,7 +197,7 @@ async def test_unreachable_after_tool_is_not_retried(
     with pytest.raises(TurnFailed) as exc:
         await agent(sessions, model).run(await owner_turn(sessions, "add Dune"))
     assert not exc.value.retryable and exc.value.side_effects_possible
-    assert "partly completed" in exc.value.notice
+    assert exc.value.notice == notices.unreachable_mid("sir")
 
 
 async def test_model_failure(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -194,7 +205,18 @@ async def test_model_failure(sessions: async_sessionmaker[AsyncSession]) -> None
     with pytest.raises(TurnFailed) as exc:
         await agent(sessions, model).run(await owner_turn(sessions, "hi"))
     assert not exc.value.retryable and "HTTP 400" in exc.value.reason
-    assert "400" not in exc.value.notice
+    assert exc.value.notice == notices.failed("sir")
+
+
+async def test_failure_notice_uses_configured_address(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([ModelFailed("HTTP 400")])
+    with pytest.raises(TurnFailed) as exc:
+        await agent(sessions, model, ai={"owner_address": "Mr. Ferreira"}).run(
+            await owner_turn(sessions, "hi")
+        )
+    assert exc.value.notice.endswith(", Mr. Ferreira.")
 
 
 async def test_empty_reply_fails(sessions: async_sessionmaker[AsyncSession]) -> None:

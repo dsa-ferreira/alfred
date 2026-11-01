@@ -96,7 +96,8 @@ class AIConfig(_Section):
     request_timeout_s: PositiveFloat = 300
     max_requests_per_turn: PositiveInt = 8
     tool_result_max_chars: PositiveInt = 4000
-    system_prompt: Annotated[str, Field(min_length=1)] | None = None
+    persona: Annotated[str, Field(min_length=1)] | None = None
+    owner_address: Annotated[str, Field(min_length=1)] = "sir"
 
 
 class HistoryConfig(_Section):

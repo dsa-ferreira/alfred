@@ -17,8 +17,11 @@ request_timeout_s = 300
 max_requests_per_turn = 8
 # Tool results are cut to this many characters before they reach the model.
 tool_result_max_chars = 4000
-# Replaces the built-in system prompt when set.
-# system_prompt = """..."""
+# How alfred addresses you, in its replies and its fixed notices. Used as written.
+owner_address = "sir"
+# Replaces the built-in butler persona (alfred's voice) when set. Only the voice:
+# the built-in operating rules (tools, service notices, /ask) are always sent.
+# persona = """..."""
 
 [history]
 # Most recent conversation entries sent to the model each turn.

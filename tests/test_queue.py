@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
 from alfred.agent.turn import END_CONVERSATION, Agent
@@ -38,7 +39,14 @@ class Setup:
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
         self.agent = Agent(cfg, model, self.history, sessions, connect)
-        self.worker = Worker(self.queue, self.agent, self.history, self.outbox, cfg.queue)
+        self.worker = Worker(
+            self.queue,
+            self.agent,
+            self.history,
+            self.outbox,
+            cfg.queue,
+            owner_address=cfg.ai.owner_address,
+        )
 
     async def drain(self) -> None:
         while await self.worker.step():
@@ -99,7 +107,9 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
             return TurnResult("ok", False, False)
 
     s = Setup(sessions, FakeModel())
-    worker = Worker(s.queue, SlowAgent(), s.history, s.outbox, QueueConfig(**FAST))
+    worker = Worker(
+        s.queue, SlowAgent(), s.history, s.outbox, QueueConfig(**FAST), owner_address="sir"
+    )
     task = asyncio.create_task(worker.run_forever())
     for i in range(3):
         await s.queue.enqueue_owner(f"m{i}")
@@ -157,7 +167,12 @@ async def test_ai_server_down(sessions: async_sessionmaker[AsyncSession]) -> Non
 async def test_head_of_line_waits_for_retry(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([ModelUnreachable("x"), text("first"), text("second")]))
     s.worker = Worker(
-        s.queue, s.agent, s.history, s.outbox, QueueConfig(retry_initial_s=0.3, retry_max_s=1)
+        s.queue,
+        s.agent,
+        s.history,
+        s.outbox,
+        QueueConfig(retry_initial_s=0.3, retry_max_s=1),
+        owner_address="sir",
     )
     await s.queue.enqueue_owner("one")
     await s.worker.step()  # fails, retry in 0.3 s
@@ -200,7 +215,7 @@ async def test_ai_drops_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     first, second = await s.items()
     assert first.status == "failed" and first.attempts == 0
     assert "not retried" in (first.failure_reason or "")
-    assert "partly completed" in s.outbox.sent[0]
+    assert s.outbox.sent[0] == notices.unreachable_mid("sir")
     assert second.status == "done"
 
 
@@ -215,7 +230,7 @@ async def test_model_rejects_request(sessions: async_sessionmaker[AsyncSession])
     first, second = await s.items()
     assert first.status == "failed" and "HTTP 400" in (first.failure_reason or "")
     assert first.finished_at is not None
-    assert s.outbox.sent == ["Sorry, that request failed.", "ok"]
+    assert s.outbox.sent == [notices.failed("sir"), "ok"]
     assert second.status == "done"
 
 
@@ -229,11 +244,14 @@ async def test_failed_ask_sends_nothing(sessions: async_sessionmaker[AsyncSessio
 
 async def test_unexpected_error_fails_item(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([RuntimeError("boom secret-ish detail")]))
+    s.worker = Worker(
+        s.queue, s.agent, s.history, s.outbox, QueueConfig(**FAST), owner_address="Mr. Ferreira"
+    )
     await s.queue.enqueue_owner("hi")
     await s.drain()
     (item,) = await s.items()
     assert item.status == "failed"
-    assert s.outbox.sent == ["Sorry, that request failed."]
+    assert s.outbox.sent == [notices.failed("Mr. Ferreira")]
 
 
 # --- Ask turns in the conversation --------------------------------------------
