@@ -7,7 +7,7 @@ Defines how alfred runs one AI turn: which model endpoint it calls, what instruc
 ## Requirements
 
 ### Requirement: OpenAI-compatible model endpoint
-alfred SHALL call the model through an OpenAI-compatible chat completions API, using the base URL and model name from configuration. Changing model servers SHALL need only a configuration change.
+alfred SHALL call the model through an OpenAI-compatible chat completions API, using the base URL from configuration and the current brain's model (see `model-selection`), which starts as the configured model. Changing model servers SHALL need only a configuration change.
 
 #### Scenario: Default Ollama endpoint
 - **WHEN** the configuration sets base URL `http://ai.lan` and model `gemma4:12b-it-qat`
@@ -16,6 +16,10 @@ alfred SHALL call the model through an OpenAI-compatible chat completions API, u
 #### Scenario: Switch servers
 - **WHEN** the base URL and model are changed to another OpenAI-compatible server and alfred is restarted
 - **THEN** turns go to the new server with no code change
+
+#### Scenario: Another brain chosen
+- **WHEN** the owner has switched to the brain `bonsai` (`bonsai:8b`)
+- **THEN** turns are sent to the same base URL with model `bonsai:8b`
 
 ### Requirement: Telegram-oriented system prompt
 Every turn SHALL include a system prompt made of a persona, which sets alfred's voice and is configurable with a built-in default, followed by built-in operating rules that cannot be configured, followed by the instructions of the turn's available MCP servers. The operating rules SHALL tell the model it is chatting with its owner over Telegram, how to use tools, and how to read service notices, `/ask` messages and recalled conversations.
