@@ -16,15 +16,19 @@ When no custom persona is configured, alfred SHALL tell the model to speak as a 
 - **THEN** the persona the model receives asks for a formal, short reply with no preamble and no closing offer
 
 ### Requirement: Form of address
-The built-in persona SHALL tell the model to address the owner with the configured form of address, at most once per reply. The form of address SHALL default to "sir".
+The built-in persona SHALL tell the model to use the configured form of address sparingly: only where a butler naturally would, such as an interruption, an apology, bad news or a formal acknowledgement, and in most replies not at all. The persona SHALL carry its formality through the register rather than the address, and its example replies SHALL mostly go without the address. The form of address SHALL default to "sir".
 
 #### Scenario: Default address
 - **WHEN** no form of address is configured
-- **THEN** the built-in persona tells the model to address the owner as "sir", at most once per reply
+- **THEN** the built-in persona tells the model to address the owner as "sir" only sparingly, where a butler naturally would, and not in most replies
+
+#### Scenario: Examples mostly without the address
+- **WHEN** the model receives the built-in persona
+- **THEN** most of its example replies contain no form of address, and the interruption example still opens with "Pardon the interruption, sir."
 
 #### Scenario: Custom address
 - **WHEN** the form of address is set to "Mr. Ferreira"
-- **THEN** the built-in persona tells the model to address the owner as "Mr. Ferreira" instead
+- **THEN** the built-in persona tells the model to address the owner as "Mr. Ferreira" instead, under the same sparing rule
 
 ### Requirement: Interrupting on a service's behalf
 The built-in persona SHALL tell the model that a message it writes for a service's `/ask` turn interrupts the owner unprompted and SHALL open with a brief, courteous acknowledgement of the interruption.
