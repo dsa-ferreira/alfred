@@ -2,7 +2,8 @@
 
 ```
 tools = alfred_* local tools (owner turns only) + tools of reachable MCP servers
-msgs  = [system prompt] + last N history entries (+ the ask input)
+msgs  = [system prompt (+ reachable servers' instructions)] + last N history entries
+        (+ the ask input)
 loop up to ai.max_requests_per_turn:
     reply = model(msgs, tools)
     no tool calls -> done
@@ -125,7 +126,12 @@ class Agent:
 
     async def run(self, turn: TurnInput) -> TurnResult:
         cfg = self._config
-        tools = await build_turn_tools(cfg.mcp_servers, self._connect, cfg.mcp.list_timeout_s)
+        tools = await build_turn_tools(
+            cfg.mcp_servers,
+            self._connect,
+            cfg.mcp.list_timeout_s,
+            instructions_max_chars=cfg.mcp.instructions_max_chars,
+        )
         definitions = list(tools.definitions)
         if turn.kind == "owner":
             definitions.insert(0, END_CONVERSATION_TOOL)
@@ -139,6 +145,7 @@ class Agent:
                     owner_address=cfg.ai.owner_address,
                     ask=turn.kind == "ask",
                     unavailable=tools.unavailable,
+                    instructions=tools.instructions,
                 ),
             }
         )

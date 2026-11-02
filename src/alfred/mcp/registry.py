@@ -3,7 +3,9 @@
 At the start of every turn each configured server's tools are listed
 concurrently. Servers that fail are reported as unavailable for that turn.
 Tools are offered as ``<server>_<tool>``; the routing map built here is the
-only way a call reaches a server, so prefixes are never parsed.
+only way a call reaches a server, so prefixes are never parsed. The same
+connection also yields the instructions each server sends, which the turn
+gives the model.
 """
 
 from __future__ import annotations
@@ -38,6 +40,20 @@ class Route:
     tool: str
 
 
+@dataclass(frozen=True)
+class ServerInstructions:
+    """Instructions a server sent when connecting, ready for the model."""
+
+    server: str
+    text: str
+
+
+@dataclass(frozen=True)
+class _Listing:
+    tools: list[Tool]
+    instructions: str | None
+
+
 @dataclass
 class TurnTools:
     """What one turn may call."""
@@ -47,6 +63,8 @@ class TurnTools:
     # Model-facing names of configured exclusions, refused without a network call.
     excluded: set[str] = field(default_factory=set)
     unavailable: list[str] = field(default_factory=list)
+    # Available, unmuted servers with non-blank instructions, in configuration order.
+    instructions: list[ServerInstructions] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -56,9 +74,13 @@ class ToolOutcome:
 
 
 async def build_turn_tools(
-    servers: Sequence[McpServer], connect: Connector, list_timeout_s: float
+    servers: Sequence[McpServer],
+    connect: Connector,
+    list_timeout_s: float,
+    *,
+    instructions_max_chars: int = 2000,
 ) -> TurnTools:
-    """List every server's tools concurrently and build this turn's tool set."""
+    """List every server's tools and instructions concurrently and build this turn's set."""
     listings = await asyncio.gather(
         *(_list_tools(s, connect, list_timeout_s) for s in servers), return_exceptions=True
     )
@@ -71,16 +93,32 @@ async def build_turn_tools(
             )
             turn.unavailable.append(server.name)
             continue
-        exposed = {t.name for t in listing}
+        _add_instructions(turn, server, listing.instructions, instructions_max_chars)
+        exposed = {t.name for t in listing.tools}
         for unknown in sorted(server.exclude_tools - exposed):
             log.warning(
                 "MCP server %s has no tool %r (listed in exclude_tools)", server.name, unknown
             )
-        for tool in listing:
+        for tool in listing.tools:
             if tool.name in server.exclude_tools:
                 continue
             _add(turn, server, tool)
     return turn
+
+
+def _add_instructions(turn: TurnTools, server: McpServer, text: str | None, max_chars: int) -> None:
+    if not server.use_server_instructions or text is None or not text.strip():
+        return
+    text = text.strip()
+    if len(text) > max_chars:
+        log.warning(
+            "MCP server %s sent %d characters of instructions; cut to %d "
+            "(mcp.instructions_max_chars)",
+            server.name,
+            len(text),
+            max_chars,
+        )
+    turn.instructions.append(ServerInstructions(server.name, truncate(text, max_chars)))
 
 
 def _add(turn: TurnTools, server: McpServer, tool: Tool) -> None:
@@ -112,7 +150,7 @@ def _add(turn: TurnTools, server: McpServer, tool: Tool) -> None:
     )
 
 
-async def _list_tools(server: McpServer, connect: Connector, limit_s: float) -> list[Tool]:
+async def _list_tools(server: McpServer, connect: Connector, limit_s: float) -> _Listing:
     async with asyncio.timeout(limit_s), connect(server, limit_s) as client:
         tools: list[Tool] = []
         cursor: str | None = None
@@ -121,7 +159,8 @@ async def _list_tools(server: McpServer, connect: Connector, limit_s: float) -> 
             tools += result.tools
             cursor = result.next_cursor
             if not cursor:
-                return tools
+                # Set by the initialize handshake, so already there inside ``async with``.
+                return _Listing(tools, client.instructions)
 
 
 async def call_tool(

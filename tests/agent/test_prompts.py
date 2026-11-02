@@ -5,6 +5,9 @@ from alfred.agent.prompts import (
     is_no_reply,
     system_prompt,
 )
+from alfred.mcp.registry import ServerInstructions
+
+COOKBOOK = ServerInstructions("cookbook", "Call list_units and use its codes.")
 
 
 def test_default_prompt_is_persona_then_rules() -> None:
@@ -53,6 +56,44 @@ def test_unavailable_note() -> None:
     )
     assert "unavailable" in prompt and "mcparr, cookbook" in prompt
     assert prompt.index(OPERATING_RULES) < prompt.index("mcparr, cookbook")
+
+
+def test_server_instructions_order_on_ask_turn() -> None:
+    prompt = system_prompt(
+        None, owner_address="sir", ask=True, unavailable=["mcparr"], instructions=[COOKBOOK]
+    )
+    persona = prompt.index(butler_persona("sir"))
+    rules = prompt.index(OPERATING_RULES)
+    cookbook = prompt.index(COOKBOOK.text)
+    note = prompt.index("unavailable")
+    no_reply = prompt.index(NO_REPLY)
+    assert persona < rules < cookbook < note < no_reply
+
+
+def test_server_instructions_framing() -> None:
+    prompt = system_prompt(None, owner_address="sir", ask=False, instructions=[COOKBOOK])
+    assert 'Instructions from the tool server "cookbook"' in prompt
+    assert "offered to you as cookbook_<tool>" in prompt
+    assert "use that prefixed name" in prompt
+
+
+def test_one_block_per_server() -> None:
+    other = ServerInstructions("trello", "Cards can't be archived.")
+    prompt = system_prompt(None, owner_address="sir", ask=False, instructions=[COOKBOOK, other])
+    assert prompt.index("cookbook_<tool>") < prompt.index(COOKBOOK.text)
+    assert prompt.index(COOKBOOK.text) < prompt.index("trello_<tool>") < prompt.index(other.text)
+
+
+def test_custom_persona_keeps_server_instructions() -> None:
+    prompt = system_prompt("Be terse.", owner_address="sir", ask=False, instructions=[COOKBOOK])
+    assert prompt.startswith("Be terse.\n\n" + OPERATING_RULES)
+    assert COOKBOOK.text in prompt
+
+
+def test_no_section_without_instructions() -> None:
+    prompt = system_prompt(None, owner_address="sir", ask=False, instructions=[])
+    assert prompt == butler_persona("sir") + "\n\n" + OPERATING_RULES
+    assert "tool server" not in prompt
 
 
 def test_is_no_reply() -> None:

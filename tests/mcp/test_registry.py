@@ -11,7 +11,13 @@ from mcp import Client
 
 from alfred.config import McpServer
 from alfred.mcp.registry import build_turn_tools, call_tool, tool_name
-from tests.mcp.servers import config, in_process, make_cookbook, make_mcparr
+from tests.mcp.servers import (
+    COOKBOOK_INSTRUCTIONS,
+    config,
+    in_process,
+    make_cookbook,
+    make_mcparr,
+)
 
 MCPARR = config("mcparr")
 COOKBOOK = config("cookbook", frozenset({"delete_recipe"}))
@@ -149,6 +155,73 @@ async def test_server_comes_back() -> None:
     turn = await build_turn_tools([MCPARR], connect, 5)
     assert turn.unavailable == []
     assert "mcparr_get_downloads" in names(turn.definitions)
+
+
+# --- Server instructions -------------------------------------------------------
+
+
+async def test_instructions_collected() -> None:
+    connect = in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()})
+    turn = await build_turn_tools([MCPARR, COOKBOOK], connect, 5)
+    # mcparr sends none, so only cookbook contributes.
+    assert [(i.server, i.text) for i in turn.instructions] == [("cookbook", COOKBOOK_INSTRUCTIONS)]
+
+
+async def test_instructions_in_configuration_order() -> None:
+    from mcp.server import MCPServer
+
+    connect = in_process({"a": MCPServer("a", instructions="A"), "cookbook": make_cookbook()})
+    turn = await build_turn_tools([COOKBOOK, config("a")], connect, 5)
+    assert [i.server for i in turn.instructions] == ["cookbook", "a"]
+
+
+async def test_no_instructions_when_server_down() -> None:
+    connect = in_process({"cookbook": ConnectionError("down")})
+    turn = await build_turn_tools([COOKBOOK], connect, 5)
+    assert turn.unavailable == ["cookbook"]
+    assert turn.instructions == []
+
+
+@pytest.mark.parametrize("text", [None, "", "  \n\t "])
+async def test_no_or_blank_instructions(text: str | None) -> None:
+    connect = in_process({"cookbook": make_cookbook(text)})
+    turn = await build_turn_tools([COOKBOOK], connect, 5)
+    assert turn.instructions == []
+    assert "cookbook_get_recipe" in names(turn.definitions)
+
+
+async def test_muted_instructions_keep_tools() -> None:
+    connect = in_process({"cookbook": make_cookbook()})
+    muted = config("cookbook", frozenset({"delete_recipe"}), use_instructions=False)
+    turn = await build_turn_tools([muted], connect, 5)
+    assert turn.instructions == []
+    assert "cookbook_get_recipe" in names(turn.definitions)
+
+
+async def test_short_instructions_unchanged(caplog: pytest.LogCaptureFixture) -> None:
+    connect = in_process({"cookbook": make_cookbook("x" * 700)})
+    with caplog.at_level(logging.WARNING):
+        turn = await build_turn_tools([COOKBOOK], connect, 5, instructions_max_chars=2000)
+    assert turn.instructions[0].text == "x" * 700
+    assert "instructions" not in caplog.text
+
+
+async def test_long_instructions_truncated(caplog: pytest.LogCaptureFixture) -> None:
+    connect = in_process({"cookbook": make_cookbook("x" * 5000)})
+    with caplog.at_level(logging.WARNING):
+        turn = await build_turn_tools([COOKBOOK], connect, 5, instructions_max_chars=2000)
+    assert turn.instructions[0].text == "x" * 2000 + "\n[truncated: 3000 more characters]"
+    assert "cookbook" in caplog.text and "instructions" in caplog.text
+
+
+async def test_changed_instructions_used_next_turn() -> None:
+    servers: dict = {"cookbook": make_cookbook("old text")}
+    connect = in_process(servers)
+    first = await build_turn_tools([COOKBOOK], connect, 5)
+    assert first.instructions[0].text == "old text"
+    servers["cookbook"] = make_cookbook("new text")
+    second = await build_turn_tools([COOKBOOK], connect, 5)
+    assert second.instructions[0].text == "new text"
 
 
 # --- Tool call routing ----------------------------------------------------------

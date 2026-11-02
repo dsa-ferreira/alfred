@@ -118,6 +118,7 @@ class QueueConfig(_Section):
 class MCPConfig(_Section):
     list_timeout_s: PositiveFloat = 10
     call_timeout_s: PositiveFloat = 60
+    instructions_max_chars: PositiveInt = 2000
 
 
 class ServerConfig(_Section):
@@ -136,6 +137,7 @@ class McpServerEntry(_Section):
     url: HttpUrlStr
     token_env: TokenEnv
     exclude_tools: list[Annotated[str, Field(min_length=1)]] = []
+    use_server_instructions: bool = True
 
 
 class FileConfig(_Section):
@@ -166,6 +168,7 @@ class McpServer:
     url: str
     token: SecretStr
     exclude_tools: frozenset[str] = field(default_factory=frozenset)
+    use_server_instructions: bool = True
 
 
 @dataclass(frozen=True)
@@ -236,7 +239,13 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         server=parsed.server,
         services=tuple(Service(s.name, SecretStr(service_tokens[s.name])) for s in parsed.services),
         mcp_servers=tuple(
-            McpServer(m.name, m.url, SecretStr(server_tokens[m.name]), frozenset(m.exclude_tools))
+            McpServer(
+                m.name,
+                m.url,
+                SecretStr(server_tokens[m.name]),
+                frozenset(m.exclude_tools),
+                m.use_server_instructions,
+            )
             for m in parsed.mcp_servers
         ),
         telegram_bot_token=SecretStr(bot_token or ""),

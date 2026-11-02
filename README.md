@@ -69,6 +69,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |
 | `mcp.list_timeout_s` | number | `10` | Time allowed for each MCP server's tool list at the start of a turn. A server that doesn't answer is unavailable for that turn. |
 | `mcp.call_timeout_s` | number | `60` | Time allowed for one MCP tool call. |
+| `mcp.instructions_max_chars` | integer | `2000` | Each MCP server's instructions are cut to this many characters (with a `[truncated]` note and a logged warning) before they reach the model. |
 | `server.host` | string | `"0.0.0.0"` | Listen address of the service API. |
 | `server.port` | integer | `8080` | Listen port of the service API. |
 | `server.log_level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` | `"INFO"` | Log level. |
@@ -80,6 +81,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `mcp_servers.url` | URL | required | Streamable HTTP endpoint, e.g. `http://mcparr.lan:8090/mcp`. |
 | `mcp_servers.token_env` | variable name | required | `ALFRED_*` variable holding the bearer token alfred sends to this server. |
 | `mcp_servers.exclude_tools` | list of strings | `[]` | Original (unprefixed) tool names hidden from the model and refused if called. |
+| `mcp_servers.use_server_instructions` | boolean | `true` | Give the model the instructions the server sends when connecting. `false` mutes them; the tools are still offered. |
 
 Names are lowercase letters, digits and hyphens. Variable names must start
 with `ALFRED_` and use `A-Z`, `0-9` and `_`.
@@ -169,6 +171,7 @@ name = "mcparr"                        # tool prefix; lowercase, digits, hyphens
 url = "http://mcparr.lan:8090/mcp"     # Streamable HTTP endpoint
 token_env = "ALFRED_MCP_TOKEN_MCPARR"  # variable holding the bearer token
 exclude_tools = []                     # original tool names to hide (default: none)
+use_server_instructions = true         # pass the server's instructions to the model
 ```
 
 | Field | Required | Meaning |
@@ -177,6 +180,7 @@ exclude_tools = []                     # original tool names to hide (default: n
 | `url` | yes | The server's Streamable HTTP endpoint. Servers not configured are never contacted. |
 | `token_env` | yes | `ALFRED_*` variable whose value alfred sends as `Authorization: Bearer <token>` on every request to this server. |
 | `exclude_tools` | no | Original (unprefixed) tool names. They are not offered to the model, and a call to one is refused without contacting the server. A name the server doesn't have is logged as a warning, which catches typos. |
+| `use_server_instructions` | no | Default `true`. Whether the instructions the server sends when connecting reach the model (see [Server instructions](#server-instructions)). `false` mutes them; the server's tools are still offered. |
 
 ### Tokens
 
@@ -187,6 +191,19 @@ exclude_tools = []                     # original tool names to hide (default: n
   with any key. Generate a key for alfred (`cookbook apikey alfred`) and use
   `exclude_tools` to hide the write tools you don't want the AI to use, e.g.
   `exclude_tools = ["delete_recipe"]`.
+
+### Server instructions
+
+An MCP server can send instructions when alfred connects: how its tools fit
+together and when to use them. Every turn, alfred adds each available server's
+instructions to the system prompt after the operating rules, one block per
+server, telling the model that the server's tools are offered as
+`<server>_<tool>` (the text itself names them unprefixed). A server that is
+unavailable for the turn, sends no instructions, or has
+`use_server_instructions = false` adds nothing. Each server's text is cut to
+`mcp.instructions_max_chars`, with a warning in the log naming the server.
+Instructions are read on the same connection as the tool list, so a server's
+new text is used from the next turn.
 
 ### Unavailable servers
 

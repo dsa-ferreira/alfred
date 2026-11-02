@@ -37,6 +37,8 @@ retry_max_s = 900
 list_timeout_s = 10
 # Seconds to wait for one tool call.
 call_timeout_s = 60
+# Each server's instructions are cut to this many characters before they reach the model.
+instructions_max_chars = 2000
 
 [server]
 host = "0.0.0.0"
@@ -54,6 +56,8 @@ name = "mcparr"
 url = "http://mcparr.lan:8090/mcp"
 token_env = "ALFRED_MCP_TOKEN_MCPARR"
 exclude_tools = []
+# Give the model the instructions this server sends when connecting; false mutes them.
+use_server_instructions = true
 
 [[mcp_servers]]
 name = "cookbook"

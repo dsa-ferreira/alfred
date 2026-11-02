@@ -109,10 +109,12 @@ def test_minimal_file_takes_defaults(tmp_path: Path) -> None:
     assert config.queue.retry_max_s == 900
     assert config.mcp.list_timeout_s == 10
     assert config.mcp.call_timeout_s == 60
+    assert config.mcp.instructions_max_chars == 2000
     assert config.server.host == "0.0.0.0"
     assert config.server.port == 8080
     assert config.server.log_level == "INFO"
     assert config.mcp_servers[0].exclude_tools == frozenset()
+    assert config.mcp_servers[0].use_server_instructions is True
 
 
 def test_every_setting_can_be_changed(tmp_path: Path) -> None:
@@ -139,6 +141,7 @@ retry_max_s = 10
 [mcp]
 list_timeout_s = 2
 call_timeout_s = 3
+instructions_max_chars = 500
 
 [server]
 host = "127.0.0.1"
@@ -156,12 +159,22 @@ log_level = "DEBUG"
     assert config.history.max_entries == 50
     assert (config.queue.retry_initial_s, config.queue.retry_max_s) == (5, 10)
     assert (config.mcp.list_timeout_s, config.mcp.call_timeout_s) == (2, 3)
+    assert config.mcp.instructions_max_chars == 500
     assert (config.server.host, config.server.port, config.server.log_level) == (
         "127.0.0.1",
         9000,
         "DEBUG",
     )
     assert config.services == () and config.mcp_servers == ()
+
+
+def test_server_instructions_can_be_muted(tmp_path: Path) -> None:
+    text = MINIMAL.replace(
+        'token_env = "ALFRED_MCP_TOKEN_MCPARR"',
+        'token_env = "ALFRED_MCP_TOKEN_MCPARR"\nuse_server_instructions = false',
+    )
+    config = load_config(env_for(write(tmp_path, text)))
+    assert config.mcp_servers[0].use_server_instructions is False
 
 
 # --- Strict validation ----------------------------------------------------------
@@ -184,6 +197,11 @@ def test_empty_owner_address_is_rejected(tmp_path: Path) -> None:
     text = MINIMAL.replace('model = "some-model"', 'model = "some-model"\nowner_address = ""')
     found = problems(text, tmp_path)
     assert any("ai.owner_address" in p for p in found)
+
+
+def test_instructions_max_chars_must_be_positive(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[mcp]\ninstructions_max_chars = 0\n", tmp_path)
+    assert any("mcp.instructions_max_chars" in p for p in found)
 
 
 def test_wrong_type(tmp_path: Path) -> None:

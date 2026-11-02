@@ -44,8 +44,14 @@ def make_mcparr() -> MCPServer:
     return server
 
 
-def make_cookbook() -> MCPServer:
-    server = MCPServer("cookbook")
+COOKBOOK_INSTRUCTIONS = (
+    "Units come from a fixed vocabulary: call list_units and use its codes. "
+    "kcal and macros are whole-recipe totals."
+)
+
+
+def make_cookbook(instructions: str | None = COOKBOOK_INSTRUCTIONS) -> MCPServer:
+    server = MCPServer("cookbook", instructions=instructions)
 
     @server.tool()
     def get_recipe(recipe_id: int) -> str:
@@ -70,8 +76,12 @@ def make_cookbook() -> MCPServer:
     return server
 
 
-def config(name: str, exclude: frozenset[str] = frozenset()) -> McpServer:
-    return McpServer(name, f"http://localhost/{name}/mcp", SecretStr(f"tok-{name}"), exclude)
+def config(
+    name: str, exclude: frozenset[str] = frozenset(), *, use_instructions: bool = True
+) -> McpServer:
+    return McpServer(
+        name, f"http://localhost/{name}/mcp", SecretStr(f"tok-{name}"), exclude, use_instructions
+    )
 
 
 def in_process(servers: Mapping[str, MCPServer | Exception]) -> Connector:

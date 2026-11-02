@@ -1,12 +1,17 @@
 """System prompt and the per-turn additions to it.
 
 The prompt is layered (design D1): the persona (alfred's voice, replaceable
-from config), then the built-in operating rules, then this turn's additions.
+from config), then the built-in operating rules, then the instructions of
+this turn's MCP servers, then this turn's other additions.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from alfred.mcp.registry import ServerInstructions
 
 NO_REPLY = "NO_REPLY"
 
@@ -58,6 +63,15 @@ def butler_persona(owner_address: str) -> str:
     return BUTLER_PERSONA.format(address=owner_address)
 
 
+def server_instructions(item: ServerInstructions) -> str:
+    """One server's instructions, framed so the model maps tool names to its prefix."""
+    return (
+        f'Instructions from the tool server "{item.server}". Its tools are offered to you '
+        f"as {item.server}_<tool>; where this text names a tool, use that prefixed name."
+        f"\n\n{item.text}"
+    )
+
+
 def unavailable_note(servers: Sequence[str]) -> str:
     names = ", ".join(servers)
     return (
@@ -72,9 +86,11 @@ def system_prompt(
     owner_address: str,
     ask: bool,
     unavailable: Sequence[str] = (),
+    instructions: Sequence[ServerInstructions] = (),
 ) -> str:
-    """Persona (configured or built-in), operating rules, then this turn's additions."""
+    """Persona, operating rules, server instructions, then this turn's other additions."""
     parts = [persona or butler_persona(owner_address), OPERATING_RULES]
+    parts += [server_instructions(item) for item in instructions]
     if unavailable:
         parts.append(unavailable_note(unavailable))
     if ask:

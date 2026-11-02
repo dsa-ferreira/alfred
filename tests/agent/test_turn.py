@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import pytest
 from sqlalchemy import select
@@ -8,16 +9,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
-from alfred.agent.prompts import NO_REPLY, OPERATING_RULES, butler_persona
+from alfred.agent.prompts import NO_REPLY, OPERATING_RULES, butler_persona, server_instructions
 from alfred.agent.turn import END_CONVERSATION, Agent, TurnFailed, TurnInput
 from alfred.db.models import TurnToolCall
 from alfred.history import History
+from alfred.mcp.registry import ServerInstructions
 from tests.helpers import FakeModel, add_queue_item, calls, make_config, text
+from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook, make_mcparr
 from tests.mcp.servers import config as server_config
-from tests.mcp.servers import in_process, make_cookbook, make_mcparr
 
 MCPARR = server_config("mcparr")
 COOKBOOK = server_config("cookbook")
+# mcparr sends no instructions, so cookbook's is the only server section.
+COOKBOOK_SECTION = server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS))
 
 
 def agent(sessions: async_sessionmaker[AsyncSession], model: FakeModel, **config: object) -> Agent:
@@ -50,7 +54,7 @@ async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSess
     messages = model.requests[0][0]
     assert messages[0] == {
         "role": "system",
-        "content": butler_persona("sir") + "\n\n" + OPERATING_RULES,
+        "content": butler_persona("sir") + "\n\n" + OPERATING_RULES + "\n\n" + COOKBOOK_SECTION,
     }
     assert [m["content"] for m in messages[1:]] == ["earlier", "earlier reply", "hi"]
 
@@ -58,7 +62,9 @@ async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSess
 async def test_custom_persona(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel([text("ok")])
     await agent(sessions, model, ai={"persona": "Be terse."}).run(await owner_turn(sessions, "hi"))
-    assert model.requests[0][0][0]["content"] == "Be terse.\n\n" + OPERATING_RULES
+    assert model.requests[0][0][0]["content"] == (
+        "Be terse.\n\n" + OPERATING_RULES + "\n\n" + COOKBOOK_SECTION
+    )
 
 
 async def test_custom_address(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -102,6 +108,29 @@ async def test_unavailable_servers_told(sessions: async_sessionmaker[AsyncSessio
     assert "unavailable" in model.requests[0][0][0]["content"]
     assert "mcparr" in model.requests[0][0][0]["content"]
     assert not any(n.startswith("mcparr_") for n in model.tool_names())
+
+
+async def test_server_instructions_reach_the_model(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model).run(await owner_turn(sessions, "add a recipe"))
+    system = model.requests[0][0][0]["content"]
+    assert COOKBOOK_INSTRUCTIONS in system
+    assert "offered to you as cookbook_<tool>" in system
+    assert 'tool server "mcparr"' not in system
+
+
+async def test_instructions_cap_from_config(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cfg = make_config(mcp_servers=[COOKBOOK])
+    cfg = replace(cfg, mcp=cfg.mcp.model_copy(update={"instructions_max_chars": 10}))
+    model = FakeModel([text("ok")])
+    connect = in_process({"cookbook": make_cookbook()})
+    await Agent(cfg, model, History(sessions), sessions, connect).run(
+        await owner_turn(sessions, "hi")
+    )
+    system = model.requests[0][0][0]["content"]
+    assert COOKBOOK_INSTRUCTIONS[:10] + "\n[truncated:" in system
 
 
 # --- tool-call loop ------------------------------------------------------------
