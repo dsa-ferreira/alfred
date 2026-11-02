@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from alfred.agent.model import ModelClient, ModelFailed, ModelUnreachable
+from alfred.agent.model import ModelClient, ModelFailed, ModelUnreachable, Usage
 
 URL = "http://ai.lan/v1/chat/completions"
 
@@ -116,3 +116,27 @@ def test_default_timeout_allows_a_slow_cold_start() -> None:
     # A 90-second wake-up must fit in every phase of the request.
     assert client._http.timeout.read >= 90  # noqa: SLF001
     assert client._http.timeout.connect >= 90  # noqa: SLF001
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        ({"prompt_tokens": 6812, "completion_tokens": 38, "total_tokens": 6850}, Usage(6812, 38)),
+        (None, None),
+        ({"prompt_tokens": "lots", "completion_tokens": 38}, None),
+        ({"prompt_tokens": 10}, None),
+        ([1, 2], None),
+    ],
+    ids=["reported", "missing", "not-a-number", "incomplete", "not-an-object"],
+)
+async def test_usage(usage: object, expected: Usage | None) -> None:
+    data: dict = {"choices": [{"message": {"content": "hi"}}]}
+    if usage is not None:
+        data["usage"] = usage
+    respx.post(URL).mock(return_value=httpx.Response(200, json=data))
+    client = ModelClient("http://ai.lan", "m", 300)
+    result = await client.complete([], [])
+    assert result.content == "hi"
+    assert result.usage == expected
+    await client.aclose()

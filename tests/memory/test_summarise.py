@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelUnreachable
+from alfred.agent.model import ModelUnreachable, Usage
 from alfred.db.models import Conversation
 from alfred.history import History
 from alfred.memory.embedding import EmbeddingUnreachable
@@ -169,3 +172,37 @@ async def test_empty_conversation_needs_no_model(
         "Empty conversation"
     )
     assert model.requests == []
+
+
+def summary_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "alfred.memory.service" and " summary: " in r.getMessage()
+    ]
+
+
+async def test_summary_token_counts_logged(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = FakeModel([replace(text(REPLY), usage=Usage(3120, 58))])
+    with caplog.at_level(logging.INFO):
+        await memory(sessions, model, FakeEmbedder([[0.1, 0.2, 0.3]])).summarise(cid)
+    assert summary_lines(caplog) == [
+        f"conversation {cid} summary: 3120 prompt tokens, 58 completion tokens"
+    ]
+
+
+async def test_summary_stored_without_token_counts(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    with caplog.at_level(logging.INFO):
+        title = await memory(
+            sessions, FakeModel([text(REPLY)]), FakeEmbedder([[0.1, 0.2, 0.3]])
+        ).summarise(cid)
+    assert title == "Chicken thighs recipe"
+    assert summary_lines(caplog) == [f"conversation {cid} summary: token counts not reported"]
+    stored = await row(sessions, cid)
+    assert stored.title == "Chicken thighs recipe" and stored.summary is not None

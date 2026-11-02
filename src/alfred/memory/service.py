@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.agent.model import ModelError, ModelReply
+from alfred.agent.model import ModelError, ModelReply, token_counts
 from alfred.config import Config
 from alfred.db.models import Conversation, Entry
 from alfred.history import current_id
@@ -270,6 +270,7 @@ class Memory:
         transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
         try:
             reply = await self._model.complete(summary_messages(transcript), [])
+            log.info("conversation %s summary: %s", conversation_id, token_counts(reply.usage))
             parsed = parse_summary(reply.content or "")
         except (ModelError, SummaryParseError) as exc:
             log.warning("conversation %s: summary failed: %s", conversation_id, exc)

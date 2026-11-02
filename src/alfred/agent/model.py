@@ -38,9 +38,26 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class Usage:
+    """Token counts the model server reported for one request."""
+
+    prompt_tokens: int
+    completion_tokens: int
+
+
+def token_counts(usage: Usage | None) -> str:
+    """The counts for a log line, or a note that the server sent none."""
+    if usage is None:
+        return "token counts not reported"
+    return f"{usage.prompt_tokens} prompt tokens, {usage.completion_tokens} completion tokens"
+
+
+@dataclass(frozen=True)
 class ModelReply:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    # None when the server reported no (usable) token counts.
+    usage: Usage | None = None
 
     def assistant_message(self) -> dict[str, Any]:
         """The reply as a message to send back in the next request."""
@@ -119,7 +136,17 @@ def _parse(data: Any) -> ModelReply:
                 arguments=arguments if isinstance(arguments, str) else "",
             )
         )
-    return ModelReply(content=content, tool_calls=calls)
+    return ModelReply(content=content, tool_calls=calls, usage=_usage(data.get("usage")))
+
+
+def _usage(raw: Any) -> Usage | None:
+    """The reply's token counts, or ``None``; a missing or odd ``usage`` is never an error."""
+    if not isinstance(raw, dict):
+        return None
+    prompt, completion = raw.get("prompt_tokens"), raw.get("completion_tokens")
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in (prompt, completion)):
+        return None
+    return Usage(prompt_tokens=prompt, completion_tokens=completion)
 
 
 def _snippet(text: str, limit: int = 200) -> str:

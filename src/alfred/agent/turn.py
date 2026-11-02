@@ -30,13 +30,15 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
-from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall
+from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.agent.prompts import system_prompt
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
 from alfred.history import History, to_messages
 from alfred.mcp.client import Connector
 from alfred.mcp.registry import (
+    Route,
+    ServerInstructions,
     ToolOutcome,
     TurnTools,
     build_turn_tools,
@@ -48,6 +50,8 @@ log = logging.getLogger(__name__)
 
 END_CONVERSATION = "alfred_end_conversation"
 EXCERPT_CHARS = 500
+LOCAL_TOOLS = "alfred"  # how alfred's own tools are grouped in the context-size line
+LARGEST_TOOLS = 5
 
 END_CONVERSATION_TOOL: dict[str, Any] = {
     "type": "function",
@@ -231,8 +235,17 @@ class Agent:
         if turn.kind == "ask":
             state.messages.append({"role": "user", "content": f"[ask:{turn.source}] {turn.text}"})
 
-        for _ in range(cfg.ai.max_requests_per_turn):
+        log.info(
+            "turn %s context: %s",
+            turn.queue_item_id,
+            context_sizes(state.messages, tools.instructions, definitions, tools.routes),
+        )
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("turn %s largest tools: %s", turn.queue_item_id, largest_tools(definitions))
+
+        for n in range(1, cfg.ai.max_requests_per_turn + 1):
             reply = await self._ask_model(state, definitions)
+            log.info("turn %s request %d: %s", turn.queue_item_id, n, token_counts(reply.usage))
             if not reply.tool_calls:
                 answer = (reply.content or "").strip()
                 if not answer:
@@ -351,3 +364,53 @@ class Agent:
                     result_excerpt=excerpt,
                 )
             )
+
+
+# --- context size (logged, never sent) ---------------------------------------------
+
+
+def _chars(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False))
+
+
+def context_sizes(
+    messages: list[dict[str, Any]],
+    instructions: list[ServerInstructions],
+    definitions: list[dict[str, Any]],
+    routes: dict[str, Route],
+) -> str:
+    """Where a turn's context comes from, in characters, without any of its text.
+
+    ``messages`` is the system prompt followed by the history (and the ask
+    input), as built at the start of the turn. Instruction sizes are part of
+    the system prompt's size; tool sizes are each definition's JSON.
+    """
+    system = len(messages[0]["content"])
+    line = f"system {system} chars"
+    if instructions:
+        parts = ", ".join(f"{i.server} {len(i.text)}" for i in instructions)
+        line += f" (instructions: {parts})"
+
+    by_group: dict[str, int] = {}
+    for definition in definitions:
+        name = definition["function"]["name"]
+        route = routes.get(name)
+        if route is not None:
+            group = route.server.name
+            by_group[group] = by_group.get(group, 0) + _chars(definition)
+    local = sum(_chars(d) for d in definitions if d["function"]["name"] not in routes)
+    if local:
+        by_group[LOCAL_TOOLS] = local
+    total = sum(by_group.values())
+    line += f"; tools {len(definitions)} defs {total} chars"
+    if by_group:
+        line += " (" + ", ".join(f"{g} {n}" for g, n in by_group.items()) + ")"
+
+    history = messages[1:]
+    return line + f"; history {len(history)} entries {_chars(history)} chars"
+
+
+def largest_tools(definitions: list[dict[str, Any]], count: int = LARGEST_TOOLS) -> str:
+    """The ``count`` largest tool definitions as ``name size``, largest first."""
+    sizes = sorted(((d["function"]["name"], _chars(d)) for d in definitions), key=lambda t: -t[1])
+    return ", ".join(f"{name} {size}" for name, size in sizes[:count]) or "none"

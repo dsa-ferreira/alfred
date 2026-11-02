@@ -237,6 +237,41 @@ Local tools use the reserved `alfred_` prefix (for example
 `alfred_end_conversation`) and are handled by alfred itself, which is why no
 MCP server may be named `alfred`.
 
+### Context size
+
+Every server's tools are sent to the model with every request, so each server
+you add makes every request bigger. To see by how much, each turn logs one
+line at INFO with the size in characters of what it sends. The line covers the
+system prompt (and each server's instructions inside it), the tool definitions
+in total, per server and for alfred's own tools, and the history (with the
+`/ask` input):
+
+```
+turn 812 context: system 5214 chars (instructions: cookbook 640); tools 15 defs 28410 chars (mcparr 6204, cookbook 19276, alfred 2930); history 30 entries 11032 chars
+```
+
+After every model request, alfred logs the token counts the model server
+reported. Conversation summaries get the same line:
+
+```
+turn 812 request 1: 6812 prompt tokens, 38 completion tokens
+turn 812 request 2: 7240 prompt tokens, 112 completion tokens
+conversation 41 summary: 3120 prompt tokens, 58 completion tokens
+```
+
+A server that sends no counts gets `token counts not reported` instead. Some
+servers only count the prompt tokens they had to process anew when they reuse
+a cached prompt. Ollama may be one of them. With such a server, a later request
+in a turn can show fewer prompt tokens than the one before it. The character
+sizes above don't depend on the server.
+
+With `server.log_level = "DEBUG"`, each turn also lists its five largest tool
+definitions, largest first, to find a single oversized schema:
+
+```
+turn 812 largest tools: cookbook_update_recipe 4120, cookbook_create_recipe 3980, mcparr_add_media 1210, ...
+```
+
 ## Deployment
 
 alfred is one container running one process. Run exactly one replica: the
