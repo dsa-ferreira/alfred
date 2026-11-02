@@ -158,7 +158,7 @@ async def test_memory_wiring_and_clients_closed(
     await asyncio.wait_for(task, 10)
 
     assert [(c.base_url, c.model) for c in clients] == [
-        ("http://ai.lan", "gemma4:12b-it-qat"),
+        ("http://ai.lan", "gemma4:26b-a4b-it-qat"),
         ("http://ai.lan", "small"),
         ("http://ragman.lan", "nomic-embed-text:v1.5"),
     ]

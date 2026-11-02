@@ -10,7 +10,7 @@ owner_user_id = 123456789
 [ai]
 # OpenAI-compatible server; alfred posts to {base_url}/v1/chat/completions.
 base_url = "http://ai.lan"
-model = "gemma4:12b-it-qat"
+model = "gemma4:26b-a4b-it-qat"
 # Seconds per model request. Long enough for the AI server to wake and load the model.
 request_timeout_s = 300
 # Model requests allowed in one turn before it is stopped.
@@ -36,7 +36,7 @@ retry_max_s = 900
 
 [memory]
 # Model that titles and summarises ended conversations, on [ai] base_url. Default: [ai] model.
-# summary_model = "gemma4:12b-it-qat"
+# summary_model = "gemma4:26b-a4b-it-qat"
 # OpenAI-compatible embedding server; alfred posts to {embedding_base_url}/v1/embeddings.
 embedding_base_url = "http://ragman.lan"
 # Changing the model re-embeds archived conversations in the background.

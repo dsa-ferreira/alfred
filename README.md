@@ -62,7 +62,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | --- | --- | --- | --- |
 | `telegram.owner_user_id` | integer | required | Your Telegram user ID. Only this user's private chat with the bot is answered; notices and `/ask` answers go to this user. |
 | `ai.base_url` | URL | `"http://ai.lan"` | OpenAI-compatible server. alfred posts to `{base_url}/v1/chat/completions`. |
-| `ai.model` | string | `"gemma4:12b-it-qat"` | Model name sent with every request. |
+| `ai.model` | string | `"gemma4:26b-a4b-it-qat"` | Model name sent with every request. |
 | `ai.request_timeout_s` | number | `300` | Timeout of one model request, in seconds. Long enough for the AI server to wake and load the model. |
 | `ai.max_requests_per_turn` | integer | `8` | Model requests allowed in one turn. A turn that needs more is stopped and the owner is told. |
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |

@@ -102,7 +102,7 @@ class TelegramConfig(_Section):
 
 class AIConfig(_Section):
     base_url: HttpUrlStr = "http://ai.lan"
-    model: Annotated[str, Field(min_length=1)] = "gemma4:12b-it-qat"
+    model: Annotated[str, Field(min_length=1)] = "gemma4:26b-a4b-it-qat"
     request_timeout_s: PositiveFloat = 300
     max_requests_per_turn: PositiveInt = 8
     tool_result_max_chars: PositiveInt = 4000
