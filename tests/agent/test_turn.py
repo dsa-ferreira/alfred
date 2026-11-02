@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -10,24 +11,47 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY, OPERATING_RULES, butler_persona, server_instructions
-from alfred.agent.turn import END_CONVERSATION, Agent, TurnFailed, TurnInput
-from alfred.db.models import TurnToolCall
+from alfred.agent.turn import (
+    END_CONVERSATION,
+    RECALL_CONVERSATION,
+    SEARCH_CONVERSATIONS,
+    Agent,
+    TurnFailed,
+    TurnInput,
+)
+from alfred.db.models import Entry, TurnToolCall
 from alfred.history import History
 from alfred.mcp.registry import ServerInstructions
-from tests.helpers import FakeModel, add_queue_item, calls, make_config, text
+from alfred.memory.service import Memory
+from tests.helpers import FakeEmbedder, FakeModel, add_queue_item, calls, make_config, text
 from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook, make_mcparr
 from tests.mcp.servers import config as server_config
+from tests.memory.test_search import CHICKEN, at, seed
 
 MCPARR = server_config("mcparr")
 COOKBOOK = server_config("cookbook")
 # mcparr sends no instructions, so cookbook's is the only server section.
 COOKBOOK_SECTION = server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS))
+# Monday 2 November 2026, 14:05 in Lisbon (WET, UTC+0).
+NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
+RULES = OPERATING_RULES + "\n\nToday is Monday, 2 November 2026."
 
 
-def agent(sessions: async_sessionmaker[AsyncSession], model: FakeModel, **config: object) -> Agent:
+def agent(
+    sessions: async_sessionmaker[AsyncSession],
+    model: FakeModel,
+    *,
+    memory: Memory | None = None,
+    now: datetime = NOW,
+    **config: object,
+) -> Agent:
     cfg = make_config(mcp_servers=[MCPARR, COOKBOOK], **config)  # type: ignore[arg-type]
     connect = in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()})
-    return Agent(cfg, model, History(sessions), sessions, connect)
+    return Agent(cfg, model, History(sessions), sessions, connect, memory=memory, now=lambda: now)
+
+
+def memory(sessions: async_sessionmaker[AsyncSession], embedder: FakeEmbedder) -> Memory:
+    return Memory(make_config(), sessions, FakeModel(), embedder)
 
 
 async def owner_turn(sessions: async_sessionmaker[AsyncSession], message: str) -> TurnInput:
@@ -54,7 +78,7 @@ async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSess
     messages = model.requests[0][0]
     assert messages[0] == {
         "role": "system",
-        "content": butler_persona("sir") + "\n\n" + OPERATING_RULES + "\n\n" + COOKBOOK_SECTION,
+        "content": butler_persona("sir") + "\n\n" + RULES + "\n\n" + COOKBOOK_SECTION,
     }
     assert [m["content"] for m in messages[1:]] == ["earlier", "earlier reply", "hi"]
 
@@ -63,7 +87,7 @@ async def test_custom_persona(sessions: async_sessionmaker[AsyncSession]) -> Non
     model = FakeModel([text("ok")])
     await agent(sessions, model, ai={"persona": "Be terse."}).run(await owner_turn(sessions, "hi"))
     assert model.requests[0][0][0]["content"] == (
-        "Be terse.\n\n" + OPERATING_RULES + "\n\n" + COOKBOOK_SECTION
+        "Be terse.\n\n" + RULES + "\n\n" + COOKBOOK_SECTION
     )
 
 
@@ -289,3 +313,144 @@ async def test_end_conversation_marks_reset(sessions: async_sessionmaker[AsyncSe
     assert result.reset_requested
     # The reset itself happens after delivery, not during the turn.
     assert [e.text for e in await History(sessions).recent(30)] == ["we're done here"]
+
+
+# --- memory tools ------------------------------------------------------------------
+
+
+async def test_memory_tools_offered_on_owner_turns(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        await owner_turn(sessions, "hi")
+    )
+    assert {SEARCH_CONVERSATIONS, RECALL_CONVERSATION} <= model.tool_names()
+    search = next(
+        t["function"] for t in model.requests[0][1] if t["function"]["name"] == SEARCH_CONVERSATIONS
+    )
+    assert set(search["parameters"]["properties"]) == {"query", "after", "before"}
+    assert "required" not in search["parameters"]
+    assert "ask the owner which one they meant" in search["description"]
+    assert "recall it and tell the owner which conversation you picked" in search["description"]
+
+
+async def test_memory_tools_not_offered_on_ask_turns(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(1))
+    item = await add_queue_item(sessions, "ask", "x", "disk-check")
+    model = FakeModel([calls((RECALL_CONVERSATION, '{"id": 41}')), text(NO_REPLY)])
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        TurnInput("ask", "x", item, "disk-check")
+    )
+    assert not {SEARCH_CONVERSATIONS, RECALL_CONVERSATION} & model.tool_names()
+    assert "unknown tool" in model.requests[1][0][-1]["content"]
+    async with sessions() as session:
+        assert list(await session.scalars(select(Entry).where(Entry.kind == "recall"))) == []
+
+
+async def test_search_then_recall_then_follow_up(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed(
+        sessions,
+        41,
+        "Chicken thighs recipe",
+        "Lemon-garlic thighs, 40 minutes at 200°C.",
+        started=at(1),
+        embedding=CHICKEN,
+        entries=("chicken thighs tonight?", "40 minutes at 200°C"),
+    )
+    mem = memory(sessions, FakeEmbedder([CHICKEN]))
+    model = FakeModel(
+        [
+            calls((SEARCH_CONVERSATIONS, '{"query": "chicken recipe"}')),
+            calls((RECALL_CONVERSATION, '{"id": 41}')),
+            text("That was #41, sir: lemon and garlic."),
+            text("40 minutes, sir."),
+        ]
+    )
+    turn = await owner_turn(sessions, "remember the chicken recipe?")
+    result = await agent(sessions, model, memory=mem).run(turn)
+    assert result.reply == "That was #41, sir: lemon and garlic."
+
+    search_result = model.requests[1][0][-1]
+    assert (
+        search_result["role"] == "tool"
+        and '#41 "Chicken thighs recipe"' in search_result["content"]
+    )
+    recall_result = model.requests[2][0][-1]["content"]
+    assert recall_result.startswith('#41 "Chicken thighs recipe", Sun 1 Nov 2026')
+    rows = await tool_rows(sessions)
+    assert [(r.tool, r.arguments, r.ok) for r in rows] == [
+        (SEARCH_CONVERSATIONS, {"query": "chicken recipe"}, True),
+        (RECALL_CONVERSATION, {"id": 41}, True),
+    ]
+
+    # The recall stays in the conversation: the next turn still sees it.
+    await History(sessions).append("assistant", result.reply, queue_item_id=turn.queue_item_id)
+    await agent(sessions, model, memory=mem).run(
+        await owner_turn(sessions, "and how long in the oven?")
+    )
+    contents = [m["content"] for m in model.requests[3][0][1:]]
+    assert contents[0] == "remember the chicken recipe?"
+    assert contents[1].startswith('[recall:#41 "Chicken thighs recipe"] #41 ')
+    assert "Owner: 40 minutes at 200°C" in contents[1]
+    assert contents[-1] == "and how long in the oven?"
+
+
+async def test_memory_tool_errors_reach_the_model(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel(
+        [calls((SEARCH_CONVERSATIONS, "{}"), (RECALL_CONVERSATION, '{"id": 9999}')), text("?")]
+    )
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        await owner_turn(sessions, "remember?")
+    )
+    results = [m["content"] for m in model.requests[1][0] if m["role"] == "tool"]
+    assert results[0].startswith("Error: give a query")
+    assert results[1] == "Error: there is no conversation #9999."
+    assert [r.ok for r in await tool_rows(sessions)] == [False, False]
+
+
+async def test_memory_tool_with_invalid_json(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([calls((RECALL_CONVERSATION, "{oops")), text("?")])
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        await owner_turn(sessions, "remember 41")
+    )
+    assert "not valid JSON" in model.requests[1][0][-1]["content"]
+
+
+# --- today's date ------------------------------------------------------------------
+
+# 00:30 in Lisbon on Tuesday 3 November 2026; still 2 November west of it.
+JUST_AFTER_MIDNIGHT = datetime(2026, 11, 3, 0, 30, tzinfo=UTC)
+
+
+async def test_date_in_owner_turn(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, now=JUST_AFTER_MIDNIGHT).run(await owner_turn(sessions, "hi"))
+    system = model.requests[0][0][0]["content"]
+    assert "Today is Tuesday, 3 November 2026." in system
+    assert "00:30" not in system
+
+
+async def test_date_in_ask_turn(sessions: async_sessionmaker[AsyncSession]) -> None:
+    item = await add_queue_item(sessions, "ask", "x", "disk-check")
+    model = FakeModel([text(NO_REPLY)])
+    await agent(sessions, model, now=JUST_AFTER_MIDNIGHT).run(
+        TurnInput("ask", "x", item, "disk-check")
+    )
+    assert "Today is Tuesday, 3 November 2026." in model.requests[0][0][0]["content"]
+
+
+async def test_date_follows_the_configured_timezone(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, now=JUST_AFTER_MIDNIGHT, ai={"timezone": "America/New_York"}).run(
+        await owner_turn(sessions, "hi")
+    )
+    assert "Today is Monday, 2 November 2026." in model.requests[0][0][0]["content"]

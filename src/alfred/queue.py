@@ -27,8 +27,6 @@ from alfred.history import History
 
 log = logging.getLogger(__name__)
 
-NEW_CONVERSATION_MARKER = "— new conversation —"
-
 
 class Outbox(Protocol):
     """Sends text to the owner. Raises if the message couldn't be delivered."""
@@ -38,6 +36,21 @@ class Outbox(Protocol):
 
 class TurnRunner(Protocol):
     async def run(self, turn: TurnInput) -> TurnResult: ...
+
+
+class Summariser(Protocol):
+    async def summarise(self, conversation_id: int) -> str | None:
+        """The archived conversation's title, or ``None``. Never raises."""
+        ...
+
+
+def reset_marker(archived_id: int | None, title: str | None, new_id: int) -> str:
+    """The one message that tells the owner a conversation ended (memory design D3)."""
+    lines: list[str] = []
+    if archived_id is not None:
+        lines.append(f'— #{archived_id} "{title}" —' if title else f"— #{archived_id} archived —")
+    lines.append(f"— new conversation #{new_id} —")
+    return "\n".join(lines)
 
 
 def backoff_s(attempts: int, config: QueueConfig) -> float:
@@ -103,9 +116,11 @@ class Worker:
         config: QueueConfig,
         *,
         owner_address: str,
+        memory: Summariser | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._queue = queue
+        self._memory = memory
         self._agent = agent
         self._history = history
         self._outbox = outbox
@@ -191,9 +206,22 @@ class Worker:
         await self._queue.finish(item.id, "done")
 
         if result.reset_requested:
-            await self._history.reset()
-            log.info("queue item %s: conversation reset", item.id)
-            await self._send(item, NEW_CONVERSATION_MARKER)
+            await self._reset(item)
+
+    async def _reset(self, item: QueueItem) -> None:
+        # Archive first: anything recorded while the summary is made (a
+        # /notify notice) already lands in the new conversation.
+        reset = await self._history.reset()
+        log.info(
+            "queue item %s: conversation %s archived, %s started",
+            item.id,
+            reset.archived_id,
+            reset.new_id,
+        )
+        title = None
+        if self._memory is not None and reset.archived_id is not None:
+            title = await self._memory.summarise(reset.archived_id)
+        await self._send(item, reset_marker(reset.archived_id, title, reset.new_id))
 
     async def _send(self, item: QueueItem, text: str) -> None:
         try:

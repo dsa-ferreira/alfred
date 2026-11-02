@@ -1,10 +1,11 @@
-"""``alfred serve``: the bot, the service API and the AI worker in one event loop.
+"""``alfred serve``: the bot, the service API, the AI worker and the memory sweeper.
 
-Three asyncio tasks share the database engine and the queue's in-process
-signal (design D1). SIGTERM or SIGINT stops all three; a turn in progress is
-interrupted and its item stays ``pending``, so it runs again after restart.
-If any task stops on its own (for example the port is taken), the others are
-stopped too and ``serve`` raises.
+Four asyncio tasks share the database engine and the queue's in-process
+signal (design D1). SIGTERM or SIGINT stops all four; a turn in progress is
+interrupted and its item stays ``pending``, so it runs again after restart,
+and a summary in progress is simply made again later. If any task stops on
+its own (for example the port is taken), the others are stopped too and
+``serve`` raises.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.history import History
 from alfred.mcp.client import http_connector
+from alfred.memory.embedding import EmbeddingClient
+from alfred.memory.service import Memory
 from alfred.queue import Queue, Worker
 from alfred.telegram.bot import ALLOWED_UPDATES, TelegramOutbox, make_dispatcher
 
@@ -56,9 +59,29 @@ async def serve(config: Config) -> None:
     bot = Bot(config.telegram_bot_token.get_secret_value())
     outbox = TelegramOutbox(bot, config.telegram.owner_user_id)
     model = ModelClient(config.ai.base_url, config.ai.model, config.ai.request_timeout_s)
-    agent = Agent(config, model, history, sessions, http_connector())
+    # A second client only when summaries use another model (memory design D5).
+    summary_model = (
+        model
+        if config.summary_model == config.ai.model
+        else ModelClient(config.ai.base_url, config.summary_model, config.ai.request_timeout_s)
+    )
+    embedder = EmbeddingClient(
+        config.memory.embedding_base_url,
+        config.memory.embedding_model,
+        config.memory.embedding_timeout_s,
+        document_prefix=config.memory.document_prefix,
+        query_prefix=config.memory.query_prefix,
+    )
+    memory = Memory(config, sessions, summary_model, embedder)
+    agent = Agent(config, model, history, sessions, http_connector(), memory=memory)
     worker = Worker(
-        queue, agent, history, outbox, config.queue, owner_address=config.ai.owner_address
+        queue,
+        agent,
+        history,
+        outbox,
+        config.queue,
+        owner_address=config.ai.owner_address,
+        memory=memory,
     )
     dispatcher = make_dispatcher(config.telegram.owner_user_id, queue, config.ai.owner_address)
     server = _Server(
@@ -89,14 +112,19 @@ async def serve(config: Config) -> None:
             name="telegram",
         ),
         asyncio.create_task(worker.run_forever(), name="worker"),
+        asyncio.create_task(memory.run_sweeper(), name="memory"),
     }
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(
-        "alfred started: API on %s:%s, model %s at %s, %d MCP server(s)",
+        "alfred started: API on %s:%s, model %s at %s, summaries by %s, embeddings by %s at %s, "
+        "%d MCP server(s)",
         config.server.host,
         config.server.port,
         config.ai.model,
         config.ai.base_url,
+        config.summary_model,
+        config.memory.embedding_model,
+        config.memory.embedding_base_url,
         len(config.mcp_servers),
     )
     failed: asyncio.Task[object] | None = None
@@ -115,11 +143,14 @@ async def serve(config: Config) -> None:
         with contextlib.suppress(RuntimeError):  # polling may already be stopped
             await dispatcher.stop_polling()
         for task in tasks:
-            if task.get_name() == "worker":
+            if task.get_name() in ("worker", "memory"):
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()
         await model.aclose()
+        if summary_model is not model:
+            await summary_model.aclose()
+        await embedder.aclose()
         await engine.dispose()
     if failed is not None:
         exc = failed.exception() if not failed.cancelled() else None

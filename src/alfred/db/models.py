@@ -1,8 +1,12 @@
 """SQLAlchemy models (design D7).
 
 - ``conversations``: at most one has ``ended_at IS NULL`` (the current one).
+  Archived ones get a title, a summary and an embedding of both (memory
+  design D1); ``search_tsv`` is generated from title and summary.
 - ``entries``: what was said in a conversation, in order. Entries written by
   a turn carry its ``queue_item_id``, so a retried turn records them once.
+  A ``recall`` entry brings an archived conversation into the current one
+  (memory design D8).
 - ``queue_items``: AI-bound work (owner messages and ``/ask`` prompts).
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
 """
@@ -12,10 +16,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
     Index,
@@ -26,7 +32,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Deterministic constraint names, so migrations can refer to them.
@@ -38,7 +44,10 @@ NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
-ENTRY_KINDS = ("owner", "assistant", "notice", "ask_prompt", "ask_reply")
+ENTRY_KINDS = ("owner", "assistant", "notice", "ask_prompt", "ask_reply", "recall")
+# What the summary's full-text column is generated from; also used by search.
+SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
+ENTRY_TSV = "to_tsvector('english', text)"
 QUEUE_KINDS = ("owner", "ask")
 QUEUE_STATUSES = ("pending", "done", "failed")
 
@@ -61,11 +70,22 @@ class Conversation(Base):
             unique=True,
             postgresql_where=text("ended_at IS NULL"),
         ),
+        Index("ix_conversations_search_tsv", "search_tsv", postgresql_using="gin"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    title: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    summarised_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # No fixed dimension: each row records the model that made it.
+    embedding: Mapped[Any] = mapped_column(Vector(), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(Text)
+    # Background retries of the summary or embedding (the sweeper).
+    summary_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    summary_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    search_tsv: Mapped[Any] = mapped_column(TSVECTOR, Computed(SEARCH_TSV, persisted=True))
 
 
 class Entry(Base):
@@ -75,6 +95,15 @@ class Entry(Base):
         Index("ix_entries_conversation_id_id", "conversation_id", "id"),
         # A retried turn must not record its owner message (or reply) twice.
         Index("uq_entries_queue_item_id_kind", "queue_item_id", "kind", unique=True),
+        Index("ix_entries_text_tsv", text(ENTRY_TSV), postgresql_using="gin"),
+        # A conversation is recalled at most once into the same conversation.
+        Index(
+            "uq_entries_recall",
+            "conversation_id",
+            "recalled_conversation_id",
+            unique=True,
+            postgresql_where=text("kind = 'recall'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -86,6 +115,10 @@ class Entry(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     # The queue item whose turn wrote this entry (null for notices).
     queue_item_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("queue_items.id"))
+    # For ``recall`` entries: the archived conversation brought back.
+    recalled_conversation_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("conversations.id")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

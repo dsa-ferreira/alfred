@@ -2,8 +2,8 @@
 
 ```
 tools = alfred_* local tools (owner turns only) + tools of reachable MCP servers
-msgs  = [system prompt (+ reachable servers' instructions)] + last N history entries
-        (+ the ask input)
+msgs  = [system prompt (+ today's date, reachable servers' instructions)]
+        + last N history entries (+ the ask input)
 loop up to ai.max_requests_per_turn:
     reply = model(msgs, tools)
     no tool calls -> done
@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -61,11 +64,76 @@ END_CONVERSATION_TOOL: dict[str, Any] = {
     },
 }
 
+SEARCH_CONVERSATIONS = "alfred_search_conversations"
+RECALL_CONVERSATION = "alfred_recall_conversation"
+
+SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": SEARCH_CONVERSATIONS,
+        "description": (
+            "Search earlier, archived conversations with the owner by topic, by date, or "
+            "both. Use when the owner refers to something discussed before ('remember "
+            "when…', 'that recipe we talked about last week', 'what did we talk about on "
+            "Tuesday?'). Turn relative dates into after/before (YYYY-MM-DD, inclusive) using "
+            "today's date from the system prompt. If one result is clearly the best match, "
+            "recall it and tell the owner which conversation you picked (its title and "
+            "date). If several match about equally, ask the owner which one they meant."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What the conversation was about, in a few words.",
+                },
+                "after": {
+                    "type": "string",
+                    "description": "Earliest date, YYYY-MM-DD, inclusive.",
+                },
+                "before": {
+                    "type": "string",
+                    "description": "Latest date, YYYY-MM-DD, inclusive.",
+                },
+            },
+        },
+    },
+}
+
+RECALL_CONVERSATION_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": RECALL_CONVERSATION,
+        "description": (
+            "Bring an archived conversation, by its number, into this conversation so you "
+            "can use what was said. Use when the owner names a conversation number or after "
+            "search found the one they mean."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "The conversation number, e.g. 41."}
+            },
+            "required": ["id"],
+        },
+    },
+}
+
 
 class Model(Protocol):
     async def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> ModelReply: ...
+
+
+class MemoryTools(Protocol):
+    """Search and recall of archived conversations (``alfred.memory.service.Memory``)."""
+
+    async def search(
+        self, query: Any = None, after: Any = None, before: Any = None
+    ) -> ToolOutcome: ...
+
+    async def recall(self, conversation_id: Any) -> ToolOutcome: ...
 
 
 @dataclass(frozen=True)
@@ -117,12 +185,18 @@ class Agent:
         history: History,
         sessions: async_sessionmaker[AsyncSession],
         connect: Connector,
+        *,
+        memory: MemoryTools | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
         self._model = model
         self._history = history
         self._sessions = sessions
         self._connect = connect
+        self._memory = memory
+        self._now = now
+        self._zone = ZoneInfo(config.ai.timezone)
 
     async def run(self, turn: TurnInput) -> TurnResult:
         cfg = self._config
@@ -134,7 +208,10 @@ class Agent:
         )
         definitions = list(tools.definitions)
         if turn.kind == "owner":
-            definitions.insert(0, END_CONVERSATION_TOOL)
+            local = [END_CONVERSATION_TOOL]
+            if self._memory is not None:
+                local += [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
+            definitions[:0] = local
 
         state = _State()
         state.messages.append(
@@ -144,6 +221,7 @@ class Agent:
                     cfg.ai.persona,
                     owner_address=cfg.ai.owner_address,
                     ask=turn.kind == "ask",
+                    today=self._now().astimezone(self._zone).date(),
                     unavailable=tools.unavailable,
                     instructions=tools.instructions,
                 ),
@@ -215,6 +293,12 @@ class Agent:
                 "The conversation will be archived after your reply. "
                 "Reply with a short closing line.",
             )
+        elif (
+            call.name in (SEARCH_CONVERSATIONS, RECALL_CONVERSATION)
+            and turn.kind == "owner"
+            and self._memory is not None
+        ):
+            outcome = await self._memory_tool(self._memory, call)
         else:
             outcome = await call_tool(
                 tools,
@@ -226,6 +310,20 @@ class Agent:
             )
         await self._record(turn, state.seq, call, outcome)
         return outcome
+
+    async def _memory_tool(self, memory: MemoryTools, call: ToolCall) -> ToolOutcome:
+        arguments = parse_arguments(call.arguments)
+        if isinstance(arguments, str):
+            return ToolOutcome(False, arguments)
+        try:
+            if call.name == SEARCH_CONVERSATIONS:
+                return await memory.search(
+                    arguments.get("query"), arguments.get("after"), arguments.get("before")
+                )
+            return await memory.recall(arguments.get("id"))
+        except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
+            log.exception("tool %s failed", call.name)
+            return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")
 
     async def _record(
         self, turn: TurnInput, seq: int, call: ToolCall, outcome: ToolOutcome

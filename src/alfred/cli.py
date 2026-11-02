@@ -39,7 +39,11 @@ def cmd_migrate() -> int:
     except ConfigError as exc:
         print(f"alfred: {exc}", file=sys.stderr)
         return 2
-    migrate.upgrade(url=url)
+    try:
+        migrate.upgrade(url=url)
+    except migrate.MigrationError as exc:
+        print(f"alfred: migration failed: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -65,8 +65,9 @@ async def test_archived_conversations_are_kept(
     history = History(sessions)
     old = await history.append("owner", "old topic")
     await history.append("assistant", "ok")
-    new = await history.reset()
-    assert new != old
+    reset = await history.reset()
+    assert reset.archived_id == old
+    assert reset.new_id != old
 
     assert await history.recent(30) == []
     async with sessions() as session:
@@ -83,7 +84,7 @@ async def test_notice_after_reset_lands_in_new_conversation(
 ) -> None:
     history = History(sessions)
     await history.append("owner", "before")
-    new = await history.reset()
+    new = (await history.reset()).new_id
     landed = await history.append("notice", "backup done", source="backup")
     assert landed == new
     assert [e.text for e in await history.recent(30)] == ["backup done"]
@@ -93,5 +94,76 @@ async def test_reset_without_current_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    new = await history.reset()
-    assert await history.current_conversation_id() == new
+    reset = await history.reset()
+    assert reset.archived_id is None
+    assert await history.current_conversation_id() == reset.new_id
+
+
+# --- recalls in the window -------------------------------------------------------
+
+
+async def add_archived(sessions: async_sessionmaker[AsyncSession], cid: int, title: str) -> None:
+    async with sessions.begin() as session:
+        session.add(
+            Conversation(id=cid, ended_at=func.now(), title=title, summary=f"Summary of {title}.")
+        )
+
+
+async def add_recall(sessions: async_sessionmaker[AsyncSession], cid: int, text_: str) -> None:
+    current = await History(sessions).current_conversation_id()
+    async with sessions.begin() as session:
+        session.add(
+            Entry(
+                conversation_id=current,
+                kind="recall",
+                text=text_,
+                recalled_conversation_id=cid,
+            )
+        )
+
+
+async def test_recall_in_the_window(sessions: async_sessionmaker[AsyncSession]) -> None:
+    await add_archived(sessions, 41, "Chicken thighs recipe")
+    history = History(sessions)
+    await history.append("owner", "remember the chicken recipe?")
+    await add_recall(sessions, 41, '#41 "Chicken thighs recipe", ...\nOwner: chicken?')
+    await history.append("assistant", "Lemon and garlic, sir.")
+    messages = to_messages(await history.recent(30))
+    assert messages[1] == {
+        "role": "user",
+        "content": '[recall:#41 "Chicken thighs recipe"] #41 "Chicken thighs recipe", ...\n'
+        "Owner: chicken?",
+    }
+
+
+async def test_only_newest_recall_in_full(sessions: async_sessionmaker[AsyncSession]) -> None:
+    await add_archived(sessions, 41, "Chicken thighs recipe")
+    await add_archived(sessions, 57, "Disk full")
+    history = History(sessions)
+    await add_recall(sessions, 41, "full transcript of 41")
+    await history.append("owner", "and the disk one?")
+    await add_recall(sessions, 57, "full transcript of 57")
+    messages = [m["content"] for m in to_messages(await history.recent(30))]
+    assert messages == [
+        '[recall:#41 "Chicken thighs recipe"] Summary: Summary of Chicken thighs recipe.',
+        "and the disk one?",
+        '[recall:#57 "Disk full"] full transcript of 57',
+    ]
+
+
+async def test_recall_counts_as_one_entry(sessions: async_sessionmaker[AsyncSession]) -> None:
+    await add_archived(sessions, 41, "Chicken thighs recipe")
+    history = History(sessions)
+    await history.append("owner", "m1")
+    await add_recall(sessions, 41, "line\n" * 1000)
+    await history.append("owner", "m2")
+    entries = await history.recent(2)
+    assert [e.kind for e in entries] == ["recall", "owner"]
+    assert entries[0].recalled_id == 41
+    assert entries[0].recalled_title == "Chicken thighs recipe"
+    assert entries[0].recalled_summary == "Summary of Chicken thighs recipe."
+
+
+def test_recall_without_title() -> None:
+    entry = HistoryEntry("recall", None, "transcript", 41)
+    assert to_messages([entry]) == [{"role": "user", "content": "[recall:#41] transcript"}]

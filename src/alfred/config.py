@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     AfterValidator,
@@ -66,6 +67,14 @@ def _check_http_url(value: str) -> str:
     return value.rstrip("/")
 
 
+def _check_timezone(value: str) -> str:
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError("unknown timezone; use an IANA name such as Europe/Lisbon") from None
+    return value
+
+
 def _check_token_env(value: str) -> str:
     if not _TOKEN_ENV.fullmatch(value):
         raise ValueError("must name an ALFRED_* environment variable (A-Z, 0-9, _)")
@@ -75,6 +84,7 @@ def _check_token_env(value: str) -> str:
 Name = Annotated[str, AfterValidator(_check_name)]
 HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
 TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
+TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
 PositiveInt = Annotated[int, Field(gt=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
 
@@ -98,6 +108,8 @@ class AIConfig(_Section):
     tool_result_max_chars: PositiveInt = 4000
     persona: Annotated[str, Field(min_length=1)] | None = None
     owner_address: Annotated[str, Field(min_length=1)] = "sir"
+    # The owner's timezone: today's date in the prompt, and search dates.
+    timezone: TimeZoneName = "Europe/Lisbon"
 
 
 class HistoryConfig(_Section):
@@ -113,6 +125,21 @@ class QueueConfig(_Section):
         if self.retry_max_s < self.retry_initial_s:
             raise ValueError("retry_max_s must not be smaller than retry_initial_s")
         return self
+
+
+class MemoryConfig(_Section):
+    """Summaries, search and recall of archived conversations (memory design D11)."""
+
+    # None: the ``[ai]`` model (see :attr:`Config.summary_model`).
+    summary_model: Annotated[str, Field(min_length=1)] | None = None
+    embedding_base_url: HttpUrlStr = "http://ragman.lan"
+    embedding_model: Annotated[str, Field(min_length=1)] = "nomic-embed-text:v1.5"
+    embedding_timeout_s: PositiveFloat = 30
+    document_prefix: str = "search_document: "
+    query_prefix: str = "search_query: "
+    recall_max_chars: PositiveInt = 32000
+    summary_input_max_chars: PositiveInt = 60000
+    search_results: PositiveInt = 5
 
 
 class MCPConfig(_Section):
@@ -147,6 +174,7 @@ class FileConfig(_Section):
     ai: AIConfig = AIConfig()
     history: HistoryConfig = HistoryConfig()
     queue: QueueConfig = QueueConfig()
+    memory: MemoryConfig = MemoryConfig()
     mcp: MCPConfig = MCPConfig()
     server: ServerConfig = ServerConfig()
     services: list[ServiceEntry] = []
@@ -185,6 +213,12 @@ class Config:
     mcp_servers: tuple[McpServer, ...]
     telegram_bot_token: SecretStr
     database_url: SecretStr
+    memory: MemoryConfig = MemoryConfig()
+
+    @property
+    def summary_model(self) -> str:
+        """The model that summarises ended conversations: ``[memory]``'s, else ``[ai]``'s."""
+        return self.memory.summary_model or self.ai.model
 
 
 # --- loading -------------------------------------------------------------------
@@ -235,6 +269,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         ai=parsed.ai,
         history=parsed.history,
         queue=parsed.queue,
+        memory=parsed.memory,
         mcp=parsed.mcp,
         server=parsed.server,
         services=tuple(Service(s.name, SecretStr(service_tokens[s.name])) for s in parsed.services),

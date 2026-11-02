@@ -19,6 +19,8 @@ max_requests_per_turn = 8
 tool_result_max_chars = 4000
 # How alfred addresses you, in its replies and its fixed notices. Used as written.
 owner_address = "sir"
+# Your IANA timezone, for today's date in the prompt and for conversation search dates.
+timezone = "Europe/Lisbon"
 # Replaces the built-in butler persona (alfred's voice) when set. Only the voice:
 # the built-in operating rules (tools, service notices, /ask) are always sent.
 # persona = """..."""
@@ -31,6 +33,25 @@ max_entries = 30
 # Retry delay while the AI is unreachable: starts here and doubles up to retry_max_s.
 retry_initial_s = 30
 retry_max_s = 900
+
+[memory]
+# Model that titles and summarises ended conversations, on [ai] base_url. Default: [ai] model.
+# summary_model = "gemma4:12b-it-qat"
+# OpenAI-compatible embedding server; alfred posts to {embedding_base_url}/v1/embeddings.
+embedding_base_url = "http://ragman.lan"
+# Changing the model re-embeds archived conversations in the background.
+embedding_model = "nomic-embed-text:v1.5"
+# Seconds per embedding request.
+embedding_timeout_s = 30
+# Text put before stored summaries and before search queries; model-specific (nomic's here).
+document_prefix = "search_document: "
+query_prefix = "search_query: "
+# Largest recalled conversation, in characters; longer ones become summary + transcript end.
+recall_max_chars = 32000
+# Most transcript characters sent to the summary model; longer ones keep start and end.
+summary_input_max_chars = 60000
+# Most conversations one search returns.
+search_results = 5
 
 [mcp]
 # Seconds to wait for each server's tool list at the start of a turn.

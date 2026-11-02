@@ -1,13 +1,18 @@
 """System prompt and the per-turn additions to it.
 
 The prompt is layered (design D1): the persona (alfred's voice, replaceable
-from config), then the built-in operating rules, then the instructions of
-this turn's MCP servers, then this turn's other additions.
+from config), then the built-in operating rules ending with today's date,
+then the instructions of this turn's MCP servers, then this turn's other
+additions.
+
+The date has no time of day (memory design D12): the prompt then changes at
+most once a day, so the AI server can keep reusing its processed prefix.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import date
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,6 +55,10 @@ Some messages in the conversation are not from the owner:
 - A message starting with [ask:<service>] is a request from the service <service>, \
 asking you whether the owner needs to know something. The assistant message after \
 it is what the owner was told.
+- A message starting with [recall:#<id> "<title>"] is an earlier, archived \
+conversation that was brought back into this one at the owner's request. The owner \
+did not just say it. Use it to answer, and tell the owner which conversation it was \
+(its number, title and date) when that helps.
 The owner may ask follow-up questions about these."""
 
 ASK_RULE = f"""\
@@ -57,6 +66,11 @@ This turn was started by the service shown in the last message, not by the owner
 Decide whether the owner needs to hear about it. If not, answer exactly {NO_REPLY} \
 and nothing else. Otherwise write the short message the owner should receive; it \
 will be sent to them as is."""
+
+
+def today_line(today: date) -> str:
+    """``Today is Monday, 2 November 2026.``"""
+    return f"Today is {today:%A}, {today.day} {today:%B %Y}."
 
 
 def butler_persona(owner_address: str) -> str:
@@ -85,11 +99,12 @@ def system_prompt(
     *,
     owner_address: str,
     ask: bool,
+    today: date,
     unavailable: Sequence[str] = (),
     instructions: Sequence[ServerInstructions] = (),
 ) -> str:
-    """Persona, operating rules, server instructions, then this turn's other additions."""
-    parts = [persona or butler_persona(owner_address), OPERATING_RULES]
+    """Persona, operating rules and date, server instructions, then other additions."""
+    parts = [persona or butler_persona(owner_address), OPERATING_RULES, today_line(today)]
     parts += [server_instructions(item) for item in instructions]
     if unavailable:
         parts.append(unavailable_note(unavailable))

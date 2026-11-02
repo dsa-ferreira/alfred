@@ -13,8 +13,12 @@ and the homelab services.
   AI decide whether the owner needs to hear about something.
 - **Memory.** One current conversation is kept in Postgres. The AI sees the
   most recent entries, including service notices. Saying the conversation is
-  over ("thanks, we're done") starts a fresh one, marked in the chat with
-  `— new conversation —`.
+  over ("thanks, we're done") archives it with a short title and summary and
+  starts a fresh one, marked in the chat with `— #41 "Chicken thighs recipe" —`
+  and `— new conversation #42 —`. Later, "remember conversation 41" or
+  "remember when we talked about the chicken recipe last week?" makes the AI
+  search the archived conversations (by meaning through the embedding service
+  on `ragman.lan`, by keywords, and by date) and bring one back.
 - **Outages.** Messages for the AI go through one persisted queue. While the
   AI is unreachable they wait and are retried in order; nothing is lost.
 
@@ -64,9 +68,19 @@ reported together and alfred exits. Error messages never contain secret values.
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
 | `ai.owner_address` | string | `"sir"` | How alfred addresses you, at most once per reply. Also ends the fixed notices (failures, text only). Used as written. |
-| `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices) sent to the model. |
+| `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt and the dates of conversation search use it. An unknown name stops alfred at startup. |
+| `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |
+| `memory.summary_model` | string | `ai.model` | Model that writes the title and summary of an ended conversation, on `ai.base_url`. |
+| `memory.embedding_base_url` | URL | `"http://ragman.lan"` | OpenAI-compatible embedding server. alfred posts to `{embedding_base_url}/v1/embeddings`. |
+| `memory.embedding_model` | string | `"nomic-embed-text:v1.5"` | Embedding model. Changing it re-embeds the archived conversations in the background. |
+| `memory.embedding_timeout_s` | number | `30` | Timeout of one embedding request, in seconds. |
+| `memory.document_prefix` | string | `"search_document: "` | Put before a conversation's title and summary when embedding them. Model-specific (these are nomic's). |
+| `memory.query_prefix` | string | `"search_query: "` | Put before a search query when embedding it. Model-specific. |
+| `memory.recall_max_chars` | integer | `32000` | Largest recalled conversation, in characters. A longer one is recalled as its summary plus the end of its transcript. |
+| `memory.summary_input_max_chars` | integer | `60000` | Most transcript characters sent to the summary model; a longer transcript keeps its start and end. |
+| `memory.search_results` | integer | `5` | Most conversations a search returns. |
 | `mcp.list_timeout_s` | number | `10` | Time allowed for each MCP server's tool list at the start of a turn. A server that doesn't answer is unavailable for that turn. |
 | `mcp.call_timeout_s` | number | `60` | Time allowed for one MCP tool call. |
 | `mcp.instructions_max_chars` | integer | `2000` | Each MCP server's instructions are cut to this many characters (with a `[truncated]` note and a logged warning) before they reach the model. |
@@ -227,17 +241,24 @@ MCP server may be named `alfred`.
 
 alfred is one container running one process. Run exactly one replica: the
 single AI worker and Telegram long polling both assume it. It needs no public
-address; it only makes outbound connections (Telegram, the AI server, the MCP
-servers, Postgres) and serves the API on port `8080`.
+address; it only makes outbound connections (Telegram, the AI server, the
+embedding server, the MCP servers, Postgres) and serves the API on port `8080`.
 
 1. **Database.** Create a database and user on the shared Postgres server:
+
+   The server needs the [pgvector](https://github.com/pgvector/pgvector)
+   extension installed (for example the `pgvector/pgvector:0.8.7-pg17-trixie`
+   image). Creating it needs a superuser, so do it here, not in alfred:
 
    ```sql
    CREATE USER alfred WITH PASSWORD '<password>';
    CREATE DATABASE alfred OWNER alfred;
+   \c alfred
+   CREATE EXTENSION IF NOT EXISTS vector;
    ```
 
    The container runs `alfred migrate` on every start, before `alfred serve`.
+   It stops with a message saying so if the extension is missing.
 
 2. **Telegram bot.** In Telegram, talk to [@BotFather](https://t.me/BotFather),
    send `/newbot`, and keep the token it gives you

@@ -16,6 +16,7 @@ from alfred.config import (
     HistoryConfig,
     MCPConfig,
     McpServer,
+    MemoryConfig,
     QueueConfig,
     ServerConfig,
     Service,
@@ -31,6 +32,7 @@ def make_config(
     ai: dict[str, Any] | None = None,
     history: dict[str, Any] | None = None,
     queue: dict[str, Any] | None = None,
+    memory: dict[str, Any] | None = None,
     mcp_servers: Sequence[McpServer] = (),
     services: Sequence[Service] = (),
 ) -> Config:
@@ -45,6 +47,7 @@ def make_config(
         mcp_servers=tuple(mcp_servers),
         telegram_bot_token=SecretStr("123:test"),
         database_url=SecretStr("postgresql+psycopg://unused"),
+        memory=MemoryConfig(**(memory or {})),
     )
 
 
@@ -92,3 +95,42 @@ async def add_queue_item(
         session.add(item)
         await session.flush()
         return item.id
+
+
+class FakeEmbedder:
+    """Returns scripted vectors (or raises) and records what it embedded.
+
+    Without a script, every text gets ``default``.
+    """
+
+    def __init__(
+        self,
+        script: Sequence[list[float] | Exception] = (),
+        *,
+        model: str = "nomic-embed-text:v1.5",
+        default: list[float] | None = None,
+    ) -> None:
+        self.model = model
+        self.script = list(script)
+        self.default = default
+        self.documents: list[str] = []
+        self.queries: list[str] = []
+
+    async def embed_document(self, text: str) -> list[float]:
+        self.documents.append(text)
+        return self._next()
+
+    async def embed_query(self, text: str) -> list[float]:
+        self.queries.append(text)
+        return self._next()
+
+    def _next(self) -> list[float]:
+        if self.script:
+            step = self.script.pop(0)
+        elif self.default is not None:
+            step = self.default
+        else:
+            raise AssertionError("the fake embedder ran out of scripted vectors")
+        if isinstance(step, Exception):
+            raise step
+        return step

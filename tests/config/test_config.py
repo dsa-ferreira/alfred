@@ -312,3 +312,83 @@ def test_resolved_config_repr_hides_secrets(tmp_path: Path) -> None:
     for secret in SECRETS.values():
         assert secret not in text
     assert "db-pass-xyz" not in text
+
+
+# --- Conversation memory and timezone -------------------------------------------
+
+
+def test_memory_defaults(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL)))
+    memory = config.memory
+    assert config.summary_model == "some-model"  # the [ai] model
+    assert memory.summary_model is None
+    assert memory.embedding_base_url == "http://ragman.lan"
+    assert memory.embedding_model == "nomic-embed-text:v1.5"
+    assert memory.embedding_timeout_s == 30
+    assert (memory.document_prefix, memory.query_prefix) == ("search_document: ", "search_query: ")
+    assert memory.recall_max_chars == 32000
+    assert memory.summary_input_max_chars == 60000
+    assert memory.search_results == 5
+
+
+def test_memory_custom_values(tmp_path: Path) -> None:
+    text = (
+        MINIMAL
+        + """
+[memory]
+summary_model = "small-model"
+embedding_base_url = "https://embed.example.com/"
+embedding_model = "bge-m3"
+embedding_timeout_s = 5
+document_prefix = ""
+query_prefix = "query: "
+recall_max_chars = 16000
+summary_input_max_chars = 20000
+search_results = 3
+"""
+    )
+    config = load_config(env_for(write(tmp_path, text)))
+    memory = config.memory
+    assert config.summary_model == "small-model"
+    assert memory.embedding_base_url == "https://embed.example.com"
+    assert memory.embedding_model == "bge-m3"
+    assert memory.embedding_timeout_s == 5
+    assert (memory.document_prefix, memory.query_prefix) == ("", "query: ")
+    assert memory.recall_max_chars == 16000
+    assert memory.summary_input_max_chars == 20000
+    assert memory.search_results == 3
+
+
+def test_memory_invalid_url(tmp_path: Path) -> None:
+    found = problems(MINIMAL + '\n[memory]\nembedding_base_url = "ragman.lan"\n', tmp_path)
+    assert any("memory.embedding_base_url" in p for p in found)
+
+
+@pytest.mark.parametrize(
+    "key", ["recall_max_chars", "summary_input_max_chars", "search_results", "embedding_timeout_s"]
+)
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_memory_caps_must_be_positive(tmp_path: Path, key: str, value: str) -> None:
+    found = problems(MINIMAL + f"\n[memory]\n{key} = {value}\n", tmp_path)
+    assert any(f"memory.{key}" in p for p in found)
+
+
+def test_memory_unknown_key(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[memory]\nrecall_max_char = 100\n", tmp_path)
+    assert any("memory.recall_max_char" in p and "unknown key" in p for p in found)
+
+
+def test_default_timezone(tmp_path: Path) -> None:
+    assert load_config(env_for(write(tmp_path, MINIMAL))).ai.timezone == "Europe/Lisbon"
+
+
+def test_custom_timezone(tmp_path: Path) -> None:
+    text = MINIMAL.replace('model = "some-model"', 'model = "some-model"\ntimezone = "Asia/Tokyo"')
+    assert load_config(env_for(write(tmp_path, text))).ai.timezone == "Asia/Tokyo"
+
+
+@pytest.mark.parametrize("zone", ["Europe/Lisboa", "", "../etc/passwd"])
+def test_unknown_timezone_is_rejected(tmp_path: Path, zone: str) -> None:
+    text = MINIMAL.replace('model = "some-model"', f'model = "some-model"\ntimezone = "{zone}"')
+    found = problems(text, tmp_path)
+    assert any(p.startswith("ai.timezone:") for p in found), found

@@ -4,17 +4,19 @@ import asyncio
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy import text as sql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
-from alfred.agent.model import ModelFailed, ModelUnreachable
+from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
 from alfred.agent.turn import END_CONVERSATION, Agent
 from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
 from alfred.history import History
-from alfred.queue import NEW_CONVERSATION_MARKER, Queue, Worker, backoff_s
-from tests.helpers import FakeModel, calls, make_config, text
+from alfred.memory.service import Memory
+from alfred.queue import Queue, Worker, backoff_s, reset_marker
+from tests.helpers import FakeEmbedder, FakeModel, calls, make_config, text
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_mcparr
 
@@ -30,7 +32,12 @@ class FakeOutbox:
 
 
 class Setup:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], model: FakeModel) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        model: FakeModel,
+        summary_model: object | None = None,
+    ) -> None:
         cfg = make_config(queue=FAST, mcp_servers=[server_config("mcparr")])
         self.sessions = sessions
         self.model = model
@@ -39,6 +46,14 @@ class Setup:
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
         self.agent = Agent(cfg, model, self.history, sessions, connect)
+        self.memory = None
+        if summary_model is not None:
+            self.memory = Memory(
+                cfg,
+                sessions,
+                summary_model,
+                FakeEmbedder(default=[1.0]),  # type: ignore[arg-type]
+            )
         self.worker = Worker(
             self.queue,
             self.agent,
@@ -46,6 +61,7 @@ class Setup:
             self.outbox,
             cfg.queue,
             owner_address=cfg.ai.owner_address,
+            memory=self.memory,
         )
 
     async def drain(self) -> None:
@@ -286,18 +302,92 @@ async def test_notifying_ask_recorded(sessions: async_sessionmaker[AsyncSession]
 # --- Reset after the turn ------------------------------------------------------
 
 
+SUMMARY = "Title: Chicken thighs recipe\nSummary: Lemon and garlic, 40 minutes at 200°C."
+
+
+async def start_at_41(sessions: async_sessionmaker[AsyncSession]) -> None:
+    """Make the current conversation #41, as in the spec's examples."""
+    async with sessions.begin() as session:
+        await session.execute(sql("INSERT INTO conversations (id) VALUES (41)"))
+        await session.execute(sql("SELECT setval('conversations_id_seq', 41)"))
+
+
+def test_reset_marker() -> None:
+    assert reset_marker(41, "Chicken thighs recipe", 42) == (
+        '— #41 "Chicken thighs recipe" —\n— new conversation #42 —'
+    )
+    assert reset_marker(41, None, 42) == "— #41 archived —\n— new conversation #42 —"
+    assert reset_marker(None, None, 1) == "— new conversation #1 —"
+
+
 async def test_reset_sequence(sessions: async_sessionmaker[AsyncSession]) -> None:
+    await start_at_41(sessions)
     s = Setup(
         sessions,
         FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍"), text("Hi again")]),
+        summary_model=FakeModel([text(SUMMARY)]),
     )
     await s.queue.enqueue_owner("great, that's sorted, we're done here")
     await s.drain()
-    assert s.outbox.sent == ["Done 👍", NEW_CONVERSATION_MARKER]
+    assert s.outbox.sent == [
+        "Done 👍",
+        '— #41 "Chicken thighs recipe" —\n— new conversation #42 —',
+    ]
 
     await s.queue.enqueue_owner("new question")
     await s.drain()
     assert user_messages(s.model, 2) == ["new question"]
+
+
+async def test_reset_marker_without_title_when_summary_fails(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await start_at_41(sessions)
+    s = Setup(
+        sessions,
+        FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍")]),
+        summary_model=FakeModel([ModelUnreachable("brainiac asleep")]),
+    )
+    await s.queue.enqueue_owner("we're done")
+    await s.drain()
+    assert s.outbox.sent == ["Done 👍", "— #41 archived —\n— new conversation #42 —"]
+    assert [i.status for i in await s.items()] == ["done"]
+
+
+async def test_notice_during_summary_lands_in_new_conversation(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await start_at_41(sessions)
+    history = History(sessions)
+
+    transcripts: list[str] = []
+
+    class NoticeWhileSummarising:
+        async def complete(self, messages, tools):  # type: ignore[no-untyped-def]
+            await history.append("notice", "backup ok", source="backup")
+            transcripts.append(messages[-1]["content"])
+            return ModelReply(content=SUMMARY)
+
+    s = Setup(
+        sessions,
+        FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]),
+        summary_model=NoticeWhileSummarising(),
+    )
+    await s.queue.enqueue_owner("we're done")
+    await s.drain()
+    assert await history.current_conversation_id() == 42
+    assert [e.text for e in await history.recent(30)] == ["backup ok"]
+    assert s.outbox.sent[-1].startswith('— #41 "Chicken thighs recipe" —')
+    # The summary is of the archived conversation only.
+    assert transcripts == ["Owner: we're done\nalfred: Bye"]
+
+
+async def test_reset_without_memory_sends_ids(sessions: async_sessionmaker[AsyncSession]) -> None:
+    await start_at_41(sessions)
+    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]))
+    await s.queue.enqueue_owner("we're done")
+    await s.drain()
+    assert s.outbox.sent == ["Bye", "— #41 archived —\n— new conversation #42 —"]
 
 
 async def test_notice_after_reset_in_new_conversation(
