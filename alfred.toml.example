@@ -25,6 +25,13 @@ timezone = "Europe/Lisbon"
 # the built-in operating rules (tools, service notices, /ask) are always sent.
 # persona = """..."""
 
+# Brains the owner can switch between from the chat ("set your brain to bonsai"),
+# as alias = "model tag" on [ai] base_url. Default: none, only [ai] model.
+# [ai] model is the startup brain; it is listed under its tag if no alias names it.
+# [ai.models]
+# gemma = "gemma4:26b-a4b-it-qat"
+# bonsai = "bonsai:8b"
+
 [history]
 # Most recent conversation entries sent to the model each turn.
 max_entries = 30

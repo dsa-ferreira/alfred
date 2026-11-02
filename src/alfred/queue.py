@@ -185,6 +185,8 @@ class Worker:
         await self._complete(item, result)
 
     async def _turn_failed(self, item: QueueItem, failure: TurnFailed) -> None:
+        if failure.fallback_notice is not None:
+            await self._send(item, failure.fallback_notice)
         if failure.retryable:
             attempts = item.attempts + 1
             delay = backoff_s(attempts, self._config)
@@ -201,6 +203,10 @@ class Worker:
             await self._send(item, failure.notice)
 
     async def _complete(self, item: QueueItem, result: TurnResult) -> None:
+        # The owner's brain choice changed, so they hear of it even when an
+        # /ask ends in NO_REPLY. Not recorded: the next prompt names the brain.
+        if result.fallback_notice is not None:
+            await self._send(item, result.fallback_notice)
         if item.kind == "owner":
             await self._history.append("assistant", result.reply, queue_item_id=item.id)
             await self._send(item, result.reply)

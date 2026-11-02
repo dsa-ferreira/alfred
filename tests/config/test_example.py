@@ -38,6 +38,9 @@ def test_example_shows_every_default() -> None:
             if key in ("persona", "summary_model"):  # optional, no default value
                 assert re.search(rf"^# {key} =", EXAMPLE.read_text(), re.M)
                 continue
+            if key == "models":  # a table, shown commented out
+                assert re.search(rf"^# \[{section}\.{key}\]$", EXAMPLE.read_text(), re.M)
+                continue
             assert key in data[section], f"{section}.{key} missing from the example"
             if not info.is_required():
                 assert data[section][key] == info.default, f"{section}.{key} default differs"

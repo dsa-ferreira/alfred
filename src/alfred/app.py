@@ -19,6 +19,7 @@ from collections.abc import Generator
 import uvicorn
 from aiogram import Bot
 
+from alfred.agent.brains import Brains
 from alfred.agent.model import ModelClient
 from alfred.agent.turn import Agent
 from alfred.api import create_app
@@ -73,7 +74,10 @@ async def serve(config: Config) -> None:
         query_prefix=config.memory.query_prefix,
     )
     memory = Memory(config, sessions, summary_model, embedder)
-    agent = Agent(config, model, history, sessions, http_connector(), memory=memory)
+    # Turns pass the current brain's tag per request; summaries never do, so
+    # they stay on the summary model (change add-brain-switching, design D2).
+    brains = Brains(config.ai.model, config.ai.models)
+    agent = Agent(config, model, history, sessions, http_connector(), memory=memory, brains=brains)
     worker = Worker(
         queue,
         agent,
@@ -117,11 +121,12 @@ async def serve(config: Config) -> None:
     }
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(
-        "alfred started: API on %s:%s, model %s at %s, summaries by %s, embeddings by %s at %s, "
-        "%d MCP server(s)",
+        "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
+        "embeddings by %s at %s, %d MCP server(s)",
         config.server.host,
         config.server.port,
-        config.ai.model,
+        brains.current.name,
+        ", ".join(f"{b.name}={b.tag}" for b in brains.brains),
         config.ai.base_url,
         config.summary_model,
         config.memory.embedding_model,

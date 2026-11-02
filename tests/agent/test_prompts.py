@@ -4,6 +4,7 @@ from datetime import date
 from alfred.agent.prompts import (
     NO_REPLY,
     OPERATING_RULES,
+    brain_line,
     butler_persona,
     is_no_reply,
     system_prompt,
@@ -150,3 +151,24 @@ def test_date_with_custom_persona_and_ask() -> None:
     assert "Today is Monday, 2 November 2026." in make_prompt(
         "Be terse.", owner_address="s", ask=True
     )
+
+
+def test_brain_line_with_other_brains() -> None:
+    line = brain_line("bonsai", "bonsai:8b", ["gemma"])
+    assert '"bonsai"' in line and "bonsai:8b" in line and "gemma" in line
+
+
+def test_brain_line_with_one_brain() -> None:
+    assert brain_line("m:1", "m:1") == "You are running on the model m:1."
+
+
+def test_brain_follows_the_date() -> None:
+    line = brain_line("bonsai", "bonsai:8b", ["gemma"])
+    prompt = make_prompt(None, owner_address="sir", ask=True, instructions=[COOKBOOK], brain=line)
+    assert prompt.index(today_line(TODAY)) < prompt.index(line) < prompt.index("cookbook")
+
+
+def test_custom_persona_keeps_the_brain() -> None:
+    line = brain_line("bonsai", "bonsai:8b", ["gemma"])
+    prompt = make_prompt("Be terse.", owner_address="sir", ask=False, brain=line)
+    assert line in prompt

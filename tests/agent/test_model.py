@@ -28,6 +28,17 @@ async def test_content_reply_and_request_shape() -> None:
 
 
 @respx.mock
+async def test_model_chosen_per_request() -> None:
+    route = respx.post(URL).mock(return_value=reply({"content": "ok"}))
+    client = ModelClient("http://ai.lan", "gemma4:26b-a4b-it-qat", 300)
+    await client.complete([], [], model="bonsai:8b")
+    await client.complete([], [])
+    models = [__import__("json").loads(c.request.content)["model"] for c in route.calls]
+    assert models == ["bonsai:8b", "gemma4:26b-a4b-it-qat"]
+    await client.aclose()
+
+
+@respx.mock
 async def test_switch_servers() -> None:
     route = respx.post("https://other.example/v1/chat/completions").mock(
         return_value=reply({"content": "ok"})

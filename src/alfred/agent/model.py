@@ -91,9 +91,18 @@ class ModelClient:
         await self._http.aclose()
 
     async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        model: str | None = None,
     ) -> ModelReply:
-        body: dict[str, Any] = {"model": self._model, "messages": messages, "stream": False}
+        """One request; ``model`` replaces the client's model for this request only."""
+        body: dict[str, Any] = {
+            "model": model or self._model,
+            "messages": messages,
+            "stream": False,
+        }
         if tools:
             body["tools"] = tools
         try:

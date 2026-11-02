@@ -32,3 +32,8 @@ def unreachable_mid(address: str) -> str:
 
 def too_many_steps(address: str, partial: bool = False) -> str:
     return f"I stopped that request after too many steps, {address}." + _partial(partial)
+
+
+def fell_back(address: str, failed: str, default: str) -> str:
+    """The chosen brain failed and alfred went back to the startup brain."""
+    return f"The brain {failed} failed, so I have gone back to {default}, {address}."

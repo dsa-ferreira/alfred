@@ -68,11 +68,17 @@ class FakeModel:
     def __init__(self, script: Sequence[ModelReply | Exception] = ()) -> None:
         self.script = list(script)
         self.requests: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
+        self.models: list[str | None] = []  # the model each request asked for
 
     async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        model: str | None = None,
     ) -> ModelReply:
         self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
+        self.models.append(model)
         if not self.script:
             raise AssertionError("the fake model ran out of scripted replies")
         step = self.script.pop(0)

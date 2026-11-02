@@ -1,8 +1,8 @@
 """System prompt and the per-turn additions to it.
 
 The prompt is layered (design D1): the persona (alfred's voice, replaceable
-from config), then the built-in operating rules ending with today's date,
-then the instructions of this turn's MCP servers, then this turn's other
+from config), then the built-in operating rules ending with today's date and
+the current brain (model), then the instructions of this turn's MCP servers, then this turn's other
 additions.
 
 The date has no time of day (memory design D12): the prompt then changes at
@@ -73,6 +73,16 @@ def today_line(today: date) -> str:
     return f"Today is {today:%A}, {today.day} {today:%B %Y}."
 
 
+def brain_line(name: str, tag: str, others: Sequence[str] = ()) -> str:
+    """Which brain (model) answers this turn, and which others the owner can pick."""
+    if not others:
+        return f"You are running on the model {tag}."
+    return (
+        f'You are running on the brain "{name}" (model {tag}). '
+        f"Other brains the owner can switch you to: {', '.join(others)}."
+    )
+
+
 def butler_persona(owner_address: str) -> str:
     return BUTLER_PERSONA.format(address=owner_address)
 
@@ -102,9 +112,16 @@ def system_prompt(
     today: date,
     unavailable: Sequence[str] = (),
     instructions: Sequence[ServerInstructions] = (),
+    brain: str | None = None,
 ) -> str:
-    """Persona, operating rules and date, server instructions, then other additions."""
+    """Persona, operating rules, date and brain, server instructions, then other additions.
+
+    ``brain`` is a :func:`brain_line`; it sits with the operating rules, so a
+    custom persona can't drop it.
+    """
     parts = [persona or butler_persona(owner_address), OPERATING_RULES, today_line(today)]
+    if brain:
+        parts.append(brain)
     parts += [server_instructions(item) for item in instructions]
     if unavailable:
         parts.append(unavailable_note(unavailable))

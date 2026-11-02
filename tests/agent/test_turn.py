@@ -10,12 +10,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
+from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelUnreachable, Usage
-from alfred.agent.prompts import NO_REPLY, OPERATING_RULES, butler_persona, server_instructions
+from alfred.agent.prompts import (
+    NO_REPLY,
+    OPERATING_RULES,
+    brain_line,
+    butler_persona,
+    server_instructions,
+)
 from alfred.agent.turn import (
     END_CONVERSATION,
     RECALL_CONVERSATION,
     SEARCH_CONVERSATIONS,
+    SET_MODEL,
     Agent,
     TurnFailed,
     TurnInput,
@@ -35,7 +43,11 @@ COOKBOOK = server_config("cookbook")
 COOKBOOK_SECTION = server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS))
 # Monday 2 November 2026, 14:05 in Lisbon (WET, UTC+0).
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
-RULES = OPERATING_RULES + "\n\nToday is Monday, 2 November 2026."
+RULES = (
+    OPERATING_RULES
+    + "\n\nToday is Monday, 2 November 2026."
+    + "\n\nYou are running on the model gemma4:26b-a4b-it-qat."
+)
 
 
 def agent(
@@ -43,12 +55,22 @@ def agent(
     model: FakeModel,
     *,
     memory: Memory | None = None,
+    brains: Brains | None = None,
     now: datetime = NOW,
     **config: object,
 ) -> Agent:
     cfg = make_config(mcp_servers=[MCPARR, COOKBOOK], **config)  # type: ignore[arg-type]
     connect = in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()})
-    return Agent(cfg, model, History(sessions), sessions, connect, memory=memory, now=lambda: now)
+    return Agent(
+        cfg,
+        model,
+        History(sessions),
+        sessions,
+        connect,
+        memory=memory,
+        brains=brains,
+        now=lambda: now,
+    )
 
 
 def memory(sessions: async_sessionmaker[AsyncSession], embedder: FakeEmbedder) -> Memory:
@@ -198,7 +220,8 @@ async def test_context_size_line(
         f"(instructions: cookbook {len(COOKBOOK_INSTRUCTIONS)}); "
         f"tools {len(tools)} defs {mcparr + cookbook + local} chars "
         f"(mcparr {mcparr}, cookbook {cookbook}, alfred {local}); "
-        f"history 3 entries {size(messages[1:])} chars"
+        f"history 3 entries {size(messages[1:])} chars; "
+        "brain gemma4:26b-a4b-it-qat"
     )
     assert turn_lines(caplog, turn, "context:") == [expected]
     for private in ("my private earlier message", "a private reply", COOKBOOK_INSTRUCTIONS):
@@ -570,3 +593,178 @@ async def test_date_follows_the_configured_timezone(
         await owner_turn(sessions, "hi")
     )
     assert "Today is Monday, 2 November 2026." in model.requests[0][0][0]["content"]
+
+
+# --- brains ----------------------------------------------------------------------
+
+GEMMA = "gemma4:26b-a4b-it-qat"
+BRAINS = {"gemma": GEMMA, "bonsai": "bonsai:8b"}
+BAD_MODEL = ModelFailed("model server answered HTTP 400: model does not support tools")
+
+
+def two_brains(current: str = "gemma") -> Brains:
+    brains = Brains(GEMMA, BRAINS)
+    brains.set(current)
+    return brains
+
+
+def set_model(name: str) -> object:
+    return calls((SET_MODEL, json.dumps({"model": name})))
+
+
+def tool_result(model: FakeModel, request: int) -> str:
+    return model.requests[request][0][-1]["content"]
+
+
+async def test_another_brain_chosen(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, brains=two_brains("bonsai")).run(await owner_turn(sessions, "hi"))
+    assert model.models == ["bonsai:8b"]
+    assert brain_line("bonsai", "bonsai:8b", ["gemma"]) in model.requests[0][0][0]["content"]
+
+
+async def test_switch_applies_from_the_next_turn(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    brains = two_brains()
+    model = FakeModel([set_model("bonsai"), text("Very good, sir."), text("bonsai here")])
+    with caplog.at_level(logging.INFO):
+        first = await agent(sessions, model, brains=brains).run(
+            await owner_turn(sessions, "set your brain to bonsai")
+        )
+    assert first.reply == "Very good, sir." and first.fallback_notice is None
+    assert "bonsai" in tool_result(model, 1) and "next message" in tool_result(model, 1)
+    assert brains.current.name == "bonsai"
+    await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "hi"))
+    assert model.models == [GEMMA, GEMMA, "bonsai:8b"]
+    assert brain_line("bonsai", "bonsai:8b", ["gemma"]) in model.requests[2][0][0]["content"]
+    assert any(
+        "switched" in r.getMessage() and "gemma" in r.getMessage() and "bonsai" in r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO
+    )
+    [row] = await tool_rows(sessions)
+    assert row.tool == SET_MODEL and row.arguments == {"model": "bonsai"} and row.ok
+
+
+async def test_set_model_offered_with_the_brain_names(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, brains=two_brains()).run(await owner_turn(sessions, "hi"))
+    [tool] = [t for t in model.requests[0][1] if t["function"]["name"] == SET_MODEL]
+    parameters = tool["function"]["parameters"]
+    assert parameters["properties"]["model"]["enum"] == ["gemma", "bonsai"]
+    assert "brain" in tool["function"]["description"]
+
+
+async def test_set_model_not_offered_with_one_brain(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model).run(await owner_turn(sessions, "hi"))
+    assert SET_MODEL not in model.tool_names()
+
+
+async def test_ask_turns_cant_switch(sessions: async_sessionmaker[AsyncSession]) -> None:
+    item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
+    model = FakeModel([text(NO_REPLY)])
+    await agent(sessions, model, brains=two_brains()).run(
+        TurnInput("ask", "anything?", item, "disk-check")
+    )
+    assert SET_MODEL not in model.tool_names()
+
+
+async def test_unknown_brain(sessions: async_sessionmaker[AsyncSession]) -> None:
+    brains = two_brains()
+    model = FakeModel([set_model("claude"), text("No such brain, sir.")])
+    await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "use claude"))
+    result = tool_result(model, 1)
+    assert result.startswith("Error:") and "gemma" in result and "bonsai" in result
+    assert brains.current.name == "gemma"
+
+
+async def test_brain_already_current(sessions: async_sessionmaker[AsyncSession]) -> None:
+    brains = two_brains()
+    model = FakeModel([set_model("gemma"), text("Already so, sir.")])
+    await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "use gemma"))
+    assert "already in use" in tool_result(model, 1)
+    assert brains.current.name == "gemma"
+
+
+# --- fallback --------------------------------------------------------------------
+
+FELL_BACK = notices.fell_back("sir", "bonsai", "gemma")
+
+
+async def test_fallback_before_any_tool_runs_the_turn_again(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    brains = two_brains("bonsai")
+    model = FakeModel([BAD_MODEL, text("gemma's answer")])
+    with caplog.at_level(logging.WARNING):
+        result = await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "hi"))
+    assert result.reply == "gemma's answer" and result.fallback_notice == FELL_BACK
+    assert model.models == ["bonsai:8b", GEMMA]
+    assert brains.current.name == "gemma"
+    retry = model.requests[1][0]
+    assert brain_line("gemma", GEMMA, ["bonsai"]) in retry[0]["content"]
+    assert [m["content"] for m in retry[1:]] == ["hi"]
+    [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "bonsai" in warning and "gemma" in warning and "does not support tools" in warning
+
+
+async def test_fallback_after_a_tool_ran(sessions: async_sessionmaker[AsyncSession]) -> None:
+    brains = two_brains("bonsai")
+    model = FakeModel([calls(("mcparr_get_downloads", "{}")), BAD_MODEL])
+    with pytest.raises(TurnFailed) as exc:
+        await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "downloads?"))
+    assert exc.value.notice == notices.failed("sir", True)
+    assert exc.value.fallback_notice == FELL_BACK
+    assert not exc.value.retryable and exc.value.side_effects_possible
+    assert model.models == ["bonsai:8b", "bonsai:8b"]
+    assert brains.current.name == "gemma"
+
+
+async def test_startup_brain_fails_after_a_fallback(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([BAD_MODEL, BAD_MODEL])
+    with pytest.raises(TurnFailed) as exc:
+        await agent(sessions, model, brains=two_brains("bonsai")).run(
+            await owner_turn(sessions, "hi")
+        )
+    assert exc.value.notice == notices.failed("sir")
+    assert exc.value.fallback_notice == FELL_BACK
+    assert model.models == ["bonsai:8b", GEMMA]
+
+
+async def test_startup_brain_failure_has_no_fallback(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([BAD_MODEL])
+    with pytest.raises(TurnFailed) as exc:
+        await agent(sessions, model, brains=two_brains()).run(await owner_turn(sessions, "hi"))
+    assert exc.value.fallback_notice is None and model.models == [GEMMA]
+
+
+async def test_unreachable_server_does_not_fall_back(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    brains = two_brains("bonsai")
+    model = FakeModel([ModelUnreachable("can't reach the model server (ConnectError)")])
+    with pytest.raises(TurnFailed) as exc:
+        await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "hi"))
+    assert exc.value.retryable and exc.value.fallback_notice is None
+    assert brains.current.name == "bonsai"
+
+
+async def test_ask_turn_falls_back(sessions: async_sessionmaker[AsyncSession]) -> None:
+    brains = two_brains("bonsai")
+    item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
+    model = FakeModel([BAD_MODEL, text(NO_REPLY)])
+    result = await agent(sessions, model, brains=brains).run(
+        TurnInput("ask", "anything?", item, "disk-check")
+    )
+    assert result.reply == NO_REPLY and result.fallback_notice == FELL_BACK
+    assert brains.current.name == "gemma"

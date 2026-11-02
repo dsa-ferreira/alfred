@@ -10,6 +10,7 @@ from sqlalchemy import text as sql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
+from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
 from alfred.agent.turn import END_CONVERSATION, Agent
@@ -39,6 +40,7 @@ class Setup:
         sessions: async_sessionmaker[AsyncSession],
         model: FakeModel,
         summary_model: object | None = None,
+        brains: Brains | None = None,
     ) -> None:
         cfg = make_config(queue=FAST, mcp_servers=[server_config("mcparr")])
         self.sessions = sessions
@@ -47,7 +49,7 @@ class Setup:
         self.queue = Queue(sessions)
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
-        self.agent = Agent(cfg, model, self.history, sessions, connect)
+        self.agent = Agent(cfg, model, self.history, sessions, connect, brains=brains)
         self.memory = None
         if summary_model is not None:
             self.memory = Memory(
@@ -494,3 +496,77 @@ async def test_typing_stops_before_failure_notice(
     while await worker.step():
         pass
     assert events == ["typing on", "typing off", f"send {notices.failed('sir')}"]
+
+
+# --- Brain fallback notice -------------------------------------------------------
+
+BAD_MODEL = ModelFailed("model server answered HTTP 400: model does not support tools")
+FELL_BACK = notices.fell_back("sir", "bonsai", "gemma")
+
+
+def on_bonsai() -> Brains:
+    brains = Brains("gemma4:26b-a4b-it-qat", {"gemma": "gemma4:26b-a4b-it-qat", "bonsai": "b:8b"})
+    brains.set("bonsai")
+    return brains
+
+
+async def test_fallback_notice_before_the_reply(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    s = Setup(sessions, FakeModel([BAD_MODEL, text("gemma's answer")]), brains=on_bonsai())
+    await s.queue.enqueue_owner("hi")
+    await s.drain()
+    assert s.outbox.sent == [FELL_BACK, "gemma's answer"]
+    contents = [e.text for e in await s.history.recent(10)]
+    assert contents == ["hi", "gemma's answer"]
+
+
+async def test_fallback_notice_before_the_failure_notice(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(("mcparr_get_downloads", "{}")), BAD_MODEL])
+    s = Setup(sessions, model, brains=on_bonsai())
+    await s.queue.enqueue_owner("downloads?")
+    await s.drain()
+    assert s.outbox.sent == [FELL_BACK, notices.failed("sir", True)]
+
+
+async def test_fallback_notice_on_a_no_reply_ask(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    s = Setup(sessions, FakeModel([BAD_MODEL, text(NO_REPLY)]), brains=on_bonsai())
+    await s.queue.enqueue_ask("disk-check", "93%")
+    await s.drain()
+    assert s.outbox.sent == [FELL_BACK]
+
+
+async def test_fallback_notice_on_a_failed_ask(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    s = Setup(sessions, FakeModel([BAD_MODEL, BAD_MODEL]), brains=on_bonsai())
+    await s.queue.enqueue_ask("disk-check", "93%")
+    await s.drain()
+    assert s.outbox.sent == [FELL_BACK]
+
+
+async def test_fallback_notice_sent_once_across_a_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([BAD_MODEL, ModelUnreachable("model request timed out"), text("ok")])
+    s = Setup(sessions, model, brains=on_bonsai())
+    await s.queue.enqueue_owner("hi")
+    await s.drain()
+    assert s.outbox.sent == [FELL_BACK, "ok"]
+
+
+async def test_summary_ignores_the_chosen_brain(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    # One client for turns and summaries, as in serve when no summary model is
+    # set: turns ask for the brain's tag, the summary for the client's own model.
+    await start_at_41(sessions)
+    model = FakeModel([calls((END_CONVERSATION, "{}")), text("Done."), text(SUMMARY)])
+    s = Setup(sessions, model, summary_model=model, brains=on_bonsai())
+    await s.queue.enqueue_owner("we're done")
+    await s.drain()
+    assert model.models == ["b:8b", "b:8b", None]

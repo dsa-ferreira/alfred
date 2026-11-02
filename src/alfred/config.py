@@ -30,6 +30,8 @@ from pydantic import (
     Field,
     SecretStr,
     ValidationError,
+    ValidationInfo,
+    field_validator,
     model_validator,
 )
 
@@ -110,6 +112,27 @@ class AIConfig(_Section):
     owner_address: Annotated[str, Field(min_length=1)] = "sir"
     # The owner's timezone: today's date in the prompt, and search dates.
     timezone: TimeZoneName = "Europe/Lisbon"
+    # The brains the owner can switch between: alias -> model tag.
+    models: dict[Name, Annotated[str, Field(min_length=1)]] = {}
+
+    @field_validator("models")
+    @classmethod
+    def _check_models(cls, models: dict[str, str], info: ValidationInfo) -> dict[str, str]:
+        by_tag: dict[str, list[str]] = {}
+        for alias, tag in models.items():
+            by_tag.setdefault(tag, []).append(alias)
+        problems = [
+            "aliases " + ", ".join(repr(a) for a in aliases) + f" all name {tag!r}"
+            for tag, aliases in by_tag.items()
+            if len(aliases) > 1
+        ]
+        # The startup model is a brain under its own tag when no alias names it.
+        model = info.data.get("model")
+        if isinstance(model, str) and model not in by_tag and model in models:
+            problems.append(f"alias {model!r} is also the name of the [ai] model's brain")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return models
 
 
 class HistoryConfig(_Section):
@@ -389,6 +412,8 @@ def _describe(error: Mapping[str, Any], data: Mapping[str, Any]) -> str:
     parts: list[str] = []
     node: Any = data
     for item in loc:
+        if item == "[key]":  # a dict key that failed validation; the key is already named
+            continue
         if isinstance(item, int):
             name = node[item].get("name") if isinstance(node, list) and item < len(node) else None
             entry = node[item] if isinstance(node, list) and item < len(node) else None

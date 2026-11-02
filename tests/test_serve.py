@@ -168,3 +168,4 @@ async def test_memory_wiring_and_clients_closed(
     }
     assert all(c.closed for c in clients)
     assert isinstance(agents[0]["memory"], Memory)
+    assert agents[0]["brains"].names == ["gemma4:26b-a4b-it-qat"]

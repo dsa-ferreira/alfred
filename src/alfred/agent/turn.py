@@ -5,11 +5,16 @@ tools = alfred_* local tools (owner turns only) + tools of reachable MCP servers
 msgs  = [system prompt (+ today's date, reachable servers' instructions)]
         + last N history entries (+ the ask input)
 loop up to ai.max_requests_per_turn:
-    reply = model(msgs, tools)
+    reply = model(msgs, tools)          # on the brain current at the turn's start
     no tool calls -> done
     run each call in order; errors become results; any call => side effects possible
 fail "stopped after too many steps"
 ```
+
+A non-retryable model error on a brain other than the startup one makes the
+startup brain current (change add-brain-switching, design D5). If no tool
+had run, the turn runs again from the start on it; either way the owner gets
+the fallback notice.
 
 An owner message is already in the history when its turn runs (the worker
 records it at turn start), so it reaches the model as the newest entry. An
@@ -19,6 +24,7 @@ added to the messages here.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from collections.abc import Callable
@@ -30,8 +36,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
+from alfred.agent.brains import Brain, Brains
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
-from alfred.agent.prompts import system_prompt
+from alfred.agent.prompts import brain_line, system_prompt
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
 from alfred.history import History, to_messages
@@ -124,9 +131,43 @@ RECALL_CONVERSATION_TOOL: dict[str, Any] = {
 }
 
 
+SET_MODEL = "alfred_set_model"
+
+
+def set_model_tool(names: list[str]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": SET_MODEL,
+            "description": (
+                "Switch the model that answers the owner, from their next message on. The "
+                "owner may call it your model or your brain (for example 'change brains to "
+                "gemma', 'set your brain to bonsai', 'use the bonsai model'). Call this ONLY "
+                "when the owner asks to switch. The system prompt says which brain you are "
+                "running on. After calling it, reply with a short confirmation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "model": {
+                        "type": "string",
+                        "enum": names,
+                        "description": "The brain to switch to.",
+                    }
+                },
+                "required": ["model"],
+            },
+        },
+    }
+
+
 class Model(Protocol):
     async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        model: str | None = None,
     ) -> ModelReply: ...
 
 
@@ -153,6 +194,8 @@ class TurnResult:
     reply: str
     reset_requested: bool
     side_effects_possible: bool
+    # Sent to the owner before the reply: the chosen brain failed (design D5).
+    fallback_notice: str | None = None
 
 
 class TurnFailed(Exception):
@@ -160,21 +203,40 @@ class TurnFailed(Exception):
 
     ``reason`` is for logs and the queue row; ``notice`` is the short text
     the owner may be shown. ``retryable`` is true only when the AI was
-    unreachable and no tool had run yet.
+    unreachable and no tool had run yet. ``fallback_notice``, when set, is
+    sent to the owner in any case: the chosen brain failed in this turn.
     """
 
     def __init__(
-        self, reason: str, notice: str, *, retryable: bool, side_effects_possible: bool
+        self,
+        reason: str,
+        notice: str,
+        *,
+        retryable: bool,
+        side_effects_possible: bool,
+        fallback_notice: str | None = None,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.notice = notice
         self.retryable = retryable
         self.side_effects_possible = side_effects_possible
+        self.fallback_notice = fallback_notice
+
+
+class _BrainFailed(Exception):
+    """A non-retryable model error on a brain that can still fall back."""
+
+    def __init__(self, reason: str, side_effects: bool) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.side_effects = side_effects
 
 
 @dataclass
 class _State:
+    brain: Brain
+    can_fall_back: bool
     side_effects: bool = False
     reset: bool = False
     seq: int = 0
@@ -191,9 +253,11 @@ class Agent:
         connect: Connector,
         *,
         memory: MemoryTools | None = None,
+        brains: Brains | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
+        self._brains = brains or Brains(config.ai.model, config.ai.models)
         self._model = model
         self._history = history
         self._sessions = sessions
@@ -215,9 +279,56 @@ class Agent:
             local = [END_CONVERSATION_TOOL]
             if self._memory is not None:
                 local += [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
+            if len(self._brains.brains) > 1:
+                local.append(set_model_tool(self._brains.names))
             definitions[:0] = local
 
-        state = _State()
+        fallback_notice: str | None = None
+        while True:
+            # The brain is read once per attempt: a switch made during the
+            # turn applies from the next turn (design D3).
+            brain = self._brains.current
+            try:
+                result = await self._attempt(
+                    turn, tools, definitions, brain, can_fall_back=fallback_notice is None
+                )
+            except _BrainFailed as failure:
+                default = self._brains.default
+                self._brains.current = default
+                log.warning(
+                    "turn %s: brain %s failed (%s); back on %s",
+                    turn.queue_item_id,
+                    brain.name,
+                    failure.reason,
+                    default.name,
+                )
+                fallback_notice = notices.fell_back(cfg.ai.owner_address, brain.name, default.name)
+                if not failure.side_effects:
+                    continue
+                raise TurnFailed(
+                    f"{failure.reason} (on brain {brain.name}; after a tool ran, not run again)",
+                    notices.failed(cfg.ai.owner_address, True),
+                    retryable=False,
+                    side_effects_possible=True,
+                    fallback_notice=fallback_notice,
+                ) from None
+            except TurnFailed as failure:
+                failure.fallback_notice = failure.fallback_notice or fallback_notice
+                raise
+            return dataclasses.replace(result, fallback_notice=fallback_notice)
+
+    async def _attempt(
+        self,
+        turn: TurnInput,
+        tools: TurnTools,
+        definitions: list[dict[str, Any]],
+        brain: Brain,
+        *,
+        can_fall_back: bool,
+    ) -> TurnResult:
+        cfg = self._config
+        others = [b.name for b in self._brains.brains if b != brain]
+        state = _State(brain, can_fall_back and brain != self._brains.default)
         state.messages.append(
             {
                 "role": "system",
@@ -228,6 +339,7 @@ class Agent:
                     today=self._now().astimezone(self._zone).date(),
                     unavailable=tools.unavailable,
                     instructions=tools.instructions,
+                    brain=brain_line(brain.name, brain.tag, others),
                 ),
             }
         )
@@ -236,9 +348,10 @@ class Agent:
             state.messages.append({"role": "user", "content": f"[ask:{turn.source}] {turn.text}"})
 
         log.info(
-            "turn %s context: %s",
+            "turn %s context: %s; brain %s",
             turn.queue_item_id,
             context_sizes(state.messages, tools.instructions, definitions, tools.routes),
+            brain.name,
         )
         if log.isEnabledFor(logging.DEBUG):
             log.debug("turn %s largest tools: %s", turn.queue_item_id, largest_tools(definitions))
@@ -267,7 +380,7 @@ class Agent:
 
     async def _ask_model(self, state: _State, definitions: list[dict[str, Any]]) -> ModelReply:
         try:
-            return await self._model.complete(state.messages, definitions)
+            return await self._model.complete(state.messages, definitions, model=state.brain.tag)
         except ModelUnreachable as exc:
             if not state.side_effects:
                 raise TurnFailed(
@@ -283,6 +396,8 @@ class Agent:
                 side_effects_possible=True,
             ) from None
         except ModelFailed as exc:
+            if state.can_fall_back:
+                raise _BrainFailed(str(exc), state.side_effects) from None
             raise self._failed(state, str(exc)) from None
 
     def _failed(self, state: _State, reason: str) -> TurnFailed:
@@ -312,6 +427,8 @@ class Agent:
             and self._memory is not None
         ):
             outcome = await self._memory_tool(self._memory, call)
+        elif call.name == SET_MODEL and turn.kind == "owner" and len(self._brains.brains) > 1:
+            outcome = self._set_model(turn, call)
         else:
             outcome = await call_tool(
                 tools,
@@ -323,6 +440,25 @@ class Agent:
             )
         await self._record(turn, state.seq, call, outcome)
         return outcome
+
+    def _set_model(self, turn: TurnInput, call: ToolCall) -> ToolOutcome:
+        arguments = parse_arguments(call.arguments)
+        if isinstance(arguments, str):
+            return ToolOutcome(False, arguments)
+        name = arguments.get("model")
+        before = self._brains.current
+        result = self._brains.set(name) if isinstance(name, str) else "unknown"
+        if result == "unknown":
+            names = ", ".join(self._brains.names)
+            return ToolOutcome(False, f"Error: unknown brain {name!r}. The brains are: {names}.")
+        if result == "already":
+            return ToolOutcome(True, f'The brain "{name}" is already in use; nothing changed.')
+        log.info("turn %s: brain switched from %s to %s", turn.queue_item_id, before.name, name)
+        return ToolOutcome(
+            True,
+            f'Switched to the brain "{name}" ({self._brains.tag}). It answers from the '
+            "owner's next message on. Reply with a short confirmation.",
+        )
 
     async def _memory_tool(self, memory: MemoryTools, call: ToolCall) -> ToolOutcome:
         arguments = parse_arguments(call.arguments)

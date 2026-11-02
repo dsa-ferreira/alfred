@@ -12,6 +12,7 @@ NOTICES: dict[str, Callable[[str], str]] = {
     "unreachable_mid": notices.unreachable_mid,
     "too_many_steps": notices.too_many_steps,
     "too_many_steps_partial": lambda a: notices.too_many_steps(a, partial=True),
+    "fell_back": lambda a: notices.fell_back(a, "bonsai", "gemma"),
 }
 
 
@@ -40,3 +41,8 @@ def test_partial_suffix(name: str, partial: bool) -> None:
 
 def test_partial_carries_no_address() -> None:
     assert "sir" not in notices.PARTIAL
+
+
+def test_fallback_names_both_brains() -> None:
+    text = notices.fell_back("sir", "bonsai", "gemma")
+    assert "bonsai" in text and "gemma" in text

@@ -392,3 +392,40 @@ def test_unknown_timezone_is_rejected(tmp_path: Path, zone: str) -> None:
     text = MINIMAL.replace('model = "some-model"', f'model = "some-model"\ntimezone = "{zone}"')
     found = problems(text, tmp_path)
     assert any(p.startswith("ai.timezone:") for p in found), found
+
+
+# --- Brains ---------------------------------------------------------------------
+
+
+def test_brains_default_to_none(tmp_path: Path) -> None:
+    assert load_config(env_for(write(tmp_path, MINIMAL))).ai.models == {}
+
+
+def test_brains_are_read(tmp_path: Path) -> None:
+    text = MINIMAL + '\n[ai.models]\nsome = "some-model"\nbonsai = "bonsai:8b"\n'
+    config = load_config(env_for(write(tmp_path, text)))
+    assert config.ai.models == {"some": "some-model", "bonsai": "bonsai:8b"}
+
+
+@pytest.mark.parametrize("alias", ["Gemma", "-gemma", "gem_ma"])
+def test_bad_brain_alias_is_named(tmp_path: Path, alias: str) -> None:
+    found = problems(MINIMAL + f'\n[ai.models]\n"{alias}" = "gemma4:26b-a4b-it-qat"\n', tmp_path)
+    assert any(p.startswith(f"ai.models.{alias}:") for p in found), found
+
+
+def test_same_brain_tag_twice_names_both_aliases(tmp_path: Path) -> None:
+    text = (
+        MINIMAL + '\n[ai.models]\ngemma = "gemma4:26b-a4b-it-qat"\ng4 = "gemma4:26b-a4b-it-qat"\n'
+    )
+    found = problems(text, tmp_path)
+    assert any(p.startswith("ai.models:") and "'gemma'" in p and "'g4'" in p for p in found)
+
+
+def test_empty_brain_tag_is_named(tmp_path: Path) -> None:
+    found = problems(MINIMAL + '\n[ai.models]\nbonsai = ""\n', tmp_path)
+    assert any(p.startswith("ai.models.bonsai:") for p in found), found
+
+
+def test_alias_clashing_with_the_unaliased_startup_brain(tmp_path: Path) -> None:
+    found = problems(MINIMAL + '\n[ai.models]\nsome-model = "bonsai:8b"\n', tmp_path)
+    assert any(p.startswith("ai.models:") and "'some-model'" in p for p in found), found
