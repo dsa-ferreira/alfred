@@ -1,6 +1,6 @@
 [project]
 name = "alfred"
-version = "0.2.0"
+version = "0.3.0"
 description = "Telegram bot and service API in front of the local AI, with its own MCP agent loop"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
