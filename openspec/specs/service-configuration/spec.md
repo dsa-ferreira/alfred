@@ -18,7 +18,7 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, request timeout, maximum model requests per turn, persona, the owner's form of address, context window size, retry delays, listen host and port, log level, services and MCP servers. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, request timeout, maximum model requests per turn, persona, the owner's form of address, the owner's timezone, context window size, retry delays, listen host and port, log level, services and MCP servers, and the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, and the number of search results. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
 - **WHEN** the file sets only the owner user ID, model, services and MCP servers
@@ -31,6 +31,22 @@ Every non-secret setting SHALL be settable in the config file, including the own
 #### Scenario: Old system prompt key
 - **WHEN** the file still sets the removed `system_prompt` key under `[ai]`
 - **THEN** alfred exits at startup with an error naming the unknown key
+
+#### Scenario: Summary model defaults to the chat model
+- **WHEN** the file has no `[memory]` section
+- **THEN** conversations are summarised with the model set in `[ai]`, and embeddings come from `http://ragman.lan` with `nomic-embed-text:v1.5`
+
+#### Scenario: Default timezone
+- **WHEN** the file does not set `[ai] timezone`
+- **THEN** dates are given in `Europe/Lisbon`
+
+#### Scenario: Unknown timezone
+- **WHEN** `[ai] timezone` is set to `Europe/Lisboa`
+- **THEN** alfred exits at startup with an error naming `ai.timezone`
+
+#### Scenario: Change the recall cap
+- **WHEN** `[memory] recall_max_chars` is set to 16000 and alfred restarts
+- **THEN** recall entries are at most 16,000 characters
 
 ### Requirement: Secrets only from the environment
 Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), and the tokens of services and MCP servers. Services and MCP servers SHALL name their secret's variable with `token_env`.
