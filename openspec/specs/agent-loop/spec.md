@@ -18,7 +18,7 @@ alfred SHALL call the model through an OpenAI-compatible chat completions API, u
 - **THEN** turns go to the new server with no code change
 
 ### Requirement: Telegram-oriented system prompt
-Every turn SHALL include a system prompt made of two parts: a persona, which sets alfred's voice and is configurable with a built-in default, followed by built-in operating rules that cannot be configured. The operating rules SHALL tell the model it is chatting with its owner over Telegram, how to use tools, and how to read service notices and `/ask` messages.
+Every turn SHALL include a system prompt made of a persona, which sets alfred's voice and is configurable with a built-in default, followed by built-in operating rules that cannot be configured, followed by the instructions of the turn's available MCP servers. The operating rules SHALL tell the model it is chatting with its owner over Telegram, how to use tools, and how to read service notices and `/ask` messages.
 
 #### Scenario: Default prompt
 - **WHEN** no custom persona is configured
@@ -31,6 +31,14 @@ Every turn SHALL include a system prompt made of two parts: a persona, which set
 #### Scenario: Operating rules survive a custom persona
 - **WHEN** a custom persona is configured and the owner asks about an earlier `[notice:backup]` message
 - **THEN** the system prompt still explains that `[notice:<service>]` messages are notifications the owner has already seen
+
+#### Scenario: Server instructions after the rules
+- **WHEN** cookbook is available and sends instructions, and the turn is an `/ask` turn
+- **THEN** the system prompt contains the persona, then the operating rules, then cookbook's instructions, then the `NO_REPLY` instruction
+
+#### Scenario: Server instructions survive a custom persona
+- **WHEN** a custom persona is configured and cookbook sends instructions
+- **THEN** cookbook's instructions are still in the system prompt
 
 ### Requirement: Turn context
 Each turn SHALL send the system prompt, the current conversation's recent history, and the new input. For an `/ask` turn, the input SHALL be labelled with the service name and the model told about the `NO_REPLY` convention.

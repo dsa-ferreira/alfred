@@ -18,7 +18,7 @@
 ## 4. Integration and release
 
 - [x] 4.1 Run `make lint` and `make test`; both pass
-- [ ] 4.2 Manual check against the real model: `make run`, ask alfred to add a short recipe with US units and confirm it calls `cookbook_list_units` and uses the catalogue's unit codes; confirm the log shows no truncation warning for cookbook or mcparr
+- [x] 4.2 Manual check against the real model: `make run`, ask alfred to add a short recipe with US units and confirm it calls `cookbook_list_units` and uses the catalogue's unit codes; confirm the log shows no truncation warning for cookbook or mcparr
 - [x] 4.3 Bump the version to 0.3.0 in `pyproject.toml`; verify `make image` tags `alfred:0.3.0`
 - [x] 4.4 Write the handover update with the `homelab-handover` skill: new optional keys `[mcp] instructions_max_chars` and `[[mcp_servers]] use_server_instructions`, no required action; verify the update file exists under `handover/updates/`
 
