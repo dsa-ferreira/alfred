@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import select
@@ -398,3 +400,97 @@ async def test_notice_after_reset_in_new_conversation(
     await s.drain()
     await s.history.append("notice", "backup ok", source="backup")
     assert [e.text for e in await s.history.recent(30)] == ["backup ok"]
+
+
+# --- Typing indicator ----------------------------------------------------------
+
+
+class RecordingTyping:
+    """Records indicator enters and exits, interleaved with outbox sends."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    @contextlib.asynccontextmanager
+    async def __call__(self) -> AsyncIterator[None]:
+        self.events.append("typing on")
+        try:
+            yield
+        finally:
+            self.events.append("typing off")
+
+
+class EventOutbox:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def send(self, text_: str) -> None:
+        self.events.append(f"send {text_}")
+
+
+def typing_worker(s: Setup, events: list[str], queue: QueueConfig | None = None) -> Worker:
+    return Worker(
+        s.queue,
+        s.agent,
+        s.history,
+        EventOutbox(events),
+        queue or QueueConfig(**FAST),
+        owner_address="sir",
+        typing=RecordingTyping(events),
+    )
+
+
+async def test_typing_while_owner_turn_runs(sessions: async_sessionmaker[AsyncSession]) -> None:
+    events: list[str] = []
+
+    class Agent_:
+        async def run(self, turn):  # type: ignore[no-untyped-def]
+            events.append("turn")
+            from alfred.agent.turn import TurnResult
+
+            return TurnResult("Added Dune.", False, False)
+
+    s = Setup(sessions, FakeModel())
+    s.agent = Agent_()  # type: ignore[assignment]
+    worker = typing_worker(s, events)
+    await s.queue.enqueue_owner("add Dune")
+    while await worker.step():
+        pass
+    assert events == ["typing on", "turn", "typing off", "send Added Dune."]
+
+
+async def test_no_typing_for_ask(sessions: async_sessionmaker[AsyncSession]) -> None:
+    events: list[str] = []
+    s = Setup(sessions, FakeModel([text("disk alert")]))
+    worker = typing_worker(s, events)
+    await s.queue.enqueue_ask("disk-check", "93%")
+    while await worker.step():
+        pass
+    assert events == ["send [disk-check] disk alert"]
+
+
+async def test_typing_stops_during_retry_wait(sessions: async_sessionmaker[AsyncSession]) -> None:
+    events: list[str] = []
+    s = Setup(sessions, FakeModel([ModelUnreachable("refused"), text("Here you go.")]))
+    # Long enough that the second step is certainly the backoff wait.
+    worker = typing_worker(s, events, QueueConfig(retry_initial_s=0.2, retry_max_s=1))
+    await s.queue.enqueue_owner("what's downloading?")
+    assert await worker.step()  # attempt 1 fails and is scheduled for a retry
+    assert events == ["typing on", "typing off"]
+    assert await worker.step()  # the backoff wait: no turn runs, no typing
+    assert events == ["typing on", "typing off"]
+    while await worker.step():
+        pass
+    assert events == ["typing on", "typing off", "typing on", "typing off", "send Here you go."]
+
+
+async def test_typing_stops_before_failure_notice(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    events: list[str] = []
+    s = Setup(sessions, FakeModel([ModelFailed("model server answered HTTP 400")]))
+    worker = typing_worker(s, events)
+    await s.queue.enqueue_owner("status?")
+    while await worker.step():
+        pass
+    assert events == ["typing on", "typing off", f"send {notices.failed('sir')}"]

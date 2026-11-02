@@ -82,6 +82,7 @@ async def serve(config: Config) -> None:
         config.queue,
         owner_address=config.ai.owner_address,
         memory=memory,
+        typing=outbox.typing,
     )
     dispatcher = make_dispatcher(config.telegram.owner_user_id, queue, config.ai.owner_address)
     server = _Server(

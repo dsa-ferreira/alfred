@@ -10,8 +10,10 @@ Pending rows simply resume after a restart.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -117,9 +119,12 @@ class Worker:
         *,
         owner_address: str,
         memory: Summariser | None = None,
+        typing: Callable[[], AbstractAsyncContextManager[None]] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._queue = queue
+        # Shown to the owner while their own turn runs (typing design D1).
+        self._typing = typing
         self._memory = memory
         self._agent = agent
         self._history = history
@@ -154,8 +159,14 @@ class Worker:
             # the newest entry of its own context and after earlier replies.
             await self._history.append("owner", item.text, queue_item_id=item.id)
         turn = TurnInput(item.kind, item.text, item.id, item.source)  # type: ignore[arg-type]
+        indicator = (
+            self._typing()
+            if self._typing is not None and item.kind == "owner"
+            else contextlib.nullcontext()
+        )
         try:
-            result = await self._agent.run(turn)
+            async with indicator:
+                result = await self._agent.run(turn)
         except TurnFailed as failure:
             await self._turn_failed(item, failure)
             return

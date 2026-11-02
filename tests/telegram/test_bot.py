@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+from aiogram.methods import SendChatAction
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.db.models import QueueItem
 from alfred.queue import Queue
+from alfred.telegram import bot as bot_module
 from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from tests.telegram.fake_bot import OWNER, make_bot, message_update
 
@@ -189,3 +192,66 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
     assert first.text == "All good." and first.chat_id == OWNER
     assert second.text == notices.failed("sir")
     assert "400" not in second.text and "token" not in second.text
+
+
+# --- Typing indicator ----------------------------------------------------------
+
+
+def chat_actions(session) -> list[SendChatAction]:  # type: ignore[no-untyped-def]
+    return [r for r in session.requests if isinstance(r, SendChatAction)]
+
+
+async def test_typing_while_the_block_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    bot, session = make_bot()
+    async with TelegramOutbox(bot, OWNER).typing():
+        await asyncio.sleep(0.05)
+    actions = chat_actions(session)
+    assert len(actions) >= 2  # resent while the block runs
+    assert all(a.chat_id == OWNER and a.action == "typing" for a in actions)
+    after = len(actions)
+    await asyncio.sleep(0.05)
+    assert len(chat_actions(session)) == after  # nothing once the block exits
+
+
+async def test_typing_failure_is_logged_and_retried(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    bot, session = make_bot()
+    failures = 0
+
+    def fail_twice(method) -> None:  # type: ignore[no-untyped-def]
+        nonlocal failures
+        if isinstance(method, SendChatAction) and failures < 2:
+            failures += 1
+            raise TelegramBadRequest(method, "Bad Request: chat not found")
+
+    session.on_request = fail_twice
+    with caplog.at_level(logging.DEBUG, logger="alfred.telegram.bot"):
+        async with TelegramOutbox(bot, OWNER).typing():
+            await asyncio.sleep(0.06)
+    assert len(chat_actions(session)) >= 3  # kept going after the failures
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debugs = [r for r in caplog.records if "typing indicator" in r.getMessage()]
+    assert len(warnings) == 1 and "TelegramBadRequest" in warnings[0].getMessage()
+    assert len(debugs) == 2
+
+
+async def test_typing_lets_the_block_error_through() -> None:
+    bot, _ = make_bot()
+    with pytest.raises(ValueError, match="boom"):
+        async with TelegramOutbox(bot, OWNER).typing():
+            raise ValueError("boom")
+
+
+async def test_typing_exit_never_raises_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    bot, session = make_bot()
+
+    def fail(method) -> None:  # type: ignore[no-untyped-def]
+        raise TelegramNetworkError(method, "unreachable")
+
+    session.on_request = fail
+    async with TelegramOutbox(bot, OWNER).typing():
+        await asyncio.sleep(0.03)

@@ -6,10 +6,13 @@ starts with ``/``, is queued for the AI exactly as written.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
 
 from aiogram import Bot, Dispatcher
-from aiogram.enums import ChatType
+from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message
 
@@ -20,6 +23,10 @@ from alfred.telegram.formatting import split_for_telegram
 log = logging.getLogger(__name__)
 
 ALLOWED_UPDATES = ["message"]
+
+# Telegram shows a chat action for about 5 seconds; resend a little sooner so
+# a slow request leaves no gap (design D2).
+TYPING_INTERVAL_S = 4.0
 
 
 def make_dispatcher(owner_user_id: int, queue: Queue, owner_address: str) -> Dispatcher:
@@ -65,3 +72,32 @@ class TelegramOutbox:
                     raise
                 log.warning("Telegram rejected the formatting; resending as plain text")
                 await self._bot.send_message(self._chat_id, markdown, parse_mode=None)
+
+    @contextlib.asynccontextmanager
+    async def typing(self) -> AsyncIterator[None]:
+        """Show "typing..." in the owner's chat until the block exits.
+
+        Failures to send the action are logged and never raised, so they
+        can't affect the turn the block wraps (design D3).
+        """
+        task = asyncio.create_task(self._keep_typing())
+        try:
+            yield
+        finally:
+            task.cancel()
+            # wait() doesn't re-raise the task's cancellation, but a
+            # cancellation of the caller still propagates.
+            await asyncio.wait([task])
+
+    async def _keep_typing(self) -> None:
+        failed = False
+        while True:
+            try:
+                await self._bot.send_chat_action(self._chat_id, ChatAction.TYPING)
+            except Exception as exc:
+                level = logging.DEBUG if failed else logging.WARNING
+                log.log(
+                    level, "could not send the typing indicator: %s: %s", type(exc).__name__, exc
+                )
+                failed = True
+            await asyncio.sleep(TYPING_INTERVAL_S)
