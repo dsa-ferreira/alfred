@@ -100,7 +100,7 @@ def test_minimal_file_takes_defaults(tmp_path: Path) -> None:
     config = load_config(env_for(write(tmp_path, MINIMAL)))
     assert config.ai.base_url == "http://ai.lan"
     assert config.ai.request_timeout_s == 300
-    assert config.ai.max_requests_per_turn == 8
+    assert config.ai.max_requests_per_turn == 12
     assert config.ai.tool_result_max_chars == 4000
     assert config.ai.persona is None
     assert config.ai.owner_address == "sir"
@@ -376,6 +376,48 @@ def test_memory_caps_must_be_positive(tmp_path: Path, key: str, value: str) -> N
 def test_memory_unknown_key(tmp_path: Path) -> None:
     found = problems(MINIMAL + "\n[memory]\nrecall_max_char = 100\n", tmp_path)
     assert any("memory.recall_max_char" in p and "unknown key" in p for p in found)
+
+
+def test_web_defaults(tmp_path: Path) -> None:
+    web = load_config(env_for(write(tmp_path, MINIMAL))).web
+    assert web.searxng_url == "http://oracle.lan"
+    assert web.search_results == 5
+    assert web.fetch_page_chars == 8000
+    assert web.fetch_timeout_s == 20
+    assert web.fetch_max_bytes == 5_000_000
+
+
+def test_web_custom_values(tmp_path: Path) -> None:
+    text = (
+        MINIMAL
+        + """
+[web]
+searxng_url = "https://search.example.com/"
+search_results = 3
+fetch_page_chars = 4000
+fetch_timeout_s = 5
+fetch_max_bytes = 1000000
+"""
+    )
+    web = load_config(env_for(write(tmp_path, text))).web
+    assert web.searxng_url == "https://search.example.com"
+    assert web.search_results == 3
+    assert web.fetch_page_chars == 4000
+    assert web.fetch_timeout_s == 5
+    assert web.fetch_max_bytes == 1_000_000
+
+
+def test_web_invalid_searxng_url(tmp_path: Path) -> None:
+    found = problems(MINIMAL + '\n[web]\nsearxng_url = "oracle.lan"\n', tmp_path)
+    assert any(p.startswith("web.searxng_url:") for p in found), found
+
+
+@pytest.mark.parametrize(
+    "key", ["search_results", "fetch_page_chars", "fetch_timeout_s", "fetch_max_bytes"]
+)
+def test_web_limits_must_be_positive(tmp_path: Path, key: str) -> None:
+    found = problems(MINIMAL + f"\n[web]\n{key} = 0\n", tmp_path)
+    assert any(f"web.{key}" in p for p in found)
 
 
 def test_default_timezone(tmp_path: Path) -> None:

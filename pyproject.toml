@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings",
     "pgvector>=0.5.1",
     "tzdata>=2026.6",
+    "trafilatura>=2.3.1",
 ]
 
 [project.scripts]

@@ -106,7 +106,7 @@ class AIConfig(_Section):
     base_url: HttpUrlStr = "http://ai.lan"
     model: Annotated[str, Field(min_length=1)] = "gemma4:26b-a4b-it-qat"
     request_timeout_s: PositiveFloat = 300
-    max_requests_per_turn: PositiveInt = 8
+    max_requests_per_turn: PositiveInt = 12
     tool_result_max_chars: PositiveInt = 4000
     persona: Annotated[str, Field(min_length=1)] | None = None
     owner_address: Annotated[str, Field(min_length=1)] = "sir"
@@ -165,6 +165,16 @@ class MemoryConfig(_Section):
     search_results: PositiveInt = 5
 
 
+class WebConfig(_Section):
+    """Web search through SearXNG and page fetch (change add-web-search, design D9)."""
+
+    searxng_url: HttpUrlStr = "http://oracle.lan"
+    search_results: PositiveInt = 5
+    fetch_page_chars: PositiveInt = 8000
+    fetch_timeout_s: PositiveFloat = 20
+    fetch_max_bytes: PositiveInt = 5_000_000
+
+
 class MCPConfig(_Section):
     list_timeout_s: PositiveFloat = 10
     call_timeout_s: PositiveFloat = 60
@@ -198,6 +208,7 @@ class FileConfig(_Section):
     history: HistoryConfig = HistoryConfig()
     queue: QueueConfig = QueueConfig()
     memory: MemoryConfig = MemoryConfig()
+    web: WebConfig = WebConfig()
     mcp: MCPConfig = MCPConfig()
     server: ServerConfig = ServerConfig()
     services: list[ServiceEntry] = []
@@ -237,6 +248,7 @@ class Config:
     telegram_bot_token: SecretStr
     database_url: SecretStr
     memory: MemoryConfig = MemoryConfig()
+    web: WebConfig = WebConfig()
 
     @property
     def summary_model(self) -> str:
@@ -293,6 +305,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         history=parsed.history,
         queue=parsed.queue,
         memory=parsed.memory,
+        web=parsed.web,
         mcp=parsed.mcp,
         server=parsed.server,
         services=tuple(Service(s.name, SecretStr(service_tokens[s.name])) for s in parsed.services),

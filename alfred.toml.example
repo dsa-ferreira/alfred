@@ -14,7 +14,7 @@ model = "gemma4:26b-a4b-it-qat"
 # Seconds per model request. Long enough for the AI server to wake and load the model.
 request_timeout_s = 300
 # Model requests allowed in one turn before it is stopped.
-max_requests_per_turn = 8
+max_requests_per_turn = 12
 # Tool results are cut to this many characters before they reach the model.
 tool_result_max_chars = 4000
 # How alfred addresses you, in its replies and its fixed notices. Used as written.
@@ -59,6 +59,18 @@ recall_max_chars = 32000
 summary_input_max_chars = 60000
 # Most conversations one search returns.
 search_results = 5
+
+[web]
+# SearXNG instance for alfred_web_search; alfred queries {searxng_url}/search?format=json.
+searxng_url = "http://oracle.lan"
+# Most results one web search lists.
+search_results = 5
+# Characters of page text in one alfred_web_fetch result; the model reads on with start.
+fetch_page_chars = 8000
+# Seconds for one web search, and for one page fetch including its redirects.
+fetch_timeout_s = 20
+# Largest page download, in bytes; a bigger page is refused as too large.
+fetch_max_bytes = 5000000
 
 [mcp]
 # Seconds to wait for each server's tool list at the start of a turn.

@@ -1,7 +1,7 @@
 """One AI turn (design D5).
 
 ```
-tools = alfred_* local tools (owner turns only) + tools of reachable MCP servers
+tools = web tools + alfred_* local tools (owner turns only) + tools of reachable MCP servers
 msgs  = [system prompt (+ today's date, reachable servers' instructions)]
         + last N history entries (+ the ask input)
 loop up to ai.max_requests_per_turn:
@@ -20,6 +20,10 @@ An owner message is already in the history when its turn runs (the worker
 records it at turn start), so it reaches the model as the newest entry. An
 ``/ask`` prompt is only recorded if the answer reaches the owner, so it is
 added to the messages here.
+
+Each attempt gets a fresh web state (change add-web-search, design D3): its
+fetch allowlist starts with the URLs in the owner's messages in the context
+window and in the ``/ask`` prompt; search results add theirs as they come.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
@@ -52,6 +56,8 @@ from alfred.mcp.registry import (
     call_tool,
     parse_arguments,
 )
+from alfred.web.tools import NAMES as WEB_TOOLS
+from alfred.web.tools import WebTurn
 
 log = logging.getLogger(__name__)
 
@@ -171,6 +177,16 @@ class Model(Protocol):
     ) -> ModelReply: ...
 
 
+class WebTools(Protocol):
+    """Web search and fetch (``alfred.web.tools.WebTools``)."""
+
+    definitions: list[dict[str, Any]]
+
+    def new_turn(self, texts: Iterable[str] = ()) -> WebTurn: ...
+
+    async def call(self, turn: WebTurn, name: str, raw_arguments: Any) -> ToolOutcome: ...
+
+
 class MemoryTools(Protocol):
     """Search and recall of archived conversations (``alfred.memory.service.Memory``)."""
 
@@ -241,6 +257,7 @@ class _State:
     reset: bool = False
     seq: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
+    web: WebTurn | None = None
 
 
 class Agent:
@@ -253,6 +270,7 @@ class Agent:
         connect: Connector,
         *,
         memory: MemoryTools | None = None,
+        web: WebTools | None = None,
         brains: Brains | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -263,6 +281,7 @@ class Agent:
         self._sessions = sessions
         self._connect = connect
         self._memory = memory
+        self._web = web
         self._now = now
         self._zone = ZoneInfo(config.ai.timezone)
 
@@ -275,13 +294,16 @@ class Agent:
             instructions_max_chars=cfg.mcp.instructions_max_chars,
         )
         definitions = list(tools.definitions)
+        local: list[dict[str, Any]] = []
+        if self._web is not None:
+            local += self._web.definitions
         if turn.kind == "owner":
-            local = [END_CONVERSATION_TOOL]
+            local.append(END_CONVERSATION_TOOL)
             if self._memory is not None:
                 local += [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
             if len(self._brains.brains) > 1:
                 local.append(set_model_tool(self._brains.names))
-            definitions[:0] = local
+        definitions[:0] = local
 
         fallback_notice: str | None = None
         while True:
@@ -343,9 +365,17 @@ class Agent:
                 ),
             }
         )
-        state.messages += to_messages(await self._history.recent(cfg.history.max_entries))
+        entries = await self._history.recent(cfg.history.max_entries)
+        state.messages += to_messages(entries)
         if turn.kind == "ask":
             state.messages.append({"role": "user", "content": f"[ask:{turn.source}] {turn.text}"})
+        if self._web is not None:
+            # Only text the owner (or the asking service) wrote can open a page
+            # without a search; replies, notices and recalls can't.
+            seeds = [e.text for e in entries if e.kind == "owner"]
+            if turn.kind == "ask":
+                seeds.append(turn.text)
+            state.web = self._web.new_turn(seeds)
 
         log.info(
             "turn %s context: %s; brain %s",
@@ -429,6 +459,9 @@ class Agent:
             outcome = await self._memory_tool(self._memory, call)
         elif call.name == SET_MODEL and turn.kind == "owner" and len(self._brains.brains) > 1:
             outcome = self._set_model(turn, call)
+        elif call.name in WEB_TOOLS and self._web is not None and state.web is not None:
+            # Not cut to tool_result_max_chars: fetch sizes its own chunks.
+            outcome = await self._web_tool(self._web, state.web, call)
         else:
             outcome = await call_tool(
                 tools,
@@ -459,6 +492,13 @@ class Agent:
             f'Switched to the brain "{name}" ({self._brains.tag}). It answers from the '
             "owner's next message on. Reply with a short confirmation.",
         )
+
+    async def _web_tool(self, web: WebTools, web_turn: WebTurn, call: ToolCall) -> ToolOutcome:
+        try:
+            return await web.call(web_turn, call.name, call.arguments)
+        except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
+            log.exception("tool %s failed", call.name)
+            return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")
 
     async def _memory_tool(self, memory: MemoryTools, call: ToolCall) -> ToolOutcome:
         arguments = parse_arguments(call.arguments)

@@ -31,6 +31,7 @@ from alfred.memory.embedding import EmbeddingClient
 from alfred.memory.service import Memory
 from alfred.queue import Queue, Worker
 from alfred.telegram.bot import ALLOWED_UPDATES, TelegramOutbox, make_dispatcher
+from alfred.web.tools import WebTools
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,18 @@ async def serve(config: Config) -> None:
     # Turns pass the current brain's tag per request; summaries never do, so
     # they stay on the summary model (change add-brain-switching, design D2).
     brains = Brains(config.ai.model, config.ai.models)
-    agent = Agent(config, model, history, sessions, http_connector(), memory=memory, brains=brains)
+    # Web search and fetch share one HTTP client (change add-web-search).
+    web = WebTools.from_config(config)
+    agent = Agent(
+        config,
+        model,
+        history,
+        sessions,
+        http_connector(),
+        memory=memory,
+        web=web,
+        brains=brains,
+    )
     worker = Worker(
         queue,
         agent,
@@ -122,7 +134,7 @@ async def serve(config: Config) -> None:
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(
         "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
-        "embeddings by %s at %s, %d MCP server(s)",
+        "embeddings by %s at %s, web search at %s, %d MCP server(s)",
         config.server.host,
         config.server.port,
         brains.current.name,
@@ -131,6 +143,7 @@ async def serve(config: Config) -> None:
         config.summary_model,
         config.memory.embedding_model,
         config.memory.embedding_base_url,
+        config.web.searxng_url,
         len(config.mcp_servers),
     )
     failed: asyncio.Task[object] | None = None
@@ -157,6 +170,7 @@ async def serve(config: Config) -> None:
         if summary_model is not model:
             await summary_model.aclose()
         await embedder.aclose()
+        await web.aclose()
         await engine.dispose()
     if failed is not None:
         exc = failed.exception() if not failed.cancelled() else None

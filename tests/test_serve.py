@@ -18,6 +18,7 @@ from pydantic import SecretStr
 import alfred.app
 from alfred.config import ServerConfig
 from alfred.memory.service import Memory
+from alfred.web.tools import WebTools
 from tests.helpers import make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession
 
@@ -169,3 +170,49 @@ async def test_memory_wiring_and_clients_closed(
     assert all(c.closed for c in clients)
     assert isinstance(agents[0]["memory"], Memory)
     assert agents[0]["brains"].names == ["gemma4:26b-a4b-it-qat"]
+
+
+async def test_web_wiring_and_client_closed(
+    database_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = PollingSession()
+    monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
+    sweeper = SweeperProbe()
+    monkeypatch.setattr(Memory, "run_sweeper", sweeper.run)
+    built: list[WebTools] = []
+    closed: list[WebTools] = []
+    real_from_config = WebTools.from_config.__func__  # type: ignore[attr-defined]
+    real_aclose = WebTools.aclose
+
+    def from_config(cls: type[WebTools], config: Any) -> WebTools:
+        tools = real_from_config(cls, config)
+        built.append(tools)
+        return tools
+
+    async def aclose(self: WebTools) -> None:
+        closed.append(self)
+        await real_aclose(self)
+
+    monkeypatch.setattr(WebTools, "from_config", classmethod(from_config))
+    monkeypatch.setattr(WebTools, "aclose", aclose)
+    agents: list[dict[str, Any]] = []
+    real_agent = alfred.app.Agent
+
+    def record_agent(*args: Any, **kwargs: Any) -> Any:
+        agents.append(kwargs)
+        return real_agent(*args, **kwargs)
+
+    monkeypatch.setattr(alfred.app, "Agent", record_agent)
+    config = serve_config(database_url, free_port())
+    with caplog.at_level("INFO", logger="alfred.app"):
+        task = asyncio.create_task(alfred.app.serve(config))
+        await asyncio.wait_for(sweeper.started.wait(), 5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, 10)
+
+    assert len(built) == 1 and agents[0]["web"] is built[0]
+    assert closed == built
+    search = built[0]._search  # one client for search and fetch
+    assert search._http is built[0]._fetcher._http
+    assert search._url == "http://oracle.lan/search"
+    assert "web search at http://oracle.lan" in caplog.text

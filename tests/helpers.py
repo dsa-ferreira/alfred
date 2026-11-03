@@ -21,6 +21,7 @@ from alfred.config import (
     ServerConfig,
     Service,
     TelegramConfig,
+    WebConfig,
 )
 from alfred.db.models import QueueItem
 
@@ -33,6 +34,7 @@ def make_config(
     history: dict[str, Any] | None = None,
     queue: dict[str, Any] | None = None,
     memory: dict[str, Any] | None = None,
+    web: dict[str, Any] | None = None,
     mcp_servers: Sequence[McpServer] = (),
     services: Sequence[Service] = (),
 ) -> Config:
@@ -48,6 +50,7 @@ def make_config(
         telegram_bot_token=SecretStr("123:test"),
         database_url=SecretStr("postgresql+psycopg://unused"),
         memory=MemoryConfig(**(memory or {})),
+        web=WebConfig(**(web or {})),
     )
 
 
