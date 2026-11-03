@@ -68,7 +68,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `ai.max_requests_per_turn` | integer | `8` | Model requests allowed in one turn. A turn that needs more is stopped and the owner is told. |
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
-| `ai.owner_address` | string | `"sir"` | How alfred addresses you, sparingly (most replies use none). Also ends the fixed notices (failures, text only). Used as written. |
+| `ai.owner_address` | string | `"sir"` | How alfred addresses you: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, text only). Used as written. |
 | `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt and the dates of conversation search use it. An unknown name stops alfred at startup. |
 | `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |

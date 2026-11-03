@@ -25,8 +25,8 @@ def make_prompt(persona: str | None, **kwargs: object) -> str:
 def test_default_prompt_is_persona_then_rules() -> None:
     prompt = make_prompt(None, owner_address="sir", ask=False)
     assert prompt == butler_persona("sir") + "\n\n" + RULES
-    assert 'Address the owner as "sir" only sparingly' in prompt
-    assert "Most replies use no form of address" in prompt
+    assert 'Address the owner as "sir" at the moments a butler would' in prompt
+    assert "Plain answers to everyday requests need none" in prompt
     assert "butler" in prompt and "formal" in prompt
     assert "No preamble" in prompt and "no closing offers" in prompt
     assert "Telegram" in prompt
@@ -38,12 +38,24 @@ def test_persona_covers_ask_interruptions() -> None:
     assert "Pardon the interruption, sir." in butler_persona("sir")
 
 
-def test_examples_mostly_go_without_the_address() -> None:
-    examples = butler_persona("sir").split("Examples of the register:\n")[1]
-    replies = [line for line in examples.splitlines() if line.startswith("alfred: ")]
-    *owner_replies, interruption = replies
-    assert owner_replies and all("sir" not in reply for reply in owner_replies)
-    assert interruption.startswith("alfred: Pardon the interruption, sir.")
+def test_examples_use_the_address_only_at_its_moments() -> None:
+    lines = butler_persona("sir").split("Examples of the register:\n")[1].splitlines()
+    replies = {
+        prompt: reply.removeprefix("alfred: ")
+        for prompt, reply in zip(lines[::2], lines[1::2], strict=True)
+    }
+    with_address = {
+        "Owner: good morning",
+        "Owner: did the backup run?",
+        "Owner: thanks, that's all",
+        "Service mcparr asks about a finished download:",
+    }
+    assert with_address < replies.keys()
+    for prompt, reply in replies.items():
+        assert ("sir" in reply) == (prompt in with_address), prompt
+    assert replies["Service mcparr asks about a finished download:"].startswith(
+        "Pardon the interruption, sir."
+    )
 
 
 def test_custom_address_in_builtin_persona() -> None:
