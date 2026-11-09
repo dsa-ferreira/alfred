@@ -98,6 +98,25 @@ def resolve(
     return due
 
 
+DATE_FORMS = '"YYYY-MM-DD" or "today"'
+
+
+def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
+    """A date as ``YYYY-MM-DD``, or ``today`` in ``zone`` at ``now``.
+
+    Shared with ``alfred_date`` (change add-utility-tools, design D5). Raises
+    :class:`WhenError` with a message for the model.
+    """
+    if not isinstance(value, str):
+        raise WhenError(f"Error: a date must be text: {DATE_FORMS}.")
+    text = value.strip()
+    if text.lower() == "today":
+        return now.astimezone(zone).date()
+    if match := _DATE.fullmatch(text):
+        return _date(*match.group(1, 2, 3))
+    raise WhenError(f"Error: can't read the date {value!r}. Use {DATE_FORMS}.")
+
+
 def _whole_minutes(value: Any) -> int:
     minutes: int | None = None
     if isinstance(value, bool):

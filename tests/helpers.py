@@ -173,6 +173,6 @@ def make_agent(
     """An agent with the toolsets ``serve`` gives it, for the parts passed in."""
     brains = brains or Brains(config.ai.model, config.ai.models)
     toolsets = build_toolsets(
-        config, connect, brains=brains, web=web, memory=memory, reminders=reminders
+        config, connect, brains=brains, web=web, memory=memory, reminders=reminders, now=now
     )
     return Agent(config, model, history, sessions, toolsets=toolsets, brains=brains, now=now)

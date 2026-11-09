@@ -16,7 +16,8 @@ import asyncio
 import contextlib
 import logging
 import signal
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import uvicorn
@@ -41,7 +42,9 @@ from alfred.reminders.tools import ReminderTools
 from alfred.telegram.bot import ALLOWED_UPDATES, TelegramOutbox, make_dispatcher
 from alfred.tools.base import Toolset
 from alfred.tools.brains import BrainTools
+from alfred.tools.calculator import CalculatorTools
 from alfred.tools.conversation import ConversationTools
+from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
 
 log = logging.getLogger(__name__)
@@ -72,6 +75,7 @@ def build_toolsets(
     web: WebTools | None = None,
     memory: Searcher | None = None,
     reminders: ReminderTools | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> list[Toolset]:
     """What the model may call, in the order it is offered; alfred's own tools first.
 
@@ -87,6 +91,9 @@ def build_toolsets(
     if reminders is not None:
         toolsets.append(reminders)
     toolsets.append(BrainTools(brains))
+    # Arithmetic and dates, on every turn (change add-utility-tools, design D7).
+    toolsets.append(CalculatorTools())
+    toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
     toolsets.append(McpTools.from_config(config, connect))
     return toolsets
 

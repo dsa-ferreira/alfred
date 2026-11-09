@@ -8,6 +8,7 @@ it commits.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
@@ -40,6 +41,8 @@ class HistoryEntry:
     # For reminder entries: the reminder's number and when it was due.
     reminder_id: int | None = None
     reminder_due_at: datetime | None = None
+    # When the entry was recorded; stamped on user messages (change add-utility-tools, D1).
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,7 @@ class History:
                     Entry.text,
                     Entry.recalled_conversation_id,
                     Entry.reminder_id,
+                    Entry.created_at,
                 )
                 .join(Conversation, Conversation.id == Entry.conversation_id)
                 .where(Conversation.ended_at.is_(None))
@@ -119,6 +123,7 @@ class History:
                     recalled.summary,
                     newest.c.reminder_id,
                     Reminder.due_at,
+                    newest.c.created_at,
                 )
                 .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
                 .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
@@ -162,6 +167,35 @@ async def current_id(session: AsyncSession, *, lock: bool) -> int:
     return found
 
 
+# --- message times (change add-utility-tools, design D1) ---------------------
+
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+STAMP = re.compile(
+    r"\[(?:" + "|".join(_DAYS) + r") \d{1,2} (?:" + "|".join(_MONTHS) + r") \d{2}:\d{2}\]"
+)
+_LEADING_STAMP = re.compile(STAMP.pattern + r"\s*")
+
+
+def format_stamp(moment: datetime, zone: ZoneInfo) -> str:
+    """``[Mon 9 Nov 14:05]``: absolute, so an entry's text never changes.
+
+    English names without the locale, like the rest of alfred's prompts.
+    """
+    local = moment.astimezone(zone)
+    return f"[{_DAYS[local.weekday()]} {local.day} {_MONTHS[local.month - 1]} {local:%H:%M}]"
+
+
+def stamped(text_: str, moment: datetime | None, zone: ZoneInfo) -> str:
+    """``text_`` after the time it arrived, or as is when that time is unknown."""
+    return text_ if moment is None else f"{format_stamp(moment, zone)} {text_}"
+
+
+def strip_stamp(text_: str) -> str:
+    """``text_`` without a stamp at its very start (one the model copied, design D2)."""
+    return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
+
+
 def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[dict[str, Any]]:
     """Map entries to chat-completions messages.
 
@@ -172,10 +206,14 @@ def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[
     by what the owner was told. Recalls are ``user`` turns
     prefixed ``[recall:#<id> "<title>"]``: the newest with its transcript,
     older ones with only the recalled conversation's summary (memory design D9).
+
+    Every ``user`` turn starts with the time its entry was recorded, before
+    its label (``[Mon 9 Nov 14:05] [notice:backup] ...``); replies have none.
     """
     newest_recall = max((i for i, e in enumerate(entries) if e.kind == "recall"), default=None)
     messages: list[dict[str, Any]] = []
     for i, e in enumerate(entries):
+        content: str | None = None
         match e.kind:
             case "recall":
                 label = f"[recall:{recall_label(e.recalled_id, e.recalled_title)}]"
@@ -183,17 +221,17 @@ def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[
                     content = f"{label} {e.text}"
                 else:
                     content = f"{label} Summary: {e.recalled_summary or '(no summary yet)'}"
-                messages.append({"role": "user", "content": content})
             case "owner":
-                messages.append({"role": "user", "content": e.text})
+                content = e.text
             case "ask_prompt":
-                messages.append({"role": "user", "content": f"[ask:{e.source}] {e.text}"})
+                content = f"[ask:{e.source}] {e.text}"
             case "notice":
-                messages.append({"role": "user", "content": f"[notice:{e.source}] {e.text}"})
+                content = f"[notice:{e.source}] {e.text}"
             case "reminder":
                 due = f" due {format_when(e.reminder_due_at, zone)}" if e.reminder_due_at else ""
-                label = f"[reminder:#{e.reminder_id}{due}]"
-                messages.append({"role": "user", "content": f"{label} {e.text}"})
+                content = f"[reminder:#{e.reminder_id}{due}] {e.text}"
             case "assistant" | "ask_reply" | "reminder_reply":
                 messages.append({"role": "assistant", "content": e.text})
+        if content is not None:
+            messages.append({"role": "user", "content": stamped(content, e.created_at, zone)})
     return messages

@@ -11,6 +11,7 @@ from alfred.reminders.when import (
     format_in,
     format_now,
     format_when,
+    parse_date,
     parse_text,
     resolve,
 )
@@ -225,3 +226,43 @@ def test_format_day_time_after_midnight_utc() -> None:
     assert format_day_time(datetime(2026, 11, 9, 23, 0, tzinfo=tokyo), now, tokyo) == (
         "today at 23:00"
     )
+
+
+# --- parse_date (change add-utility-tools) ----------------------------------------
+
+
+def test_parse_date() -> None:
+    now = datetime(2026, 11, 9, 14, 5, tzinfo=UTC)
+    assert parse_date("2027-03-03", now=now, zone=LISBON).isoformat() == "2027-03-03"
+    assert parse_date(" today ", now=now, zone=LISBON).isoformat() == "2026-11-09"
+    assert parse_date("Today", now=now, zone=LISBON).isoformat() == "2026-11-09"
+
+
+def test_today_just_after_local_midnight() -> None:
+    # 00:30 on 10 November in Lisbon is still 9 November in New York.
+    now = datetime(2026, 11, 10, 0, 30, tzinfo=UTC)
+    assert parse_date("today", now=now, zone=LISBON).isoformat() == "2026-11-10"
+    assert parse_date("today", now=now, zone=ZoneInfo("America/New_York")).isoformat() == (
+        "2026-11-09"
+    )
+
+
+FORMS = '"YYYY-MM-DD" or "today"'
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("2027-02-30", "Error: 2027-02-30 is not a valid date."),
+        (
+            "next friday",
+            'Error: can\'t read the date \'next friday\'. Use "YYYY-MM-DD" or "today".',
+        ),
+        ("3/3/2027", 'Error: can\'t read the date \'3/3/2027\'. Use "YYYY-MM-DD" or "today".'),
+        (20270303, f"Error: a date must be text: {FORMS}."),
+    ],
+)
+def test_bad_dates(value: object, message: str) -> None:
+    with pytest.raises(WhenError) as caught:
+        parse_date(value, now=datetime(2026, 11, 9, tzinfo=UTC), zone=LISBON)
+    assert str(caught.value) == message

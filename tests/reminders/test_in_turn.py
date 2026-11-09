@@ -15,11 +15,14 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
 from alfred.reminders.tools import REMIND_SET, ReminderTools
 from alfred.tools.base import TurnInput
+from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
+from alfred.tools.dates import DATE
 from tests.agent.turn_helpers import (
     DUE,
     Clock,
     agent,
+    contents,
     owner_turn,
     reminder_tools,
     reminder_turn,
@@ -87,7 +90,7 @@ async def test_reminder_turn_on_time(sessions: async_sessionmaker[AsyncSession])
     system = messages[0]["content"]
     assert system.endswith(REMINDER_RULE)
     assert ASK_RULE not in system and NO_REPLY not in system
-    assert [m["content"] for m in messages[1:]] == [
+    assert contents(messages[1:]) == [
         "earlier",
         "earlier reply",
         "[reminder:#12 due Monday 9 November 2026, 17:00; now 17:00] call mum",
@@ -162,3 +165,12 @@ async def test_reminder_tool_failure_reaches_the_model(
     a = agent(sessions, model, reminders=Broken())  # type: ignore[arg-type]
     await a.run(await owner_turn(sessions, "remind me in 5 minutes"))
     assert "failed: OSError" in model.requests[1][0][-1]["content"]
+
+
+async def test_reminder_turn_offers_calculator_and_date_before_mcp(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, now=DUE).run(await reminder_turn(sessions))
+    names = [t["function"]["name"] for t in model.requests[0][1]]
+    assert names.index(CALCULATE) < names.index(DATE) < names.index("mcparr_get_downloads")

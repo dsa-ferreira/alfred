@@ -18,7 +18,7 @@ from alfred.agent.prompts import NO_REPLY
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
-from alfred.history import History
+from alfred.history import History, strip_stamp
 from alfred.memory.summaries import Summaries
 from alfred.queue import Queue, Worker, reset_marker
 from alfred.reminders.store import Reminders
@@ -90,7 +90,8 @@ class Setup:
 
 
 def user_messages(model: FakeModel, request: int) -> list[str]:
-    return [m["content"] for m in model.requests[request][0] if m["role"] != "system"]
+    """The non-system messages' text, without their times (the database's clock)."""
+    return [strip_stamp(m["content"]) for m in model.requests[request][0] if m["role"] != "system"]
 
 
 # --- Single ordered worker -----------------------------------------------------
@@ -614,7 +615,7 @@ async def test_reminder_delivered(sessions: async_sessionmaker[AsyncSession]) ->
         ("reminder_reply", "Your call to mum is due, sir.", rid),
     ]
     assert [i.status for i in await s.items()] == ["done"]
-    last = s.model.requests[0][0][-1]["content"]
+    last = strip_stamp(s.model.requests[0][0][-1]["content"])
     assert last.startswith(f"[reminder:#{rid} due ") and last.endswith("] call mum")
 
 

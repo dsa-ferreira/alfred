@@ -18,10 +18,16 @@ and the homelab services.
   and `— new conversation #42 —`. Later, "remember conversation 41" or
   "remember when we talked about the chicken recipe last week?" makes the AI
   search the archived conversations (by meaning through the embedding service
-  on `ragman.lan`, by keywords, and by date) and bring one back.
+  on `ragman.lan`, by keywords, and by date) and bring one back. Every
+  message from you, a service or a reminder reaches the AI with the time it
+  arrived (`[Mon 9 Nov 14:05] what time is it?`), so it knows the time of day
+  (see [Message times](#message-times)).
 - **Web.** The AI can search the web through the owner's SearXNG instance on
   `oracle.lan` and read pages it found or the owner sent (see
   [Web search and fetch](#web-search-and-fetch)).
+- **Arithmetic and dates.** The AI doesn't work sums, unit conversions or
+  calendar questions out itself: alfred computes them (see
+  [Calculator and dates](#calculator-and-dates)).
 - **Outages.** Messages for the AI go through one persisted queue. While the
   AI is unreachable they wait and are retried in order; nothing is lost.
 
@@ -72,7 +78,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
 | `ai.owner_address` | string | `"sir"` | How alfred addresses you: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, text only). Used as written. |
-| `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt and the dates of conversation search use it. An unknown name stops alfred at startup. |
+| `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt, the times on history messages, `alfred_date` and the dates of conversation search use it. An unknown name stops alfred at startup. |
 | `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |
@@ -390,6 +396,66 @@ Your reminder, due at 17:00: "call mum". My apologies for the plain delivery, si
 A delivered reminder and what you were told are kept in the conversation, so
 you can answer it: "snooze 15 minutes" sets a new reminder with the same
 text. Recurring reminders aren't supported.
+
+## Calculator and dates
+
+The models alfred runs on get arithmetic and calendar questions wrong, so
+alfred has two tools of its own for them, offered on every turn (owner,
+`/ask` and reminder). The operating rules tell the model never to do these
+in its head and to answer from the tools' results.
+
+**`alfred_calculate`** evaluates an `expression`: numbers, `+ - * / // % **`,
+parentheses, `pi`, `e` and `sqrt`, `abs`, `round`, `min`, `max`, `floor`,
+`ceil`, `log`, `log10`, `exp`. `%` is the remainder; percentages are written
+as `/100`. Integers stay exact; other results have 12 significant digits, so
+`0.1 + 0.2` is `0.3`. The expression is never run as code: anything else
+(names, attributes, strings, lambdas, ...) is refused, as are expressions over
+500 characters, powers whose result would have more than 1000 digits, and
+division by zero.
+
+With `from_unit` and `to_unit`, the result is converted with
+[pint](https://pint.readthedocs.io/). pint only sees the unit names, which may
+use letters, `°`, spaces, `/ * ^` and one-digit powers (`m^2`).
+
+```
+347 * 28.5 = 9889.5
+350 degree_Fahrenheit = 176.666666667 degree_Celsius
+2.5 * 3 = 7.5 pound = 3.401942775 kilogram
+1.5 cup = 354.88235475 milliliter
+Error: cup (volume) can't be converted to gram (mass) without more information, such as the ingredient's density.
+```
+
+`cup` is the US cup (236.6 ml); the fluid ounce is `floz`.
+
+**`alfred_date`** does calendar arithmetic in `ai.timezone`. Dates are
+`YYYY-MM-DD` or `today`.
+
+| `op` | Takes | Example result |
+| --- | --- | --- |
+| `between` | `from`, `to` | `Friday 25 December 2026 is 46 days (6 weeks and 4 days) after Monday 9 November 2026.` |
+| `shift` | `date`, `days` / `weeks` / `months` (negative to go back) | `Sunday 31 January 2027 +1 month is Sunday 28 February 2027.` |
+| `weekday` | `date` | `3 March 2027 is a Wednesday.` |
+| `now_in` | `zone` (IANA; none for yours) | `It is 23:05 on Monday 9 November 2026 in Asia/Tokyo, 9 hours ahead of the owner.` |
+
+A month that lacks the day gives its last day. Results outside the years 1 to
+9999, unknown zones and unreadable dates come back to the model as errors.
+
+### Message times
+
+The system prompt only gives today's date, so it changes once a day and the AI
+server can keep reusing its processed prefix. The time of day comes from the
+history instead: every message from you, a service or a reminder starts with
+the local time it was recorded, before its label.
+
+```
+[Mon 9 Nov 14:05] what time is it?
+It is just past two, sir.
+[Mon 9 Nov 14:20] [notice:mcparr] Dune finished
+```
+
+The stamp is absolute (never "yesterday"), so an old message is sent with the
+same text on every later turn. Replies have none. If the model starts a reply
+with a stamp anyway, alfred removes it before sending.
 
 ## Deployment
 

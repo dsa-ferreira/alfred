@@ -10,7 +10,7 @@ from alfred.db.models import Entry
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.tools.base import TurnInput
-from tests.agent.turn_helpers import agent, memory, owner_turn, tool_rows
+from tests.agent.turn_helpers import agent, contents, memory, owner_turn, tool_rows
 from tests.helpers import FakeEmbedder, FakeModel, add_queue_item, calls, text
 from tests.memory.test_search import CHICKEN, at, seed
 
@@ -92,11 +92,11 @@ async def test_search_then_recall_then_follow_up(
     await agent(sessions, model, memory=mem).run(
         await owner_turn(sessions, "and how long in the oven?")
     )
-    contents = [m["content"] for m in model.requests[3][0][1:]]
-    assert contents[0] == "remember the chicken recipe?"
-    assert contents[1].startswith('[recall:#41 "Chicken thighs recipe"] #41 ')
-    assert "Owner: 40 minutes at 200°C" in contents[1]
-    assert contents[-1] == "and how long in the oven?"
+    texts = contents(model.requests[3][0][1:])
+    assert texts[0] == "remember the chicken recipe?"
+    assert texts[1].startswith('[recall:#41 "Chicken thighs recipe"] #41 ')
+    assert "Owner: 40 minutes at 200°C" in texts[1]
+    assert texts[-1] == "and how long in the oven?"
 
 
 async def test_memory_tool_errors_reach_the_model(

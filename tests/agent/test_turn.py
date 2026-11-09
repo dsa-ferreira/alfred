@@ -10,13 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
-from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona
+from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona, is_no_reply
 from alfred.agent.turn import Agent, TurnFailed
-from alfred.history import History
+from alfred.history import STAMP, History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.tools.base import AttemptContext, LocalToolset, TurnInput
 from alfred.tools.brains import SET_MODEL
+from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
+from alfred.tools.dates import DATE
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH
 from tests.agent.turn_helpers import (
     BAD_MODEL,
@@ -28,6 +30,7 @@ from tests.agent.turn_helpers import (
     RULES,
     Clock,
     agent,
+    contents,
     memory,
     owner_turn,
     reminder_tools,
@@ -61,7 +64,7 @@ async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSess
         "role": "system",
         "content": butler_persona("sir") + "\n\n" + RULES + "\n\n" + COOKBOOK_SECTION,
     }
-    assert [m["content"] for m in messages[1:]] == ["earlier", "earlier reply", "hi"]
+    assert contents(messages[1:]) == ["earlier", "earlier reply", "hi"]
 
 
 async def test_custom_persona(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -86,7 +89,7 @@ async def test_context_window_limit(sessions: async_sessionmaker[AsyncSession]) 
         await history.append("owner", f"m{i}")
     model = FakeModel([text("ok")])
     await agent(sessions, model, history={"max_entries": 3}).run(await owner_turn(sessions, "last"))
-    assert [m["content"] for m in model.requests[0][0][1:]] == ["m8", "m9", "last"]
+    assert contents(model.requests[0][0][1:]) == ["m8", "m9", "last"]
 
 
 async def test_ask_turn_context(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -99,8 +102,11 @@ async def test_ask_turn_context(sessions: async_sessionmaker[AsyncSession]) -> N
     assert result.reply == NO_REPLY
     messages = model.requests[0][0]
     assert NO_REPLY in messages[0]["content"]
-    assert messages[1]["content"] == "earlier"
-    assert messages[-1] == {"role": "user", "content": "[ask:disk-check] is this worth telling?"}
+    assert contents(messages[1:2]) == ["earlier"]
+    assert messages[-1] == {
+        "role": "user",
+        "content": "[Mon 2 Nov 14:05] [ask:disk-check] is this worth telling?",
+    }
 
 
 async def test_unavailable_servers_told(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -309,7 +315,7 @@ async def test_fallback_before_any_tool_runs_the_turn_again(
     assert brains.current.name == "gemma"
     retry = model.requests[1][0]
     assert brain_line("gemma", GEMMA, ["bonsai"]) in retry[0]["content"]
-    assert [m["content"] for m in retry[1:]] == ["hi"]
+    assert contents(retry[1:]) == ["hi"]
     [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert "bonsai" in warning and "gemma" in warning and "does not support tools" in warning
 
@@ -412,6 +418,8 @@ async def test_tool_order_on_owner_turns(
         "alfred_reminders_list",
         "alfred_reminder_cancel",
         SET_MODEL,
+        CALCULATE,
+        DATE,
         *MCP_TOOLS,
     ]
 
@@ -427,6 +435,8 @@ async def test_tool_order_on_ask_turns(
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         WEB_SEARCH,
         WEB_FETCH,
+        CALCULATE,
+        DATE,
         *MCP_TOOLS,
     ]
 
@@ -455,3 +465,42 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
     assert len(recorder.attempts) == 2
     assert recorder.attempts[0] is not recorder.attempts[1]
     assert [ctx.owner_texts for ctx in recorder.attempts] == [["hi"], ["hi"]]
+
+
+# --- message times (change add-utility-tools) --------------------------------------
+
+
+async def test_ask_input_carries_the_time_now(sessions: async_sessionmaker[AsyncSession]) -> None:
+    item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
+    model = FakeModel([text(NO_REPLY)])
+    at_three = datetime(2026, 11, 10, 3, 0, tzinfo=UTC)  # 03:00 in Lisbon (WET)
+    await agent(sessions, model, now=at_three).run(TurnInput("ask", "93% full", item, "disk-check"))
+    assert model.requests[0][0][-1]["content"] == "[Tue 10 Nov 03:00] [ask:disk-check] 93% full"
+
+
+async def test_owner_message_reaches_the_model_stamped(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model).run(await owner_turn(sessions, "what time is it?"))
+    latest = model.requests[0][0][-1]["content"]
+    assert STAMP.match(latest) and latest.endswith("] what time is it?")
+
+
+async def test_echoed_stamp_is_removed(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([text("[Mon 2 Nov 14:06] It is just past two, sir.")])
+    result = await agent(sessions, model).run(await owner_turn(sessions, "what time is it?"))
+    assert result.reply == "It is just past two, sir."
+
+
+async def test_echoed_stamp_before_no_reply(sessions: async_sessionmaker[AsyncSession]) -> None:
+    item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
+    model = FakeModel([text(f"[Mon 2 Nov 14:05] {NO_REPLY}")])
+    result = await agent(sessions, model).run(TurnInput("ask", "93% full", item, "disk-check"))
+    assert is_no_reply(result.reply)
+
+
+async def test_other_brackets_are_kept(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([text("Saved [draft] for later.")])
+    result = await agent(sessions, model).run(await owner_turn(sessions, "save it"))
+    assert result.reply == "Saved [draft] for later."

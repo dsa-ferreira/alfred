@@ -175,7 +175,8 @@ def test_date_follows_the_rules() -> None:
 
 
 def test_no_time_of_day() -> None:
-    text = make_prompt(None, owner_address="sir", ask=False)
+    # The rules show a fixed example stamp; nothing else may look like a time.
+    text = make_prompt(None, owner_address="sir", ask=False).replace("[Mon 9 Nov 14:05]", "")
     assert not re.search(r"\d{1,2}:\d{2}", text)
 
 
@@ -279,3 +280,24 @@ def test_reminder_turn_rule() -> None:
     assert "If it is late, say how late" in _flat(REMINDER_RULE)
     assert "Don't mention the reminder's number" in _flat(REMINDER_RULE)
     assert REMINDER_RULE not in make_prompt(None, owner_address="sir", ask=False)
+
+
+def test_message_times_explained() -> None:
+    for persona in (None, "Be terse."):
+        prompt = make_prompt(persona, owner_address="sir", ask=False)
+        assert "[Mon 9 Nov 14:05]" in prompt
+        assert "The newest one is the time now" in prompt
+        assert "Never write these times in your replies" in prompt
+        assert "A message labelled [notice:<service>] is a notification" in prompt
+
+
+def test_calculation_routed_to_the_tools() -> None:
+    for persona in (None, "Be terse."):
+        for ask in (False, True):
+            prompt = make_prompt(persona, owner_address="sir", ask=ask)
+            assert "Never do arithmetic, percentages, unit conversions or date calculations" in (
+                prompt
+            )
+            assert "Use alfred_calculate for sums" in prompt
+            assert "alfred_date for the days between dates" in prompt
+            assert "the time in another timezone" in prompt

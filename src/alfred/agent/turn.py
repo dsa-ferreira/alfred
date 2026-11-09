@@ -27,7 +27,8 @@ web fetch allowlist starts fresh.
 An owner message is already in the history when its turn runs (the worker
 records it at turn start), so it reaches the model as the newest entry. An
 ``/ask`` prompt is only recorded if the answer reaches the owner, so it is
-added to the messages here. So is a due reminder (change add-reminders,
+added to the messages here, after the time now like the history's
+messages (change add-utility-tools, design D1). So is a due reminder (change add-reminders,
 design D5), labelled with its due time and the time of this attempt, so a
 retried turn shows how late it really is.
 """
@@ -52,7 +53,7 @@ from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCa
 from alfred.agent.prompts import brain_line, system_prompt
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
-from alfred.history import History, to_messages
+from alfred.history import History, stamped, strip_stamp, to_messages
 from alfred.reminders.when import format_now, format_when
 from alfred.tools.base import (
     AttemptContext,
@@ -237,7 +238,8 @@ class Agent:
         )
         state.messages += to_messages(entries, self._zone)
         if turn.kind == "ask":
-            state.messages.append({"role": "user", "content": f"[ask:{turn.source}] {turn.text}"})
+            ask = f"[ask:{turn.source}] {turn.text}"
+            state.messages.append({"role": "user", "content": stamped(ask, now, self._zone)})
         elif turn.kind == "reminder":
             state.messages.append({"role": "user", "content": self._reminder_input(turn, now)})
         for open_toolset in this.opened:
@@ -258,7 +260,8 @@ class Agent:
             reply = await self._ask_model(state, this.definitions)
             log.info("turn %s request %d: %s", turn.queue_item_id, n, token_counts(reply.usage))
             if not reply.tool_calls:
-                answer = (reply.content or "").strip()
+                # A stamp copied from the history is not part of the answer (design D2).
+                answer = strip_stamp((reply.content or "").strip())
                 if not answer:
                     raise self._failed(state, "the model returned an empty reply")
                 return TurnResult(answer, state.context.reset, state.side_effects)

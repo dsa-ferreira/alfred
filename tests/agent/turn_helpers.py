@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -16,7 +17,7 @@ from alfred.agent.model import ModelFailed, ModelReply
 from alfred.agent.prompts import OPERATING_RULES
 from alfred.agent.turn import Agent
 from alfred.db.models import TurnToolCall
-from alfred.history import History
+from alfred.history import History, strip_stamp
 from alfred.mcp.registry import ServerInstructions
 from alfred.mcp.toolset import server_instructions
 from alfred.memory.search import ConversationSearch
@@ -113,6 +114,11 @@ def two_brains(current: str = "gemma") -> Brains:
 
 def set_model(name: str) -> object:
     return calls((SET_MODEL, json.dumps({"model": name})))
+
+
+def contents(messages: list[dict[str, Any]]) -> list[str]:
+    """The messages' text without their times (stored entries carry the database's clock)."""
+    return [strip_stamp(m["content"]) for m in messages]
 
 
 def tool_result(model: FakeModel, request: int) -> str:

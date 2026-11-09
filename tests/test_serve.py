@@ -22,7 +22,9 @@ from alfred.memory.search import ConversationSearch, MemoryTools
 from alfred.memory.sweeper import Sweeper
 from alfred.reminders.tools import ReminderTools
 from alfred.tools.brains import BrainTools
+from alfred.tools.calculator import CalculatorTools
 from alfred.tools.conversation import ConversationTools
+from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
 from tests.helpers import make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession
@@ -187,6 +189,8 @@ async def test_memory_wiring_and_clients_closed(
         MemoryTools,
         ReminderTools,
         BrainTools,
+        CalculatorTools,
+        DateTools,
         McpTools,
     ]
     assert agents[0]["brains"].names == ["gemma4:26b-a4b-it-qat"]
