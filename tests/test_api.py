@@ -11,14 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import NO_REPLY
-from alfred.agent.turn import Agent, TurnResult
+from alfred.agent.turn import TurnResult
 from alfred.api import create_app
 from alfred.config import Service
 from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.queue import Queue, Worker
 from alfred.telegram.bot import TelegramOutbox
-from tests.helpers import FakeModel, make_config, text
+from tests.helpers import FakeModel, make_agent, make_config, text
 from tests.mcp.servers import in_process
 from tests.telegram.fake_bot import OWNER, make_bot
 
@@ -184,7 +184,7 @@ async def test_ask_empty_prompt(env: Env, body: dict) -> None:
 
 async def run_ask(env: Env, answer: str) -> None:
     cfg = make_config()
-    agent = Agent(cfg, FakeModel([text(answer)]), env.history, env.sessions, in_process({}))
+    agent = make_agent(cfg, FakeModel([text(answer)]), env.history, env.sessions, in_process({}))
     worker = Worker(
         env.queue, agent, env.history, env.outbox, cfg.queue, owner_address=cfg.ai.owner_address
     )

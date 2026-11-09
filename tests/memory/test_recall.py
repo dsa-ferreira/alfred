@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Entry
 from alfred.history import History
-from alfred.memory.service import OMITTED, Memory
-from tests.helpers import FakeEmbedder, FakeModel, make_config
+from alfred.memory.search import OMITTED, ConversationSearch
+from tests.helpers import FakeEmbedder, make_config
 from tests.memory.test_search import at, seed
 
 TRANSCRIPT = (
@@ -16,9 +16,11 @@ TRANSCRIPT = (
 )
 
 
-def memory(sessions: async_sessionmaker[AsyncSession], **memory_config: object) -> Memory:
+def memory(
+    sessions: async_sessionmaker[AsyncSession], **memory_config: object
+) -> ConversationSearch:
     cfg = make_config(memory=memory_config)  # type: ignore[arg-type]
-    return Memory(cfg, sessions, FakeModel(), FakeEmbedder())
+    return ConversationSearch(cfg, sessions, FakeEmbedder())
 
 
 async def seed_41(sessions: async_sessionmaker[AsyncSession]) -> None:

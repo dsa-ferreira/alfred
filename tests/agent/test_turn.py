@@ -14,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
-from alfred.agent.brains import Brains
+from alfred.agent.brains import SET_MODEL, Brains
+from alfred.agent.conversation import END_CONVERSATION
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, Usage
 from alfred.agent.prompts import (
     ASK_RULE,
@@ -23,28 +24,29 @@ from alfred.agent.prompts import (
     REMINDER_RULE,
     brain_line,
     butler_persona,
-    server_instructions,
 )
-from alfred.agent.turn import (
-    END_CONVERSATION,
-    RECALL_CONVERSATION,
-    SEARCH_CONVERSATIONS,
-    SET_MODEL,
-    Agent,
-    TurnFailed,
-    TurnInput,
-)
+from alfred.agent.toolset import AttemptContext, LocalToolset
+from alfred.agent.turn import Agent, TurnFailed, TurnInput
 from alfred.db.models import Conversation, Entry, TurnToolCall
 from alfred.history import History
 from alfred.mcp.registry import ServerInstructions
-from alfred.memory.service import Memory
+from alfred.mcp.toolset import server_instructions
+from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS, ConversationSearch
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
 from alfred.reminders.tools import REMIND_SET, ReminderTools
 from alfred.web.fetch import Fetcher, make_http_client
 from alfred.web.search import SearxngClient
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH, WebTools
-from tests.helpers import FakeEmbedder, FakeModel, add_queue_item, calls, make_config, text
+from tests.helpers import (
+    FakeEmbedder,
+    FakeModel,
+    add_queue_item,
+    calls,
+    make_agent,
+    make_config,
+    text,
+)
 from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook, make_mcparr
 from tests.mcp.servers import config as server_config
 from tests.memory.test_search import CHICKEN, at, seed
@@ -69,7 +71,7 @@ def agent(
     sessions: async_sessionmaker[AsyncSession],
     model: FakeModel,
     *,
-    memory: Memory | None = None,
+    memory: ConversationSearch | None = None,
     web: WebTools | None = None,
     brains: Brains | None = None,
     reminders: ReminderTools | None = None,
@@ -78,7 +80,7 @@ def agent(
 ) -> Agent:
     cfg = make_config(mcp_servers=[MCPARR, COOKBOOK], **config)  # type: ignore[arg-type]
     connect = in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()})
-    return Agent(
+    return make_agent(
         cfg,
         model,
         History(sessions),
@@ -92,8 +94,10 @@ def agent(
     )
 
 
-def memory(sessions: async_sessionmaker[AsyncSession], embedder: FakeEmbedder) -> Memory:
-    return Memory(make_config(), sessions, FakeModel(), embedder)
+def memory(
+    sessions: async_sessionmaker[AsyncSession], embedder: FakeEmbedder
+) -> ConversationSearch:
+    return ConversationSearch(make_config(), sessions, embedder)
 
 
 async def owner_turn(sessions: async_sessionmaker[AsyncSession], message: str) -> TurnInput:
@@ -168,7 +172,7 @@ async def test_unavailable_servers_told(sessions: async_sessionmaker[AsyncSessio
     cfg = make_config(mcp_servers=[MCPARR, COOKBOOK])
     connect = in_process({"mcparr": ConnectionError("down"), "cookbook": make_cookbook()})
     model = FakeModel([text("ok")])
-    await Agent(cfg, model, History(sessions), sessions, connect).run(
+    await make_agent(cfg, model, History(sessions), sessions, connect).run(
         await owner_turn(sessions, "hi")
     )
     assert "unavailable" in model.requests[0][0][0]["content"]
@@ -192,7 +196,7 @@ async def test_instructions_cap_from_config(sessions: async_sessionmaker[AsyncSe
     cfg = replace(cfg, mcp=cfg.mcp.model_copy(update={"instructions_max_chars": 10}))
     model = FakeModel([text("ok")])
     connect = in_process({"cookbook": make_cookbook()})
-    await Agent(cfg, model, History(sessions), sessions, connect).run(
+    await make_agent(cfg, model, History(sessions), sessions, connect).run(
         await owner_turn(sessions, "hi")
     )
     system = model.requests[0][0][0]["content"]
@@ -254,7 +258,9 @@ async def test_context_size_line_skips_unavailable_server(
     connect = in_process({"mcparr": ConnectionError("down"), "cookbook": make_cookbook()})
     turn = await owner_turn(sessions, "hi")
     with caplog.at_level(logging.INFO):
-        await Agent(cfg, FakeModel([text("ok")]), History(sessions), sessions, connect).run(turn)
+        await make_agent(cfg, FakeModel([text("ok")]), History(sessions), sessions, connect).run(
+            turn
+        )
     [line] = turn_lines(caplog, turn, "context:")
     assert "cookbook" in line and "mcparr" not in line
 
@@ -1199,13 +1205,101 @@ async def test_reminder_turn_days_late_shows_the_date(
 async def test_reminder_tool_failure_reaches_the_model(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    class Broken:
-        definitions = ReminderTools.definitions
+    class Broken(ReminderTools):
+        def __init__(self) -> None:
+            pass
 
-        async def call(self, name: str, raw_arguments: object) -> object:
+        async def call(self, name: str, raw_arguments: object, attempt: object = None) -> object:
             raise OSError("database down")
 
     model = FakeModel([calls((REMIND_SET, '{"text": "x", "in_minutes": 5}')), text("Sorry.")])
     a = agent(sessions, model, reminders=Broken())  # type: ignore[arg-type]
     await a.run(await owner_turn(sessions, "remind me in 5 minutes"))
     assert "failed: OSError" in model.requests[1][0][-1]["content"]
+
+
+# --- the full tool list (pinned before change refactor-agent-toolsets) ----------
+
+
+MCP_TOOLS = [
+    "mcparr_get_downloads",
+    "mcparr_check_health",
+    "mcparr_add_media",
+    "cookbook_get_recipe",
+    "cookbook_delete_recipe",
+    "cookbook_check_health",
+    "cookbook_big",
+]
+
+
+def all_toolsets_agent(
+    sessions: async_sessionmaker[AsyncSession], model: FakeModel, http: httpx.AsyncClient
+) -> Agent:
+    return agent(
+        sessions,
+        model,
+        memory=memory(sessions, FakeEmbedder()),
+        web=web_tools(http),
+        reminders=reminder_tools(sessions, Clock(NOW)),
+        brains=two_brains(),
+    )
+
+
+async def test_tool_order_on_owner_turns(
+    sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
+) -> None:
+    model = FakeModel([text("ok")])
+    await all_toolsets_agent(sessions, model, web_http).run(await owner_turn(sessions, "hi"))
+    assert [t["function"]["name"] for t in model.requests[0][1]] == [
+        WEB_SEARCH,
+        WEB_FETCH,
+        END_CONVERSATION,
+        SEARCH_CONVERSATIONS,
+        RECALL_CONVERSATION,
+        "alfred_remind_set",
+        "alfred_reminders_list",
+        "alfred_reminder_cancel",
+        SET_MODEL,
+        *MCP_TOOLS,
+    ]
+
+
+async def test_tool_order_on_ask_turns(
+    sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
+) -> None:
+    model = FakeModel([text(NO_REPLY)])
+    item = await add_queue_item(sessions, "ask", "93%", "disk-check")
+    await all_toolsets_agent(sessions, model, web_http).run(
+        TurnInput("ask", "93%", item, "disk-check")
+    )
+    assert [t["function"]["name"] for t in model.requests[0][1]] == [
+        WEB_SEARCH,
+        WEB_FETCH,
+        *MCP_TOOLS,
+    ]
+
+
+async def test_toolsets_opened_once_and_told_of_every_attempt(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    class Recorder(LocalToolset):
+        def __init__(self) -> None:
+            self.opened = 0
+            self.attempts: list[AttemptContext] = []
+
+        async def open(self, turn: TurnInput) -> LocalToolset:
+            self.opened += 1
+            return self
+
+        def new_attempt(self, attempt: AttemptContext) -> None:
+            self.attempts.append(attempt)
+
+    recorder = Recorder()
+    brains = two_brains("bonsai")
+    model = FakeModel([BAD_MODEL, text("gemma's answer")])
+    a = Agent(make_config(), model, History(sessions), sessions, toolsets=[recorder], brains=brains)
+    await a.run(await owner_turn(sessions, "hi"))
+    assert recorder.opened == 1  # the MCP servers are listed once per turn
+    assert len(recorder.attempts) == 2
+    assert recorder.attempts[0] is not recorder.attempts[1]
+    assert [ctx.owner_texts for ctx in recorder.attempts] == [["hi"], ["hi"]]

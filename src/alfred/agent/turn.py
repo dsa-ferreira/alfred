@@ -1,20 +1,28 @@
 """One AI turn (design D5).
 
 ```
-tools = web tools + alfred_* local tools (owner turns only) + tools of reachable MCP servers
-msgs  = [system prompt (+ today's date, reachable servers' instructions)]
-        + last N history entries (+ the ask or reminder input)
+open    = each toolset opened for the turn (those not offered on it drop out)
+tools   = the open toolsets' definitions, in toolset order
+msgs    = [system prompt (+ today's date, the brain, the toolsets' notes)]
+          + last N history entries (+ the ask or reminder input)
 loop up to ai.max_requests_per_turn:
     reply = model(msgs, tools)          # on the brain current at the turn's start
     no tool calls -> done
-    run each call in order; errors become results; any call => side effects possible
+    run each call in order through the first open toolset that handles it;
+    errors become results; any call => side effects possible
 fail "stopped after too many steps"
 ```
+
+The agent names no tool: what is offered on which turn, and what a call
+does, is up to the toolsets (``alfred.agent.toolset``) that ``app.py``
+passes in.
 
 A non-retryable model error on a brain other than the startup one makes the
 startup brain current (change add-brain-switching, design D5). If no tool
 had run, the turn runs again from the start on it; either way the owner gets
-the fallback notice.
+the fallback notice. Each attempt reads the history again and tells every
+open toolset it started (``new_attempt``), so per-attempt state such as the
+web fetch allowlist starts fresh.
 
 An owner message is already in the history when its turn runs (the worker
 records it at turn start), so it reaches the model as the newest entry. An
@@ -22,10 +30,6 @@ records it at turn start), so it reaches the model as the newest entry. An
 added to the messages here. So is a due reminder (change add-reminders,
 design D5), labelled with its due time and the time of this attempt, so a
 retried turn shows how late it really is.
-
-Each attempt gets a fresh web state (change add-web-search, design D3): its
-fetch allowlist starts with the URLs in the owner's messages in the context
-window and in the ``/ask`` prompt; search results add theirs as they come.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
@@ -43,132 +47,25 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.brains import Brain, Brains
+from alfred.agent.context import context_sizes, largest_tools
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.agent.prompts import brain_line, system_prompt
+from alfred.agent.toolset import (
+    AttemptContext,
+    OpenToolset,
+    ToolOutcome,
+    Toolset,
+    dispatch,
+    parse_arguments,
+)
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
 from alfred.history import History, to_messages
-from alfred.mcp.client import Connector
-from alfred.mcp.registry import (
-    Route,
-    ServerInstructions,
-    ToolOutcome,
-    TurnTools,
-    build_turn_tools,
-    call_tool,
-    parse_arguments,
-)
-from alfred.reminders.tools import NAMES as REMINDER_TOOLS
 from alfred.reminders.when import format_now, format_when
-from alfred.web.tools import NAMES as WEB_TOOLS
-from alfred.web.tools import WebTurn
 
 log = logging.getLogger(__name__)
 
-END_CONVERSATION = "alfred_end_conversation"
 EXCERPT_CHARS = 500
-LOCAL_TOOLS = "alfred"  # how alfred's own tools are grouped in the context-size line
-LARGEST_TOOLS = 5
-
-END_CONVERSATION_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": END_CONVERSATION,
-        "description": (
-            "End the current conversation and start a fresh one with no memory of it. "
-            "Call this ONLY when the owner clearly says the conversation or topic is "
-            "finished (for example 'thanks, we're done', 'that's all', 'new topic'). "
-            "Never call it because a question was answered, on a simple 'thanks', or "
-            "when unsure. After calling it, reply with a short closing line."
-        ),
-        "parameters": {"type": "object", "properties": {}},
-    },
-}
-
-SEARCH_CONVERSATIONS = "alfred_search_conversations"
-RECALL_CONVERSATION = "alfred_recall_conversation"
-
-SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": SEARCH_CONVERSATIONS,
-        "description": (
-            "Search earlier, archived conversations with the owner by topic, by date, or "
-            "both. Use when the owner refers to something discussed before ('remember "
-            "when…', 'that recipe we talked about last week', 'what did we talk about on "
-            "Tuesday?'). Turn relative dates into after/before (YYYY-MM-DD, inclusive) using "
-            "today's date from the system prompt. If one result is clearly the best match, "
-            "recall it and tell the owner which conversation you picked (its title and "
-            "date). If several match about equally, ask the owner which one they meant."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "What the conversation was about, in a few words.",
-                },
-                "after": {
-                    "type": "string",
-                    "description": "Earliest date, YYYY-MM-DD, inclusive.",
-                },
-                "before": {
-                    "type": "string",
-                    "description": "Latest date, YYYY-MM-DD, inclusive.",
-                },
-            },
-        },
-    },
-}
-
-RECALL_CONVERSATION_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": RECALL_CONVERSATION,
-        "description": (
-            "Bring an archived conversation, by its number, into this conversation so you "
-            "can use what was said. Use when the owner names a conversation number or after "
-            "search found the one they mean."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "integer", "description": "The conversation number, e.g. 41."}
-            },
-            "required": ["id"],
-        },
-    },
-}
-
-
-SET_MODEL = "alfred_set_model"
-
-
-def set_model_tool(names: list[str]) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": SET_MODEL,
-            "description": (
-                "Switch the model that answers the owner, from their next message on. The "
-                "owner may call it your model or your brain (for example 'change brains to "
-                "gemma', 'set your brain to bonsai', 'use the bonsai model'). Call this ONLY "
-                "when the owner asks to switch. The system prompt says which brain you are "
-                "running on. After calling it, reply with a short confirmation."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "model": {
-                        "type": "string",
-                        "enum": names,
-                        "description": "The brain to switch to.",
-                    }
-                },
-                "required": ["model"],
-            },
-        },
-    }
 
 
 class Model(Protocol):
@@ -179,34 +76,6 @@ class Model(Protocol):
         *,
         model: str | None = None,
     ) -> ModelReply: ...
-
-
-class WebTools(Protocol):
-    """Web search and fetch (``alfred.web.tools.WebTools``)."""
-
-    definitions: list[dict[str, Any]]
-
-    def new_turn(self, texts: Iterable[str] = ()) -> WebTurn: ...
-
-    async def call(self, turn: WebTurn, name: str, raw_arguments: Any) -> ToolOutcome: ...
-
-
-class ReminderTools(Protocol):
-    """Setting, listing and cancelling reminders (``alfred.reminders.tools.ReminderTools``)."""
-
-    definitions: list[dict[str, Any]]
-
-    async def call(self, name: str, raw_arguments: Any) -> ToolOutcome: ...
-
-
-class MemoryTools(Protocol):
-    """Search and recall of archived conversations (``alfred.memory.service.Memory``)."""
-
-    async def search(
-        self, query: Any = None, after: Any = None, before: Any = None
-    ) -> ToolOutcome: ...
-
-    async def recall(self, conversation_id: Any) -> ToolOutcome: ...
 
 
 @dataclass(frozen=True)
@@ -268,11 +137,20 @@ class _BrainFailed(Exception):
 class _State:
     brain: Brain
     can_fall_back: bool
+    context: AttemptContext
     side_effects: bool = False
-    reset: bool = False
     seq: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
-    web: WebTurn | None = None
+
+
+@dataclass(frozen=True)
+class _Turn:
+    """What stays the same across a turn's attempts."""
+
+    input: TurnInput
+    opened: list[OpenToolset]
+    definitions: list[dict[str, Any]]
+    notes: list[str]
 
 
 class Agent:
@@ -282,11 +160,8 @@ class Agent:
         model: Model,
         history: History,
         sessions: async_sessionmaker[AsyncSession],
-        connect: Connector,
         *,
-        memory: MemoryTools | None = None,
-        web: WebTools | None = None,
-        reminders: ReminderTools | None = None,
+        toolsets: Sequence[Toolset] = (),
         brains: Brains | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -295,34 +170,23 @@ class Agent:
         self._model = model
         self._history = history
         self._sessions = sessions
-        self._connect = connect
-        self._memory = memory
-        self._web = web
-        self._reminders = reminders
+        self._toolsets = list(toolsets)
         self._now = now
         self._zone = ZoneInfo(config.ai.timezone)
 
     async def run(self, turn: TurnInput) -> TurnResult:
         cfg = self._config
-        tools = await build_turn_tools(
-            cfg.mcp_servers,
-            self._connect,
-            cfg.mcp.list_timeout_s,
-            instructions_max_chars=cfg.mcp.instructions_max_chars,
+        opened: list[OpenToolset] = []
+        for toolset in self._toolsets:
+            open_toolset = await toolset.open(turn)
+            if open_toolset is not None:
+                opened.append(open_toolset)
+        this = _Turn(
+            turn,
+            opened,
+            [d for t in opened for d in t.definitions],
+            [n.text for t in opened for n in t.prompt_notes],
         )
-        definitions = list(tools.definitions)
-        local: list[dict[str, Any]] = []
-        if self._web is not None:
-            local += self._web.definitions
-        if turn.kind == "owner":
-            local.append(END_CONVERSATION_TOOL)
-            if self._memory is not None:
-                local += [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
-            if self._reminders is not None:
-                local += self._reminders.definitions
-            if len(self._brains.brains) > 1:
-                local.append(set_model_tool(self._brains.names))
-        definitions[:0] = local
 
         fallback_notice: str | None = None
         while True:
@@ -330,9 +194,7 @@ class Agent:
             # turn applies from the next turn (design D3).
             brain = self._brains.current
             try:
-                result = await self._attempt(
-                    turn, tools, definitions, brain, can_fall_back=fallback_notice is None
-                )
+                result = await self._attempt(this, brain, can_fall_back=fallback_notice is None)
             except _BrainFailed as failure:
                 default = self._brains.default
                 self._brains.current = default
@@ -358,19 +220,17 @@ class Agent:
                 raise
             return dataclasses.replace(result, fallback_notice=fallback_notice)
 
-    async def _attempt(
-        self,
-        turn: TurnInput,
-        tools: TurnTools,
-        definitions: list[dict[str, Any]],
-        brain: Brain,
-        *,
-        can_fall_back: bool,
-    ) -> TurnResult:
+    async def _attempt(self, this: _Turn, brain: Brain, *, can_fall_back: bool) -> TurnResult:
         cfg = self._config
+        turn = this.input
         others = [b.name for b in self._brains.brains if b != brain]
-        state = _State(brain, can_fall_back and brain != self._brains.default)
         now = self._now()
+        entries = await self._history.recent(cfg.history.max_entries)
+        state = _State(
+            brain,
+            can_fall_back and brain != self._brains.default,
+            AttemptContext(turn, [e.text for e in entries if e.kind == "owner"]),
+        )
         state.messages.append(
             {
                 "role": "system",
@@ -380,46 +240,41 @@ class Agent:
                     ask=turn.kind == "ask",
                     reminder=turn.kind == "reminder",
                     today=now.astimezone(self._zone).date(),
-                    unavailable=tools.unavailable,
-                    instructions=tools.instructions,
+                    notes=this.notes,
                     brain=brain_line(brain.name, brain.tag, others),
                 ),
             }
         )
-        entries = await self._history.recent(cfg.history.max_entries)
         state.messages += to_messages(entries, self._zone)
         if turn.kind == "ask":
             state.messages.append({"role": "user", "content": f"[ask:{turn.source}] {turn.text}"})
         elif turn.kind == "reminder":
             state.messages.append({"role": "user", "content": self._reminder_input(turn, now)})
-        if self._web is not None:
-            # Only text the owner (or the asking service) wrote can open a page
-            # without a search; replies, notices and recalls can't.
-            seeds = [e.text for e in entries if e.kind == "owner"]
-            if turn.kind == "ask":
-                seeds.append(turn.text)
-            state.web = self._web.new_turn(seeds)
+        for open_toolset in this.opened:
+            open_toolset.new_attempt(state.context)
 
         log.info(
             "turn %s context: %s; brain %s",
             turn.queue_item_id,
-            context_sizes(state.messages, tools.instructions, definitions, tools.routes),
+            context_sizes(state.messages, this.opened),
             brain.name,
         )
         if log.isEnabledFor(logging.DEBUG):
-            log.debug("turn %s largest tools: %s", turn.queue_item_id, largest_tools(definitions))
+            log.debug(
+                "turn %s largest tools: %s", turn.queue_item_id, largest_tools(this.definitions)
+            )
 
         for n in range(1, cfg.ai.max_requests_per_turn + 1):
-            reply = await self._ask_model(state, definitions)
+            reply = await self._ask_model(state, this.definitions)
             log.info("turn %s request %d: %s", turn.queue_item_id, n, token_counts(reply.usage))
             if not reply.tool_calls:
                 answer = (reply.content or "").strip()
                 if not answer:
                     raise self._failed(state, "the model returned an empty reply")
-                return TurnResult(answer, state.reset, state.side_effects)
+                return TurnResult(answer, state.context.reset, state.side_effects)
             state.messages.append(reply.assistant_message())
             for call in reply.tool_calls:
-                outcome = await self._run_tool(turn, tools, call, state)
+                outcome = await self._run_tool(this, call, state)
                 state.messages.append(
                     {"role": "tool", "tool_call_id": call.id, "content": outcome.text}
                 )
@@ -469,90 +324,13 @@ class Agent:
             side_effects_possible=state.side_effects,
         )
 
-    async def _run_tool(
-        self, turn: TurnInput, tools: TurnTools, call: ToolCall, state: _State
-    ) -> ToolOutcome:
+    async def _run_tool(self, this: _Turn, call: ToolCall, state: _State) -> ToolOutcome:
         # Conservative: any tool, read or write, makes a retry unsafe.
         state.side_effects = True
         state.seq += 1
-        if call.name == END_CONVERSATION and turn.kind == "owner":
-            state.reset = True
-            outcome = ToolOutcome(
-                True,
-                "The conversation will be archived after your reply. "
-                "Reply with a short closing line.",
-            )
-        elif (
-            call.name in (SEARCH_CONVERSATIONS, RECALL_CONVERSATION)
-            and turn.kind == "owner"
-            and self._memory is not None
-        ):
-            outcome = await self._memory_tool(self._memory, call)
-        elif call.name in REMINDER_TOOLS and turn.kind == "owner" and self._reminders is not None:
-            outcome = await self._reminder_tool(self._reminders, call)
-        elif call.name == SET_MODEL and turn.kind == "owner" and len(self._brains.brains) > 1:
-            outcome = self._set_model(turn, call)
-        elif call.name in WEB_TOOLS and self._web is not None and state.web is not None:
-            # Not cut to tool_result_max_chars: fetch sizes its own chunks.
-            outcome = await self._web_tool(self._web, state.web, call)
-        else:
-            outcome = await call_tool(
-                tools,
-                call.name,
-                call.arguments,
-                connect=self._connect,
-                call_timeout_s=self._config.mcp.call_timeout_s,
-                max_chars=self._config.ai.tool_result_max_chars,
-            )
-        await self._record(turn, state.seq, call, outcome)
+        outcome = await dispatch(this.opened, call.name, call.arguments, state.context)
+        await self._record(this.input, state.seq, call, outcome)
         return outcome
-
-    def _set_model(self, turn: TurnInput, call: ToolCall) -> ToolOutcome:
-        arguments = parse_arguments(call.arguments)
-        if isinstance(arguments, str):
-            return ToolOutcome(False, arguments)
-        name = arguments.get("model")
-        before = self._brains.current
-        result = self._brains.set(name) if isinstance(name, str) else "unknown"
-        if result == "unknown":
-            names = ", ".join(self._brains.names)
-            return ToolOutcome(False, f"Error: unknown brain {name!r}. The brains are: {names}.")
-        if result == "already":
-            return ToolOutcome(True, f'The brain "{name}" is already in use; nothing changed.')
-        log.info("turn %s: brain switched from %s to %s", turn.queue_item_id, before.name, name)
-        return ToolOutcome(
-            True,
-            f'Switched to the brain "{name}" ({self._brains.tag}). It answers from the '
-            "owner's next message on. Reply with a short confirmation.",
-        )
-
-    async def _web_tool(self, web: WebTools, web_turn: WebTurn, call: ToolCall) -> ToolOutcome:
-        try:
-            return await web.call(web_turn, call.name, call.arguments)
-        except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
-            log.exception("tool %s failed", call.name)
-            return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")
-
-    async def _reminder_tool(self, reminders: ReminderTools, call: ToolCall) -> ToolOutcome:
-        try:
-            return await reminders.call(call.name, call.arguments)
-        except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
-            log.exception("tool %s failed", call.name)
-            return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")
-
-    async def _memory_tool(self, memory: MemoryTools, call: ToolCall) -> ToolOutcome:
-        arguments = parse_arguments(call.arguments)
-        if isinstance(arguments, str):
-            return ToolOutcome(False, arguments)
-        try:
-            if call.name == SEARCH_CONVERSATIONS:
-                return await memory.search(
-                    arguments.get("query"), arguments.get("after"), arguments.get("before")
-                )
-            return await memory.recall(arguments.get("id"))
-        except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
-            log.exception("tool %s failed", call.name)
-            return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")
 
     async def _record(
         self, turn: TurnInput, seq: int, call: ToolCall, outcome: ToolOutcome
@@ -580,53 +358,3 @@ class Agent:
                     result_excerpt=excerpt,
                 )
             )
-
-
-# --- context size (logged, never sent) ---------------------------------------------
-
-
-def _chars(value: Any) -> int:
-    return len(json.dumps(value, ensure_ascii=False))
-
-
-def context_sizes(
-    messages: list[dict[str, Any]],
-    instructions: list[ServerInstructions],
-    definitions: list[dict[str, Any]],
-    routes: dict[str, Route],
-) -> str:
-    """Where a turn's context comes from, in characters, without any of its text.
-
-    ``messages`` is the system prompt followed by the history (and the ask
-    input), as built at the start of the turn. Instruction sizes are part of
-    the system prompt's size; tool sizes are each definition's JSON.
-    """
-    system = len(messages[0]["content"])
-    line = f"system {system} chars"
-    if instructions:
-        parts = ", ".join(f"{i.server} {len(i.text)}" for i in instructions)
-        line += f" (instructions: {parts})"
-
-    by_group: dict[str, int] = {}
-    for definition in definitions:
-        name = definition["function"]["name"]
-        route = routes.get(name)
-        if route is not None:
-            group = route.server.name
-            by_group[group] = by_group.get(group, 0) + _chars(definition)
-    local = sum(_chars(d) for d in definitions if d["function"]["name"] not in routes)
-    if local:
-        by_group[LOCAL_TOOLS] = local
-    total = sum(by_group.values())
-    line += f"; tools {len(definitions)} defs {total} chars"
-    if by_group:
-        line += " (" + ", ".join(f"{g} {n}" for g, n in by_group.items()) + ")"
-
-    history = messages[1:]
-    return line + f"; history {len(history)} entries {_chars(history)} chars"
-
-
-def largest_tools(definitions: list[dict[str, Any]], count: int = LARGEST_TOOLS) -> str:
-    """The ``count`` largest tool definitions as ``name size``, largest first."""
-    sizes = sorted(((d["function"]["name"], _chars(d)) for d in definitions), key=lambda t: -t[1])
-    return ", ".join(f"{name} {size}" for name, size in sizes[:count]) or "none"

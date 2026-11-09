@@ -2,8 +2,9 @@
 
 The prompt is layered (design D1): the persona (alfred's voice, replaceable
 from config), then the built-in operating rules ending with today's date and
-the current brain (model), then the instructions of this turn's MCP servers, then this turn's other
-additions.
+the current brain (model), then the notes this turn's toolsets add (the MCP
+servers' instructions and which servers are unavailable), then this turn's
+other additions.
 
 The date has no time of day (memory design D12): the prompt then changes at
 most once a day, so the AI server can keep reusing its processed prefix.
@@ -13,10 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from alfred.mcp.registry import ServerInstructions
 
 NO_REPLY = "NO_REPLY"
 
@@ -131,23 +128,6 @@ def butler_persona(owner_address: str) -> str:
     return BUTLER_PERSONA.format(address=owner_address)
 
 
-def server_instructions(item: ServerInstructions) -> str:
-    """One server's instructions, framed so the model maps tool names to its prefix."""
-    return (
-        f'Instructions from the tool server "{item.server}". Its tools are offered to you '
-        f"as {item.server}_<tool>; where this text names a tool, use that prefixed name."
-        f"\n\n{item.text}"
-    )
-
-
-def unavailable_note(servers: Sequence[str]) -> str:
-    names = ", ".join(servers)
-    return (
-        f"These tool servers are unavailable right now, so their tools are missing: {names}. "
-        "If the request needs them, tell the owner."
-    )
-
-
 def system_prompt(
     persona: str | None,
     *,
@@ -155,11 +135,10 @@ def system_prompt(
     ask: bool,
     today: date,
     reminder: bool = False,
-    unavailable: Sequence[str] = (),
-    instructions: Sequence[ServerInstructions] = (),
+    notes: Sequence[str] = (),
     brain: str | None = None,
 ) -> str:
-    """Persona, operating rules, date and brain, server instructions, then other additions.
+    """Persona, operating rules, date and brain, the toolsets' notes, then other additions.
 
     ``brain`` is a :func:`brain_line`; it sits with the operating rules, so a
     custom persona can't drop it.
@@ -167,9 +146,7 @@ def system_prompt(
     parts = [persona or butler_persona(owner_address), OPERATING_RULES, today_line(today)]
     if brain:
         parts.append(brain)
-    parts += [server_instructions(item) for item in instructions]
-    if unavailable:
-        parts.append(unavailable_note(unavailable))
+    parts += notes
     if ask:
         parts.append(ASK_RULE)
     elif reminder:

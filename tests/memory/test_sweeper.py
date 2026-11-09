@@ -7,12 +7,12 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.model import ModelUnreachable
-from alfred.agent.turn import Agent
 from alfred.db.models import Conversation
 from alfred.history import History
-from alfred.memory.service import Memory
+from alfred.memory.summaries import Summaries
+from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue, Worker
-from tests.helpers import FakeEmbedder, FakeModel, make_config, text
+from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text
 from tests.memory.test_summarise import REPLY, archived, row
 
 FAST = {"retry_initial_s": 0.01, "retry_max_s": 0.04}
@@ -33,11 +33,11 @@ def memory(
     *,
     queue: dict[str, float] | None = None,
     clock: Clock | None = None,
-) -> Memory:
+) -> Sweeper:
     cfg = make_config(queue=queue or {"retry_initial_s": 30, "retry_max_s": 900})
     if clock is None:
-        return Memory(cfg, sessions, model, embedder)
-    return Memory(cfg, sessions, model, embedder, now=clock)
+        return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder))
+    return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder, now=clock), now=clock)
 
 
 async def until(condition) -> None:  # type: ignore[no-untyped-def]
@@ -56,7 +56,7 @@ async def test_backfills_conversations_without_summary(
     model = FakeModel([text(REPLY), text("Title: Disk\nSummary: It was full.")])
     mem = memory(sessions, model, FakeEmbedder(default=[1.0]))
 
-    task = asyncio.create_task(mem.run_sweeper())
+    task = asyncio.create_task(mem.run_forever())
     try:
 
         async def both_done() -> bool:
@@ -146,9 +146,9 @@ async def test_reembeds_rows_from_another_model(
 async def test_nudged_after_reset(sessions: async_sessionmaker[AsyncSession]) -> None:
     mem = memory(sessions, FakeModel([text(REPLY)]), FakeEmbedder(default=[1.0]))
     cid = await archived(sessions, "chicken?", "Lemon.")
-    mem.changed.clear()
-    await mem.summarise(cid)
-    assert mem.changed.is_set()
+    mem.summaries.changed.clear()
+    await mem.summaries.summarise(cid)
+    assert mem.summaries.changed.is_set()
 
 
 async def test_owner_messages_answered_while_sweeper_fails(
@@ -167,9 +167,11 @@ async def test_owner_messages_answered_while_sweeper_fails(
         async def send(self, text_: str) -> None:
             sent.append(text_)
 
-    agent = Agent(cfg, FakeModel([text("one"), text("two")]), history, sessions, _no_mcp)
-    worker = Worker(queue, agent, history, Outbox(), cfg.queue, owner_address="sir", memory=mem)
-    tasks = [asyncio.create_task(mem.run_sweeper()), asyncio.create_task(worker.run_forever())]
+    agent = make_agent(cfg, FakeModel([text("one"), text("two")]), history, sessions, _no_mcp)
+    worker = Worker(
+        queue, agent, history, Outbox(), cfg.queue, owner_address="sir", memory=mem.summaries
+    )
+    tasks = [asyncio.create_task(mem.run_forever()), asyncio.create_task(worker.run_forever())]
     try:
         await until(lambda: _has_failed(summary_model, 3))
         await queue.enqueue_owner("first")

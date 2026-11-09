@@ -16,12 +16,22 @@ from aiogram.types import User
 from pydantic import SecretStr
 
 import alfred.app
+from alfred.agent.brains import BrainTools
+from alfred.agent.conversation import ConversationTools
 from alfred.config import ServerConfig
-from alfred.memory.service import Memory
+from alfred.mcp.toolset import McpTools
+from alfred.memory.search import ConversationSearch, MemoryTools
+from alfred.memory.sweeper import Sweeper
 from alfred.reminders.tools import ReminderTools
 from alfred.web.tools import WebTools
 from tests.helpers import make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession
+
+
+def toolset(agent_kwargs: dict[str, Any], kind: type) -> Any:
+    """The agent's one toolset of type ``kind``."""
+    [found] = [t for t in agent_kwargs["toolsets"] if isinstance(t, kind)]
+    return found
 
 
 class PollingSession(FakeSession):
@@ -85,7 +95,7 @@ async def test_serve_runs_and_stops_on_sigterm(
     session = PollingSession()
     monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
     sweeper = SweeperProbe()
-    monkeypatch.setattr(Memory, "run_sweeper", sweeper.run)
+    monkeypatch.setattr(Sweeper, "run_forever", sweeper.run)
     config = serve_config(database_url, port)
     task = asyncio.create_task(alfred.app.serve(config))
     async with httpx.AsyncClient() as client:
@@ -117,7 +127,7 @@ async def test_sweeper_failure_stops_serve(
 ) -> None:
     session = PollingSession()
     monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
-    monkeypatch.setattr(Memory, "run_sweeper", SweeperProbe(fail=True).run)
+    monkeypatch.setattr(Sweeper, "run_forever", SweeperProbe(fail=True).run)
     with pytest.raises(RuntimeError, match="memory stopped unexpectedly: RuntimeError"):
         await asyncio.wait_for(alfred.app.serve(serve_config(database_url, free_port())), 10)
 
@@ -128,7 +138,7 @@ async def test_memory_wiring_and_clients_closed(
     session = PollingSession()
     monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
     sweeper = SweeperProbe()
-    monkeypatch.setattr(Memory, "run_sweeper", sweeper.run)
+    monkeypatch.setattr(Sweeper, "run_forever", sweeper.run)
     clients: list[Any] = []
 
     class FakeClient:
@@ -169,7 +179,16 @@ async def test_memory_wiring_and_clients_closed(
         "query_prefix": "search_query: ",
     }
     assert all(c.closed for c in clients)
-    assert isinstance(agents[0]["memory"], Memory)
+    assert isinstance(toolset(agents[0], MemoryTools)._search, ConversationSearch)
+    # Offered in this order: alfred's own tools, then the MCP servers.
+    assert [type(t) for t in agents[0]["toolsets"]] == [
+        WebTools,
+        ConversationTools,
+        MemoryTools,
+        ReminderTools,
+        BrainTools,
+        McpTools,
+    ]
     assert agents[0]["brains"].names == ["gemma4:26b-a4b-it-qat"]
 
 
@@ -179,7 +198,7 @@ async def test_web_wiring_and_client_closed(
     session = PollingSession()
     monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
     sweeper = SweeperProbe()
-    monkeypatch.setattr(Memory, "run_sweeper", sweeper.run)
+    monkeypatch.setattr(Sweeper, "run_forever", sweeper.run)
     built: list[WebTools] = []
     closed: list[WebTools] = []
     real_from_config = WebTools.from_config.__func__  # type: ignore[attr-defined]
@@ -211,7 +230,7 @@ async def test_web_wiring_and_client_closed(
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.wait_for(task, 10)
 
-    assert len(built) == 1 and agents[0]["web"] is built[0]
+    assert len(built) == 1 and toolset(agents[0], WebTools) is built[0]
     assert closed == built
     search = built[0]._search  # one client for search and fetch
     assert search._http is built[0]._fetcher._http
@@ -225,7 +244,7 @@ async def test_reminder_wiring(
     session = PollingSession()
     monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
     sweeper = SweeperProbe()
-    monkeypatch.setattr(Memory, "run_sweeper", sweeper.run)
+    monkeypatch.setattr(Sweeper, "run_forever", sweeper.run)
     loops: list[tuple[Any, float]] = []
     loop_started = asyncio.Event()
     loop_stopped = asyncio.Event()
@@ -261,7 +280,7 @@ async def test_reminder_wiring(
         await asyncio.wait_for(task, 10)  # a clean shutdown
 
     assert loop_stopped.is_set()  # cancelled on shutdown, like memory
-    tools = agents[0]["reminders"]
+    tools = toolset(agents[0], ReminderTools)
     assert isinstance(tools, ReminderTools)
     assert loops == [(tools.store, 10)]
     assert "reminders checked every 10s" in caplog.text
@@ -272,7 +291,7 @@ async def test_reminder_loop_failure_stops_serve(
 ) -> None:
     session = PollingSession()
     monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
-    monkeypatch.setattr(Memory, "run_sweeper", SweeperProbe().run)
+    monkeypatch.setattr(Sweeper, "run_forever", SweeperProbe().run)
 
     async def broken_loop(*args: Any) -> None:
         raise RuntimeError("loop broke")

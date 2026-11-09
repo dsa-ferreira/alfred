@@ -11,6 +11,7 @@ from alfred.agent.prompts import (
     today_line,
 )
 from alfred.mcp.registry import ServerInstructions
+from alfred.mcp.toolset import server_instructions, unavailable_note
 
 COOKBOOK = ServerInstructions("cookbook", "Call list_units and use its codes.")
 TODAY = date(2026, 11, 2)
@@ -18,8 +19,18 @@ TODAY = date(2026, 11, 2)
 RULES = OPERATING_RULES + "\n\nToday is Monday, 2 November 2026."
 
 
-def make_prompt(persona: str | None, **kwargs: object) -> str:
-    return system_prompt(persona, today=TODAY, **kwargs)  # type: ignore[arg-type]
+def make_prompt(
+    persona: str | None,
+    *,
+    instructions: list[ServerInstructions] | None = None,
+    unavailable: list[str] | None = None,
+    **kwargs: object,
+) -> str:
+    """The prompt with the notes the MCP toolset makes from ``instructions`` and ``unavailable``."""
+    notes = [server_instructions(i) for i in instructions or []]
+    if unavailable:
+        notes.append(unavailable_note(unavailable))
+    return system_prompt(persona, today=TODAY, notes=notes, **kwargs)  # type: ignore[arg-type]
 
 
 def test_default_prompt_is_persona_then_rules() -> None:

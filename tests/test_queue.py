@@ -13,17 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.brains import Brains
+from alfred.agent.conversation import END_CONVERSATION
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
-from alfred.agent.turn import END_CONVERSATION, Agent
+from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
 from alfred.history import History
-from alfred.memory.service import Memory
-from alfred.queue import Queue, Worker, backoff_s, reset_marker
+from alfred.memory.summaries import Summaries
+from alfred.queue import Queue, Worker, reset_marker
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import REMIND_SET, ReminderTools
-from tests.helpers import FakeEmbedder, FakeModel, calls, make_config, text
+from tests.helpers import FakeEmbedder, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_mcparr
 
@@ -56,12 +57,12 @@ class Setup:
         self.queue = Queue(sessions)
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
-        self.agent = Agent(
+        self.agent = make_agent(
             cfg, model, self.history, sessions, connect, reminders=tools, brains=brains
         )
         self.memory = None
         if summary_model is not None:
-            self.memory = Memory(
+            self.memory = Summaries(
                 cfg,
                 sessions,
                 summary_model,

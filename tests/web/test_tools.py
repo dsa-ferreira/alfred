@@ -10,6 +10,8 @@ import httpx
 import pytest
 import respx
 
+from alfred.agent.toolset import AttemptContext
+from alfred.agent.turn import TurnInput
 from alfred.web.fetch import Fetcher, make_http_client
 from alfred.web.search import SearxngClient
 from alfred.web.tools import (
@@ -381,3 +383,34 @@ async def test_missing_url(http: httpx.AsyncClient) -> None:
     web = tools(http)
     outcome = await web.call(web.new_turn(), WEB_FETCH, args())
     assert not outcome.ok and "url must be non-empty text" in outcome.text
+
+
+# --- as a toolset -------------------------------------------------------------------
+
+
+@respx.mock
+async def test_each_attempt_gets_a_fresh_allowlist(http: httpx.AsyncClient) -> None:
+    respx.get("https://example.com/a").respond(200, headers=PLAIN, text="a")
+    owner = TurnInput("owner", "read https://example.com/a", 1)
+    opened = await tools(http).open(owner)
+    assert opened.handles(WEB_FETCH) and opened.handles(WEB_SEARCH)
+    assert not opened.handles("alfred_set_model")
+    url = args(url="https://example.com/a")
+
+    first = AttemptContext(owner, ["read https://example.com/a"])
+    opened.new_attempt(first)
+    assert (await opened.call(WEB_FETCH, url, first)).ok
+
+    second = AttemptContext(owner, ["something else"])
+    opened.new_attempt(second)
+    assert not (await opened.call(WEB_FETCH, url, second)).ok
+
+
+@respx.mock
+async def test_ask_prompt_seeds_the_allowlist(http: httpx.AsyncClient) -> None:
+    respx.get("https://example.com/a").respond(200, headers=PLAIN, text="a")
+    ask = TurnInput("ask", "check https://example.com/a", 1, "svc")
+    opened = await tools(http).open(ask)
+    ctx = AttemptContext(ask)
+    opened.new_attempt(ctx)
+    assert (await opened.call(WEB_FETCH, args(url="https://example.com/a"), ctx)).ok

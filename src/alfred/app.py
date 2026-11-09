@@ -22,16 +22,21 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from aiogram import Bot
 
-from alfred.agent.brains import Brains
+from alfred.agent.brains import Brains, BrainTools
+from alfred.agent.conversation import ConversationTools
 from alfred.agent.model import ModelClient
+from alfred.agent.toolset import Toolset
 from alfred.agent.turn import Agent
 from alfred.api import create_app
 from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.history import History
-from alfred.mcp.client import http_connector
+from alfred.mcp.client import Connector, http_connector
+from alfred.mcp.toolset import McpTools
 from alfred.memory.embedding import EmbeddingClient
-from alfred.memory.service import Memory
+from alfred.memory.search import ConversationSearch, MemoryTools, Searcher
+from alfred.memory.summaries import Summaries
+from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue, Worker
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
@@ -58,6 +63,33 @@ def configure_logging(level: str) -> None:
         logging.getLogger(name).setLevel(max(logging.WARNING, logging.getLogger().level))
 
 
+def build_toolsets(
+    config: Config,
+    connect: Connector,
+    *,
+    brains: Brains,
+    web: WebTools | None = None,
+    memory: Searcher | None = None,
+    reminders: ReminderTools | None = None,
+) -> list[Toolset]:
+    """What the model may call, in the order it is offered; alfred's own tools first.
+
+    Each toolset decides on which turns it is offered. A name offered by two
+    toolsets goes to the first.
+    """
+    toolsets: list[Toolset] = []
+    if web is not None:
+        toolsets.append(web)
+    toolsets.append(ConversationTools())
+    if memory is not None:
+        toolsets.append(MemoryTools(memory))
+    if reminders is not None:
+        toolsets.append(reminders)
+    toolsets.append(BrainTools(brains))
+    toolsets.append(McpTools.from_config(config, connect))
+    return toolsets
+
+
 async def serve(config: Config) -> None:
     engine = make_engine(config.database_url.get_secret_value())
     sessions = make_session_factory(engine)
@@ -79,7 +111,9 @@ async def serve(config: Config) -> None:
         document_prefix=config.memory.document_prefix,
         query_prefix=config.memory.query_prefix,
     )
-    memory = Memory(config, sessions, summary_model, embedder)
+    summaries = Summaries(config, sessions, summary_model, embedder)
+    sweeper = Sweeper(config, sessions, summaries)
+    search = ConversationSearch(config, sessions, embedder)
     # Turns pass the current brain's tag per request; summaries never do, so
     # they stay on the summary model (change add-brain-switching, design D2).
     brains = Brains(config.ai.model, config.ai.models)
@@ -91,10 +125,9 @@ async def serve(config: Config) -> None:
         model,
         history,
         sessions,
-        http_connector(),
-        memory=memory,
-        web=web,
-        reminders=reminders,
+        toolsets=build_toolsets(
+            config, http_connector(), brains=brains, web=web, memory=search, reminders=reminders
+        ),
         brains=brains,
     )
     worker = Worker(
@@ -104,7 +137,7 @@ async def serve(config: Config) -> None:
         outbox,
         config.queue,
         owner_address=config.ai.owner_address,
-        memory=memory,
+        memory=summaries,
         typing=outbox.typing,
         reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
@@ -138,7 +171,7 @@ async def serve(config: Config) -> None:
             name="telegram",
         ),
         asyncio.create_task(worker.run_forever(), name="worker"),
-        asyncio.create_task(memory.run_sweeper(), name="memory"),
+        asyncio.create_task(sweeper.run_forever(), name="memory"),
         asyncio.create_task(
             run_due_loop(reminders.store, queue.signal, config.reminders.check_interval_s),
             name="reminders",

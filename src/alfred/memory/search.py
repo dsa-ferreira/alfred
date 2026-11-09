@@ -1,54 +1,96 @@
-"""The memory service: summaries, search and recall of archived conversations.
+"""Search and recall of archived conversations (memory design D7, D8).
 
-``summarise`` runs inline when a conversation ends (memory design D3) and in
-the background sweeper (D4). It never raises: on any failure it schedules a
-retry on the conversation row and the sweeper picks it up later.
-
-The sweeper is its own task, not a queue item, so a summary that keeps
-failing never holds up owner messages. It finds archived conversations that
-lack a summary, or an embedding from the configured model, oldest first, and
-waits for each one's ``summary_next_at``. This also backfills conversations
-from before the upgrade and re-embeds them after a model change.
+:class:`MemoryTools` offers them to the model on owner turns as
+``alfred_search_conversations`` and ``alfred_recall_conversation``.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
-from typing import Any, Protocol
+from datetime import date, datetime, time, timedelta
+from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, and_, exists, func, or_, select, text, update
+from sqlalchemy import ColumnElement, and_, exists, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import aliased
 
-from alfred.agent.model import ModelError, ModelReply, token_counts
+from alfred.agent.toolset import (
+    AttemptContext,
+    LocalToolset,
+    ToolOutcome,
+    owner_only,
+    parse_arguments,
+)
 from alfred.config import Config
 from alfred.db.models import Conversation, Entry
 from alfred.history import current_id
-from alfred.mcp.registry import ToolOutcome
 from alfred.memory.embedding import EmbeddingError
-from alfred.memory.transcript import (
-    SummaryParseError,
-    TranscriptEntry,
-    cut_middle,
-    date_span,
-    parse_summary,
-    recall_label,
-    render,
-    summary_messages,
-)
-from alfred.queue import backoff_s
+from alfred.memory.summaries import load_transcript
+from alfred.memory.transcript import TranscriptEntry, date_span, recall_label, render
+
+if TYPE_CHECKING:
+    from alfred.agent.turn import TurnInput
 
 log = logging.getLogger(__name__)
 
-EMPTY_TITLE = "Empty conversation"
-EMPTY_SUMMARY = "Nothing was said in this conversation."
+SEARCH_CONVERSATIONS = "alfred_search_conversations"
+RECALL_CONVERSATION = "alfred_recall_conversation"
+
+SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": SEARCH_CONVERSATIONS,
+        "description": (
+            "Search earlier, archived conversations with the owner by topic, by date, or "
+            "both. Use when the owner refers to something discussed before ('remember "
+            "when…', 'that recipe we talked about last week', 'what did we talk about on "
+            "Tuesday?'). Turn relative dates into after/before (YYYY-MM-DD, inclusive) using "
+            "today's date from the system prompt. If one result is clearly the best match, "
+            "recall it and tell the owner which conversation you picked (its title and "
+            "date). If several match about equally, ask the owner which one they meant."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What the conversation was about, in a few words.",
+                },
+                "after": {
+                    "type": "string",
+                    "description": "Earliest date, YYYY-MM-DD, inclusive.",
+                },
+                "before": {
+                    "type": "string",
+                    "description": "Latest date, YYYY-MM-DD, inclusive.",
+                },
+            },
+        },
+    },
+}
+
+RECALL_CONVERSATION_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": RECALL_CONVERSATION,
+        "description": (
+            "Bring an archived conversation, by its number, into this conversation so you "
+            "can use what was said. Use when the owner names a conversation number or after "
+            "search found the one they mean."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "The conversation number, e.g. 41."}
+            },
+            "required": ["id"],
+        },
+    },
+}
 
 # Reciprocal rank fusion constant (memory design D7).
 RRF_K = 60
@@ -95,223 +137,23 @@ class _Found:
     ended_at: datetime | None
 
 
-class Model(Protocol):
-    async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-    ) -> ModelReply: ...
-
-
-class Embedder(Protocol):
+class QueryEmbedder(Protocol):
     model: str
-
-    async def embed_document(self, text: str) -> list[float]: ...
 
     async def embed_query(self, text: str) -> list[float]: ...
 
 
-class Memory:
+class ConversationSearch:
     def __init__(
         self,
         config: Config,
         sessions: async_sessionmaker[AsyncSession],
-        model: Model,
-        embedder: Embedder,
-        *,
-        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        embedder: QueryEmbedder,
     ) -> None:
-        self._config = config
         self._memory = config.memory
         self._sessions = sessions
-        self._model = model
         self._embedder = embedder
-        self._now = now
         self._zone = ZoneInfo(config.ai.timezone)
-        # Set when a retry was scheduled, so the sweeper recomputes its sleep.
-        self.changed = asyncio.Event()
-        # One summary at a time per conversation (the worker and the sweeper).
-        # Kept for the process's life: removing one could race with a waiter.
-        self._locks: dict[int, asyncio.Lock] = {}
-
-    # --- summaries ---------------------------------------------------------------
-
-    async def summarise(self, conversation_id: int) -> str | None:
-        """Title, summarise and embed an archived conversation, as far as needed.
-
-        Returns the title, or ``None`` if there is none. Never raises.
-        """
-        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
-        try:
-            async with lock:
-                return await self._summarise(conversation_id)
-        except Exception:
-            log.exception("conversation %s: summarising failed unexpectedly", conversation_id)
-            await self._retry_later(conversation_id, "internal error")
-            return None
-        finally:
-            self.changed.set()  # the sweeper rechecks what is due
-
-    # --- the sweeper -------------------------------------------------------------
-
-    async def run_sweeper(self) -> None:
-        log.info("memory sweeper started")
-        last: int | None = None
-        while True:
-            self.changed.clear()  # before reading, so a nudge is never missed
-            due = await self._next_due()
-            if due is not None and due != last:
-                last = due
-                await self.summarise(due)
-                continue
-            if due is not None:
-                # Still due right after it was processed: its retry couldn't be
-                # recorded. Don't spin; try again after the shortest delay.
-                wait = self._config.queue.retry_initial_s
-            else:
-                wait = await self._seconds_until_due()
-            last = None
-            try:
-                async with asyncio.timeout(wait):
-                    await self.changed.wait()
-            except TimeoutError:
-                pass
-
-    async def sweep_once(self) -> float | None:
-        """Process the oldest due conversation, or say how many seconds until one is due.
-
-        Returns ``None`` after processing one.
-        """
-        due = await self._next_due()
-        if due is None:
-            return await self._seconds_until_due()
-        await self.summarise(due)
-        return None
-
-    def _pending(self) -> Any:
-        return (
-            Conversation.ended_at.is_not(None),
-            or_(
-                Conversation.summary.is_(None),
-                Conversation.embedding.is_(None),
-                Conversation.embedding_model.is_distinct_from(self._embedder.model),
-            ),
-        )
-
-    async def _next_due(self) -> int | None:
-        async with self._sessions() as session:
-            return await session.scalar(
-                select(Conversation.id)
-                .where(
-                    *self._pending(),
-                    or_(
-                        Conversation.summary_next_at.is_(None),
-                        Conversation.summary_next_at <= self._now(),
-                    ),
-                )
-                .order_by(Conversation.id)
-                .limit(1)
-            )
-
-    async def _seconds_until_due(self) -> float:
-        async with self._sessions() as session:
-            soonest = await session.scalar(
-                select(func.min(Conversation.summary_next_at)).where(*self._pending())
-            )
-        if soonest is None:
-            return self._config.queue.retry_max_s
-        return max(0.0, (soonest - self._now()).total_seconds())
-
-    async def _summarise(self, conversation_id: int) -> str | None:
-        async with self._sessions() as session:
-            row = await session.get(Conversation, conversation_id)
-        if row is None or row.ended_at is None:
-            return None  # only archived conversations are summarised
-        title, summary = row.title, row.summary
-
-        if summary is None:
-            made = await self._make_summary(conversation_id)
-            if made is None:
-                return None
-            title, summary = made
-            async with self._sessions.begin() as session:
-                await session.execute(
-                    update(Conversation)
-                    .where(Conversation.id == conversation_id)
-                    .values(title=title, summary=summary, summarised_at=self._now())
-                )
-            log.info("conversation %s summarised: %r", conversation_id, title)
-
-        if row.embedding is None or row.embedding_model != self._embedder.model:
-            try:
-                vector = await self._embedder.embed_document(f"{title}. {summary}")
-            except EmbeddingError as exc:
-                log.warning("conversation %s: embedding failed: %s", conversation_id, exc)
-                await self._retry_later(conversation_id, str(exc))
-                return title
-            async with self._sessions.begin() as session:
-                await session.execute(
-                    update(Conversation)
-                    .where(Conversation.id == conversation_id)
-                    .values(embedding=vector, embedding_model=self._embedder.model)
-                )
-
-        async with self._sessions.begin() as session:
-            await session.execute(
-                update(Conversation)
-                .where(Conversation.id == conversation_id)
-                .values(summary_attempts=0, summary_next_at=None)
-            )
-        return title
-
-    async def _make_summary(self, conversation_id: int) -> tuple[str, str] | None:
-        """One model request. ``None`` (and a retry scheduled) on failure."""
-        entries = await self.transcript_entries(conversation_id)
-        if not entries:
-            return EMPTY_TITLE, EMPTY_SUMMARY
-        transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
-        try:
-            reply = await self._model.complete(summary_messages(transcript), [])
-            log.info("conversation %s summary: %s", conversation_id, token_counts(reply.usage))
-            parsed = parse_summary(reply.content or "")
-        except (ModelError, SummaryParseError) as exc:
-            log.warning("conversation %s: summary failed: %s", conversation_id, exc)
-            await self._retry_later(conversation_id, str(exc))
-            return None
-        return parsed.title, parsed.summary
-
-    async def transcript_entries(self, conversation_id: int) -> list[TranscriptEntry]:
-        async with self._sessions() as session:
-            return await _transcript_entries(session, conversation_id)
-
-    async def _retry_later(self, conversation_id: int, reason: str) -> None:
-        try:
-            async with self._sessions.begin() as session:
-                attempts = await session.scalar(
-                    update(Conversation)
-                    .where(Conversation.id == conversation_id)
-                    .values(summary_attempts=Conversation.summary_attempts + 1)
-                    .returning(Conversation.summary_attempts)
-                )
-                if attempts is None:
-                    return
-                delay = backoff_s(attempts, self._config.queue)
-                await session.execute(
-                    update(Conversation)
-                    .where(Conversation.id == conversation_id)
-                    .values(summary_next_at=self._now() + timedelta(seconds=delay))
-                )
-            log.info(
-                "conversation %s: summary retry %d in %gs (%s)",
-                conversation_id,
-                attempts,
-                delay,
-                reason,
-            )
-        except Exception:
-            log.exception("conversation %s: could not schedule a summary retry", conversation_id)
-        finally:
-            self.changed.set()
-
-    # --- search ------------------------------------------------------------------
 
     async def search(self, query: Any = None, after: Any = None, before: Any = None) -> ToolOutcome:
         """Archived conversations by topic, by date, or both (memory design D7)."""
@@ -465,7 +307,7 @@ class Memory:
                 return ToolOutcome(False, f"Error: there is no conversation #{cid}.")
             if await self._already_recalled(session, current, cid):
                 return ToolOutcome(False, _already(cid))
-            entries = await _transcript_entries(session, cid)
+            entries = await load_transcript(session, cid)
             recalled_text = self._recall_text(target, entries)
             inserted = await session.execute(
                 insert(Entry)
@@ -527,6 +369,36 @@ class Memory:
         return prefix + tail
 
 
+class Searcher(Protocol):
+    async def search(
+        self, query: Any = None, after: Any = None, before: Any = None
+    ) -> ToolOutcome: ...
+
+    async def recall(self, conversation_id: Any) -> ToolOutcome: ...
+
+
+class MemoryTools(LocalToolset):
+    """Search and recall, offered on owner turns."""
+
+    definitions = [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
+
+    def __init__(self, search: Searcher) -> None:
+        self._search = search
+
+    def offered(self, turn: TurnInput) -> bool:
+        return owner_only(turn)
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        arguments = parse_arguments(raw_arguments)
+        if isinstance(arguments, str):
+            return ToolOutcome(False, arguments)
+        if name == SEARCH_CONVERSATIONS:
+            return await self._search.search(
+                arguments.get("query"), arguments.get("after"), arguments.get("before")
+            )
+        return await self._search.recall(arguments.get("id"))
+
+
 _FOUND_COLUMNS = (
     Conversation.id,
     Conversation.title,
@@ -558,21 +430,3 @@ def _parse_id(value: Any) -> int | None:
         if match:
             return int(match.group(1)) or None
     return None
-
-
-async def _transcript_entries(session: AsyncSession, conversation_id: int) -> list[TranscriptEntry]:
-    recalled = aliased(Conversation)
-    rows = await session.execute(
-        select(
-            Entry.kind,
-            Entry.source,
-            Entry.text,
-            Entry.recalled_conversation_id,
-            recalled.title,
-            Entry.reminder_id,
-        )
-        .outerjoin(recalled, recalled.id == Entry.recalled_conversation_id)
-        .where(Entry.conversation_id == conversation_id)
-        .order_by(Entry.id)
-    )
-    return [TranscriptEntry(*row) for row in rows]

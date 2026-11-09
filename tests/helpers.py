@@ -1,15 +1,19 @@
-"""Test helpers: a config, a scripted fake model, queue rows."""
+"""Test helpers: a config, a scripted fake model, an agent, queue rows."""
 
 from __future__ import annotations
 
 import copy
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.agent.brains import Brains
 from alfred.agent.model import ModelReply, ToolCall
+from alfred.agent.turn import Agent, Model
+from alfred.app import build_toolsets
 from alfred.config import (
     AIConfig,
     Config,
@@ -25,6 +29,11 @@ from alfred.config import (
     WebConfig,
 )
 from alfred.db.models import QueueItem
+from alfred.history import History
+from alfred.mcp.client import Connector
+from alfred.memory.search import Searcher
+from alfred.reminders.tools import ReminderTools
+from alfred.web.tools import WebTools
 
 OWNER = 42
 
@@ -146,3 +155,24 @@ class FakeEmbedder:
         if isinstance(step, Exception):
             raise step
         return step
+
+
+def make_agent(
+    config: Config,
+    model: Model,
+    history: History,
+    sessions: async_sessionmaker[AsyncSession],
+    connect: Connector,
+    *,
+    memory: Searcher | None = None,
+    web: WebTools | None = None,
+    reminders: ReminderTools | None = None,
+    brains: Brains | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> Agent:
+    """An agent with the toolsets ``serve`` gives it, for the parts passed in."""
+    brains = brains or Brains(config.ai.model, config.ai.models)
+    toolsets = build_toolsets(
+        config, connect, brains=brains, web=web, memory=memory, reminders=reminders
+    )
+    return Agent(config, model, history, sessions, toolsets=toolsets, brains=brains, now=now)

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.agent.turn import TurnInput
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import (
     NAMES,
@@ -167,3 +168,11 @@ async def test_bad_json(tools: ReminderTools) -> None:
     outcome = await tools.call(REMIND_SET, "{not json")
     assert not outcome.ok
     assert "not valid JSON" in outcome.text
+
+
+async def test_offered_on_owner_turns_only(tools: ReminderTools) -> None:
+    assert await tools.open(TurnInput("owner", "hi", 1)) is tools
+    assert await tools.open(TurnInput("ask", "93%", 2, "disk-check")) is None
+    assert await tools.open(TurnInput("reminder", "call mum", 3)) is None
+    assert all(tools.handles(name) for name in NAMES)
+    assert not tools.handles("alfred_web_fetch")

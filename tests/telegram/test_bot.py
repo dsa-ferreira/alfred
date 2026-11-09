@@ -159,10 +159,9 @@ async def test_long_replies_are_split() -> None:
 
 async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSession]) -> None:
     from alfred.agent.model import ModelFailed
-    from alfred.agent.turn import Agent
     from alfred.history import History
     from alfred.queue import Worker
-    from tests.helpers import FakeModel, make_config, text
+    from tests.helpers import FakeModel, make_agent, make_config, text
     from tests.mcp.servers import in_process
 
     bot, session = make_bot()
@@ -173,7 +172,7 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
     )
     cfg = make_config()
     history = History(sessions)
-    agent = Agent(cfg, model, history, sessions, in_process({}))
+    agent = make_agent(cfg, model, history, sessions, in_process({}))
     worker = Worker(
         queue,
         agent,

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.prompts import is_no_reply
 from alfred.agent.turn import TurnFailed, TurnInput, TurnResult
+from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
 from alfred.history import History
@@ -64,11 +65,6 @@ def reset_marker(archived_id: int | None, title: str | None, new_id: int) -> str
         lines.append(f'— #{archived_id} "{title}" —' if title else f"— #{archived_id} archived —")
     lines.append(f"— new conversation #{new_id} —")
     return "\n".join(lines)
-
-
-def backoff_s(attempts: int, config: QueueConfig) -> float:
-    """Delay before retry number ``attempts`` (1-based): doubles up to the maximum."""
-    return min(config.retry_initial_s * 2 ** (attempts - 1), config.retry_max_s)
 
 
 class Queue:

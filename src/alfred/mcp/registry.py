@@ -20,6 +20,7 @@ from typing import Any
 
 from mcp.types import CallToolResult, TextContent, Tool
 
+from alfred.agent.toolset import ToolOutcome, parse_arguments
 from alfred.config import McpServer
 from alfred.mcp.client import Connector
 
@@ -65,12 +66,6 @@ class TurnTools:
     unavailable: list[str] = field(default_factory=list)
     # Available, unmuted servers with non-blank instructions, in configuration order.
     instructions: list[ServerInstructions] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class ToolOutcome:
-    ok: bool
-    text: str
 
 
 async def build_turn_tools(
@@ -197,21 +192,6 @@ async def call_tool(
         log.warning("tool %s failed: %s", name, _describe(exc))
         return ToolOutcome(False, f"Error: tool {name!r} failed: {_describe(exc)}")
     return ToolOutcome(not result.is_error, truncate(result_text(result), max_chars))
-
-
-def parse_arguments(raw: str | dict[str, Any] | None) -> dict[str, Any] | str:
-    """The call's arguments as a dict, or an error message for the model."""
-    if raw is None or raw == "":
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return f"Error: the arguments are not valid JSON ({exc.msg})."
-    if not isinstance(value, dict):
-        return "Error: the arguments must be a JSON object."
-    return value
 
 
 def result_text(result: CallToolResult) -> str:

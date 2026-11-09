@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Conversation, Entry
 from alfred.memory.embedding import EmbeddingUnreachable
-from alfred.memory.service import NO_MEANING_NOTE, Memory
-from tests.helpers import FakeEmbedder, FakeModel, make_config
+from alfred.memory.search import NO_MEANING_NOTE, ConversationSearch
+from tests.helpers import FakeEmbedder, make_config
 
 CHICKEN = [1.0, 0.0, 0.0]
 CHICKEN_ISH = [0.9, 0.1, 0.0]
@@ -61,9 +61,9 @@ def memory(
     sessions: async_sessionmaker[AsyncSession],
     embedder: FakeEmbedder,
     **memory_config: object,
-) -> Memory:
+) -> ConversationSearch:
     cfg = make_config(memory=memory_config)  # type: ignore[arg-type]
-    return Memory(cfg, sessions, FakeModel(), embedder)
+    return ConversationSearch(cfg, sessions, embedder)
 
 
 def ids(result_text: str) -> list[int]:
@@ -272,7 +272,7 @@ async def test_dates_shown_in_configured_timezone(
     await seed(sessions, 41, "Chat", "x", started=datetime(2026, 11, 2, 20, tzinfo=UTC))
     # 20:00 UTC on 2 Nov is 05:00 on 3 Nov in Tokyo.
     cfg = make_config(ai={"timezone": "Asia/Tokyo"})
-    result = await Memory(cfg, sessions, FakeModel(), FakeEmbedder()).search(after="2026-11-03")
+    result = await ConversationSearch(cfg, sessions, FakeEmbedder()).search(after="2026-11-03")
     assert "Tue 3 Nov 2026" in result.text
 
 

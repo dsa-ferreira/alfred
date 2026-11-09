@@ -1,7 +1,8 @@
 """``alfred_web_search`` and ``alfred_web_fetch`` (change add-web-search, D2, D3, D7).
 
-The agent creates one :class:`WebTurn` per attempt, seeded with the text the
-owner wrote (and the ``/ask`` prompt), and routes both tools here. Search
+Offered on every turn. Opened for a turn, the toolset starts one
+:class:`WebTurn` per attempt, seeded with the text the owner wrote in the
+attempt's context window (and the ``/ask`` prompt). Search
 adds the URLs it lists to the turn's allowlist; fetch opens only allowed
 URLs. Fetched text is cached per turn and handed out in chunks of
 ``[web] fetch_page_chars``, header first, inside untrusted-content markers.
@@ -13,14 +14,23 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from alfred.agent.toolset import (
+    LOCAL_GROUP,
+    AttemptContext,
+    PromptNote,
+    ToolOutcome,
+    parse_arguments,
+)
 from alfred.config import Config
-from alfred.mcp.registry import ToolOutcome, parse_arguments
 from alfred.web.allowlist import Allowlist, normalise
 from alfred.web.extract import NoReadableContent, extract, supported
 from alfred.web.fetch import Fetcher, FetchError, make_http_client
 from alfred.web.search import CATEGORIES, TIME_RANGES, SearchUnavailable, SearxngClient
+
+if TYPE_CHECKING:
+    from alfred.agent.turn import TurnInput
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +156,9 @@ class WebTools:
         if self._close is not None:
             await self._close()
 
+    async def open(self, turn: TurnInput) -> OpenWebTools:
+        return OpenWebTools(self)
+
     def new_turn(self, texts: Iterable[str] = ()) -> WebTurn:
         """A turn whose allowlist holds the URLs written in ``texts``."""
         return WebTurn(Allowlist(texts))
@@ -217,6 +230,35 @@ class WebTools:
             turn.pages[key] = page
             log.info("fetch %s: %d characters of text", page.url, len(page.text))
         return render(page, start, self._page_chars)
+
+
+class OpenWebTools:
+    """The web tools in one turn: a fresh :class:`WebTurn` for every attempt."""
+
+    prompt_notes: tuple[PromptNote, ...] = ()
+
+    def __init__(self, tools: WebTools) -> None:
+        self._tools = tools
+        self.definitions = tools.definitions
+        self._turn = WebTurn(Allowlist(()))
+
+    def group_of(self, name: str) -> str:
+        return LOCAL_GROUP
+
+    def new_attempt(self, attempt: AttemptContext) -> None:
+        # Only text the owner (or the asking service) wrote can open a page
+        # without a search; replies, notices and recalls can't.
+        seeds = list(attempt.owner_texts)
+        if attempt.turn.kind == "ask":
+            seeds.append(attempt.turn.text)
+        self._turn = self._tools.new_turn(seeds)
+
+    def handles(self, name: str) -> bool:
+        return name in NAMES
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        # Not cut to tool_result_max_chars: fetch sizes its own chunks.
+        return await self._tools.call(self._turn, name, raw_arguments)
 
 
 def _start(value: Any) -> int | None:

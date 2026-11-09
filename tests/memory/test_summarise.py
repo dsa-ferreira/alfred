@@ -11,7 +11,7 @@ from alfred.agent.model import ModelUnreachable, Usage
 from alfred.db.models import Conversation
 from alfred.history import History
 from alfred.memory.embedding import EmbeddingUnreachable
-from alfred.memory.service import Memory
+from alfred.memory.summaries import Summaries
 from alfred.memory.transcript import SUMMARY_PROMPT
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
@@ -24,12 +24,12 @@ def memory(
     model: FakeModel,
     embedder: FakeEmbedder,
     **memory_config: object,
-) -> Memory:
+) -> Summaries:
     cfg = make_config(
         queue={"retry_initial_s": 30, "retry_max_s": 900},
         memory=memory_config,  # type: ignore[arg-type]
     )
-    return Memory(cfg, sessions, model, embedder, now=lambda: NOW)
+    return Summaries(cfg, sessions, model, embedder, now=lambda: NOW)
 
 
 async def archived(sessions: async_sessionmaker[AsyncSession], *lines: str) -> int:
@@ -178,7 +178,7 @@ def summary_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         r.getMessage()
         for r in caplog.records
-        if r.name == "alfred.memory.service" and " summary: " in r.getMessage()
+        if r.name == "alfred.memory.summaries" and " summary: " in r.getMessage()
     ]
 
 

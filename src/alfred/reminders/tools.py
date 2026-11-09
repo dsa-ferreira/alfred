@@ -11,13 +11,19 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.agent.toolset import (
+    AttemptContext,
+    LocalToolset,
+    ToolOutcome,
+    owner_only,
+    parse_arguments,
+)
 from alfred.config import Config
-from alfred.mcp.registry import ToolOutcome, parse_arguments
 from alfred.reminders.store import Reminders
 from alfred.reminders.when import (
     WhenError,
@@ -27,6 +33,9 @@ from alfred.reminders.when import (
     parse_text,
     resolve,
 )
+
+if TYPE_CHECKING:
+    from alfred.agent.turn import TurnInput
 
 log = logging.getLogger(__name__)
 
@@ -102,8 +111,8 @@ REMINDER_CANCEL_TOOL: dict[str, Any] = {
 }
 
 
-class ReminderTools:
-    """The three reminder tools over a :class:`Reminders` store."""
+class ReminderTools(LocalToolset):
+    """The three reminder tools over a :class:`Reminders` store, on owner turns."""
 
     definitions: list[dict[str, Any]] = [REMIND_SET_TOOL, REMINDERS_LIST_TOOL, REMINDER_CANCEL_TOOL]
 
@@ -126,7 +135,12 @@ class ReminderTools:
     ) -> ReminderTools:
         return cls(Reminders(sessions), ZoneInfo(config.ai.timezone), config.reminders.default_time)
 
-    async def call(self, name: str, raw_arguments: Any) -> ToolOutcome:
+    def offered(self, turn: TurnInput) -> bool:
+        return owner_only(turn)
+
+    async def call(
+        self, name: str, raw_arguments: Any, attempt: AttemptContext | None = None
+    ) -> ToolOutcome:
         arguments = parse_arguments(raw_arguments)
         if isinstance(arguments, str):
             return ToolOutcome(False, arguments)
