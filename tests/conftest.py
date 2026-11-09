@@ -14,11 +14,13 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Iterator
 
+import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alfred.db.engine import make_engine, make_session_factory
+from alfred.web.fetch import make_http_client
 
 # Ryuk (the reaper container) needs a privileged socket that rootless podman
 # doesn't give it; containers are stopped by the fixture instead.
@@ -68,3 +70,9 @@ async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 def sessions(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return make_session_factory(engine)
+
+
+@pytest.fixture
+async def web_http() -> AsyncIterator[httpx.AsyncClient]:
+    async with make_http_client() as client:
+        yield client

@@ -43,7 +43,7 @@ Each class keeps working with today's `Agent` until group 6 switches it over.
 
 ## 7. Split the turn tests
 
-- [ ] 7.1 In a commit of its own, move tests verbatim out of `tests/agent/test_turn.py` by toolset: end-conversation and set-model to `tests/agent/test_conversation.py` and `tests/agent/test_brain_tools.py`, memory to `tests/memory/test_in_turn.py`, web to `tests/web/test_in_turn.py`, reminders to `tests/reminders/test_in_turn.py`, context-size to `tests/agent/test_context.py`; move the shared `agent()` helper to `tests/agent/turn_helpers.py`; verify `make test` passes and the collected count equals the count before the move
+- [x] 7.1 In a commit of its own, move tests verbatim out of `tests/agent/test_turn.py` by toolset: end-conversation and set-model to `tests/agent/test_conversation.py` and `tests/agent/test_brain_tools.py`, memory to `tests/memory/test_in_turn.py`, web to `tests/web/test_in_turn.py`, reminders to `tests/reminders/test_in_turn.py`, context-size to `tests/agent/test_context.py`; move the shared `agent()` helper to `tests/agent/turn_helpers.py`; verify `make test` passes and the collected count equals the count before the move
 
 ## 8. Docs and final check
 
