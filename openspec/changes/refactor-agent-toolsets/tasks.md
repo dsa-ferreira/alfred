@@ -47,5 +47,5 @@ Each class keeps working with today's `Agent` until group 6 switches it over.
 
 ## 8. Docs and final check
 
-- [ ] 8.1 Update the module docstrings of `agent/turn.py`, `agent/toolset.py` and `agent/prompts.py` to the new structure, and add a short "Adding a tool group" note to `AGENTS.md` (implement `Toolset`, add it to the list in `app.py`); verify the note matches the code
-- [ ] 8.2 Run `make lint` and `make test`; verify both pass and `uv run pytest --collect-only -q` collects at least 708 tests plus the ones added in this change
+- [x] 8.1 Update the module docstrings of `agent/turn.py`, `agent/toolset.py` and `agent/prompts.py` to the new structure, and add a short "Adding a tool group" note to `AGENTS.md` (implement `Toolset`, add it to the list in `app.py`); verify the note matches the code
+- [x] 8.2 Run `make lint` and `make test`; verify both pass and `uv run pytest --collect-only -q` collects at least 708 tests plus the ones added in this change

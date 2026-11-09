@@ -28,6 +28,21 @@ calls itself. Planning lives in `openspec/`; read the active change
 | `make image`   | build `alfred:<version>` and `alfred:latest`         |
 | `make push`    | build, then push both tags to `album.lan`            |
 
+## Adding a tool group
+
+Everything the model can call is a toolset (`alfred.agent.toolset`); the
+turn loop in `agent/turn.py` names no tool. To add one:
+
+- Subclass `LocalToolset` in the feature's own module: set `definitions`,
+  implement `call(name, raw_arguments, attempt)`, and override `offered`
+  if it is not for every turn (`owner_only` for owner turns). Override
+  `open` / `new_attempt` only for per-turn or per-attempt state (see
+  `web/tools.py`).
+- Add it to `build_toolsets` in `app.py`. The list order is the order the
+  tools are offered in; alfred's own tools come before `McpTools`.
+- Exceptions from `call` become error results for the model (`safe_call`).
+- Test the toolset alone, and a whole turn with `tests/agent/turn_helpers.py`.
+
 ## Commits
 
 Before every commit, follow the `commit-messages` skill.
