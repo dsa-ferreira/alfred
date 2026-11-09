@@ -24,7 +24,7 @@ from alfred.db.engine import make_engine, make_session_factory
 # doesn't give it; containers are stopped by the fixture instead.
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
-TABLES = "turn_tool_calls, entries, conversations, queue_items"
+TABLES = "turn_tool_calls, entries, conversations, queue_items, reminders"
 POSTGRES_IMAGE = "docker.io/pgvector/pgvector:0.8.7-pg17-trixie"
 
 

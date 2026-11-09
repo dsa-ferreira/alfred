@@ -1,4 +1,4 @@
-"""``serve`` starts the API, polling, the worker and the sweeper, and stops cleanly on SIGTERM."""
+"""``serve`` starts every task (API, polling, worker, sweeper, reminders); SIGTERM stops them."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from pydantic import SecretStr
 import alfred.app
 from alfred.config import ServerConfig
 from alfred.memory.service import Memory
+from alfred.reminders.tools import ReminderTools
 from alfred.web.tools import WebTools
 from tests.helpers import make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession
@@ -216,3 +217,66 @@ async def test_web_wiring_and_client_closed(
     assert search._http is built[0]._fetcher._http
     assert search._url == "http://oracle.lan/search"
     assert "web search at http://oracle.lan" in caplog.text
+
+
+async def test_reminder_wiring(
+    database_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = PollingSession()
+    monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
+    sweeper = SweeperProbe()
+    monkeypatch.setattr(Memory, "run_sweeper", sweeper.run)
+    loops: list[tuple[Any, float]] = []
+    loop_started = asyncio.Event()
+    loop_stopped = asyncio.Event()
+
+    async def probe_loop(store: Any, signal_: asyncio.Event, interval_s: float) -> None:
+        loops.append((store, interval_s))
+        loop_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            loop_stopped.set()
+
+    monkeypatch.setattr(alfred.app, "run_due_loop", probe_loop)
+    agents: list[dict[str, Any]] = []
+    real_agent = alfred.app.Agent
+
+    def record_agent(*args: Any, **kwargs: Any) -> Any:
+        agents.append(kwargs)
+        return real_agent(*args, **kwargs)
+
+    monkeypatch.setattr(alfred.app, "Agent", record_agent)
+    config = serve_config(database_url, free_port())
+    config = type(config)(
+        **{
+            **config.__dict__,
+            "reminders": config.reminders.model_copy(update={"check_interval_s": 10}),
+        }
+    )
+    with caplog.at_level("INFO", logger="alfred.app"):
+        task = asyncio.create_task(alfred.app.serve(config))
+        await asyncio.wait_for(loop_started.wait(), 5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, 10)  # a clean shutdown
+
+    assert loop_stopped.is_set()  # cancelled on shutdown, like memory
+    tools = agents[0]["reminders"]
+    assert isinstance(tools, ReminderTools)
+    assert loops == [(tools.store, 10)]
+    assert "reminders checked every 10s" in caplog.text
+
+
+async def test_reminder_loop_failure_stops_serve(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = PollingSession()
+    monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
+    monkeypatch.setattr(Memory, "run_sweeper", SweeperProbe().run)
+
+    async def broken_loop(*args: Any) -> None:
+        raise RuntimeError("loop broke")
+
+    monkeypatch.setattr(alfred.app, "run_due_loop", broken_loop)
+    with pytest.raises(RuntimeError, match="reminders stopped unexpectedly: RuntimeError"):
+        await asyncio.wait_for(alfred.app.serve(serve_config(database_url, free_port())), 10)

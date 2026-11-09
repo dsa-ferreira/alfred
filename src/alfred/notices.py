@@ -7,6 +7,8 @@ configurable, even when a custom persona is.
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 PARTIAL = " Some actions may have been partly carried out."
 
 
@@ -37,3 +39,16 @@ def too_many_steps(address: str, partial: bool = False) -> str:
 def fell_back(address: str, failed: str, default: str) -> str:
     """The chosen brain failed and alfred went back to the startup brain."""
     return f"The brain {failed} failed, so I have gone back to {default}, {address}."
+
+
+def reminder(address: str, text: str, due: datetime, today: date) -> str:
+    """A reminder delivered without the model (change add-reminders, design D6).
+
+    ``due`` is in the owner's timezone; its date is shown when it isn't ``today``.
+    """
+    when = f"{due:%H:%M}"
+    if due.date() != today:
+        when += f" on {due:%A} {due.day} {due:%B}"
+    return (
+        f'Your reminder, due at {when}: "{text}". My apologies for the plain delivery, {address}.'
+    )

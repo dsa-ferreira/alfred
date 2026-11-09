@@ -1,7 +1,7 @@
 """Transcripts of archived conversations, and the summary prompt (memory design D5).
 
 A transcript is one line per entry: ``Owner:``, ``alfred:``,
-``[notice:<service>]``, ``[ask:<service>]``, and, for a recall, only
+``[notice:<service>]``, ``[ask:<service>]``, ``[reminder:#<id>]`` and, for a recall, only
 ``[recalled #<id> "<title>"]``, so a recalled conversation is never summarised
 or recalled again as part of the conversation it was brought into.
 """
@@ -32,6 +32,7 @@ class TranscriptEntry:
     text: str
     recalled_id: int | None = None
     recalled_title: str | None = None
+    reminder_id: int | None = None
 
 
 def render(entries: list[TranscriptEntry]) -> str:
@@ -43,8 +44,10 @@ def _line(e: TranscriptEntry) -> str:
     match e.kind:
         case "owner":
             return f"Owner: {e.text}"
-        case "assistant" | "ask_reply":
+        case "assistant" | "ask_reply" | "reminder_reply":
             return f"alfred: {e.text}"
+        case "reminder":
+            return f"[reminder:#{e.reminder_id}] {e.text}"
         case "notice":
             return f"[notice:{e.source}] {e.text}"
         case "ask_prompt":

@@ -7,7 +7,12 @@
   a turn carry its ``queue_item_id``, so a retried turn records them once.
   A ``recall`` entry brings an archived conversation into the current one
   (memory design D8).
-- ``queue_items``: AI-bound work (owner messages and ``/ask`` prompts).
+- ``queue_items``: AI-bound work (owner messages, ``/ask`` prompts and due
+  reminders).
+- ``reminders``: timed reminders the owner set (change add-reminders, design
+  D3). ``fired`` means handed to the queue. A reminder queue item and its
+  ``reminder``/``reminder_reply`` entries point at the row through
+  ``reminder_id``, never copying its text or due time.
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
 """
 
@@ -44,11 +49,21 @@ NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
-ENTRY_KINDS = ("owner", "assistant", "notice", "ask_prompt", "ask_reply", "recall")
+ENTRY_KINDS = (
+    "owner",
+    "assistant",
+    "notice",
+    "ask_prompt",
+    "ask_reply",
+    "recall",
+    "reminder",
+    "reminder_reply",
+)
 # What the summary's full-text column is generated from; also used by search.
 SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
 ENTRY_TSV = "to_tsvector('english', text)"
-QUEUE_KINDS = ("owner", "ask")
+QUEUE_KINDS = ("owner", "ask", "reminder")
+REMINDER_STATUSES = ("pending", "fired", "cancelled")
 QUEUE_STATUSES = ("pending", "done", "failed")
 
 
@@ -119,6 +134,8 @@ class Entry(Base):
     recalled_conversation_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("conversations.id")
     )
+    # For ``reminder`` and ``reminder_reply`` entries: the reminder delivered.
+    reminder_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("reminders.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -141,8 +158,30 @@ class QueueItem(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    # For ``reminder`` items: the reminder to deliver.
+    reminder_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("reminders.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Reminder(Base):
+    __tablename__ = "reminders"
+    __table_args__ = (
+        CheckConstraint(_in("status", REMINDER_STATUSES), name="status"),
+        Index(
+            "ix_reminders_pending_due",
+            "due_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TurnToolCall(Base):

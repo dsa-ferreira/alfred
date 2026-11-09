@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
@@ -19,11 +21,14 @@ from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.memory.service import Memory
 from alfred.queue import Queue, Worker, backoff_s, reset_marker
+from alfred.reminders.store import Reminders
+from alfred.reminders.tools import REMIND_SET, ReminderTools
 from tests.helpers import FakeEmbedder, FakeModel, calls, make_config, text
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_mcparr
 
 FAST = {"retry_initial_s": 0.01, "retry_max_s": 0.04}
+LISBON = ZoneInfo("Europe/Lisbon")
 
 
 class FakeOutbox:
@@ -44,12 +49,16 @@ class Setup:
     ) -> None:
         cfg = make_config(queue=FAST, mcp_servers=[server_config("mcparr")])
         self.sessions = sessions
+        self.reminders = Reminders(sessions)
+        tools = ReminderTools(self.reminders, LISBON, "09:00")
         self.model = model
         self.history = History(sessions)
         self.queue = Queue(sessions)
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
-        self.agent = Agent(cfg, model, self.history, sessions, connect, brains=brains)
+        self.agent = Agent(
+            cfg, model, self.history, sessions, connect, reminders=tools, brains=brains
+        )
         self.memory = None
         if summary_model is not None:
             self.memory = Memory(
@@ -66,6 +75,8 @@ class Setup:
             cfg.queue,
             owner_address=cfg.ai.owner_address,
             memory=self.memory,
+            reminders=self.reminders,
+            zone=LISBON,
         )
 
     async def drain(self) -> None:
@@ -570,3 +581,133 @@ async def test_summary_ignores_the_chosen_brain(
     await s.queue.enqueue_owner("we're done")
     await s.drain()
     assert model.models == ["b:8b", "b:8b", None]
+
+
+# --- Reminders -------------------------------------------------------------------
+
+
+async def due_reminder(s: Setup, text_: str = "call mum", late: timedelta = timedelta()) -> int:
+    """A reminder that came due ``late`` ago, claimed into the queue."""
+    now = datetime.now(UTC)
+    reminder_id = await s.reminders.set(text_, now - late)
+    assert len(await s.reminders.claim_due(now)) == 1
+    return reminder_id
+
+
+def reminder_notice(due: datetime, text_: str = "call mum") -> str:
+    today = datetime.now(UTC).astimezone(LISBON).date()
+    return notices.reminder("sir", text_, due.astimezone(LISBON), today)
+
+
+async def recorded(s: Setup) -> list[tuple[str, str, int | None]]:
+    return [(e.kind, e.text, e.reminder_id) for e in await s.history.recent(30)]
+
+
+async def test_reminder_delivered(sessions: async_sessionmaker[AsyncSession]) -> None:
+    s = Setup(sessions, FakeModel([text("Your call to mum is due, sir.")]))
+    rid = await due_reminder(s)
+    await s.drain()
+    assert s.outbox.sent == ["Your call to mum is due, sir."]  # no [source] prefix
+    assert await recorded(s) == [
+        ("reminder", "call mum", rid),
+        ("reminder_reply", "Your call to mum is due, sir.", rid),
+    ]
+    assert [i.status for i in await s.items()] == ["done"]
+    last = s.model.requests[0][0][-1]["content"]
+    assert last.startswith(f"[reminder:#{rid} due ") and last.endswith("] call mum")
+
+
+async def test_reminder_model_error(sessions: async_sessionmaker[AsyncSession]) -> None:
+    s = Setup(sessions, FakeModel([ModelFailed("model server answered HTTP 400")]))
+    rid = await due_reminder(s)
+    due = (await s.reminders.get(rid)).due_at  # type: ignore[union-attr]
+    await s.drain()
+    notice = reminder_notice(due)
+    assert s.outbox.sent == [notice]
+    assert '"call mum"' in notice and f"{due.astimezone(LISBON):%H:%M}" in notice
+    assert await recorded(s) == [("reminder", "call mum", rid), ("reminder_reply", notice, rid)]
+    assert [i.status for i in await s.items()] == ["failed"]
+
+
+@pytest.mark.parametrize("answer", [NO_REPLY, f"  {NO_REPLY}\n"])
+async def test_reminder_model_says_no_reply(
+    sessions: async_sessionmaker[AsyncSession], answer: str
+) -> None:
+    s = Setup(sessions, FakeModel([text(answer)]))
+    rid = await due_reminder(s)
+    due = (await s.reminders.get(rid)).due_at  # type: ignore[union-attr]
+    await s.drain()
+    assert s.outbox.sent == [reminder_notice(due)]
+    assert [i.status for i in await s.items()] == ["done"]
+
+
+async def test_reminder_unexpected_error(sessions: async_sessionmaker[AsyncSession]) -> None:
+    class Broken:
+        async def run(self, turn):  # type: ignore[no-untyped-def]
+            raise RuntimeError("boom")
+
+    s = Setup(sessions, FakeModel())
+    s.worker._agent = Broken()  # type: ignore[assignment]
+    rid = await due_reminder(s, late=timedelta(days=1))
+    due = (await s.reminders.get(rid)).due_at  # type: ignore[union-attr]
+    await s.drain()
+    notice = reminder_notice(due)
+    assert " on " in notice  # due yesterday: the date is shown
+    assert s.outbox.sent == [notice]
+
+
+async def test_reminder_ai_asleep(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([ModelUnreachable("connection refused"), text("Call mum, sir; 0 min late.")])
+    s = Setup(sessions, model)
+    await due_reminder(s)
+    await s.drain()
+    # Retried with backoff; no notice in between, the model's answer at the end.
+    assert s.outbox.sent == ["Call mum, sir; 0 min late."]
+    [item] = await s.items()
+    assert (item.status, item.attempts) == ("done", 1)
+
+
+async def test_reminder_during_an_owner_turn(sessions: async_sessionmaker[AsyncSession]) -> None:
+    s = Setup(sessions, FakeModel([text("Added Dune."), text("Time to call mum, sir.")]))
+    await s.queue.enqueue_owner("add Dune Part Three")
+    rid = await due_reminder(s)
+    await s.drain()
+    assert s.outbox.sent == ["Added Dune.", "Time to call mum, sir."]
+    contents = user_messages(s.model, 1)
+    assert contents[:2] == ["add Dune Part Three", "Added Dune."]
+    assert contents[2].startswith(f"[reminder:#{rid} due ")
+
+
+async def test_no_typing_for_reminders(sessions: async_sessionmaker[AsyncSession]) -> None:
+    events: list[str] = []
+    s = Setup(sessions, FakeModel([text("Call mum, sir.")]))
+    worker = typing_worker(s, events)
+    worker._reminders = s.reminders
+    await due_reminder(s)
+    while await worker.step():
+        pass
+    assert events == ["send Call mum, sir."]
+
+
+async def test_snooze(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel(
+        [
+            text("Your call to mum is due, sir."),
+            calls((REMIND_SET, '{"text": "call mum", "in_minutes": 15}')),
+            text("Very good. In 15 minutes."),
+        ]
+    )
+    s = Setup(sessions, model)
+    rid = await due_reminder(s)
+    await s.drain()
+    await s.queue.enqueue_owner("snooze 15 minutes")
+    before = datetime.now(UTC)
+    await s.drain()
+    # The model's context for the snooze has the reminder's text.
+    contents = user_messages(model, 1)
+    assert contents[0].startswith(f"[reminder:#{rid} due ") and contents[0].endswith("call mum")
+    assert contents[1:] == ["Your call to mum is due, sir.", "snooze 15 minutes"]
+    [snoozed] = await s.reminders.pending()
+    assert snoozed.text == "call mum" and snoozed.id != rid
+    assert timedelta(minutes=14) < snoozed.due_at - before < timedelta(minutes=16)
+    assert s.outbox.sent[-1] == "Very good. In 15 minutes."

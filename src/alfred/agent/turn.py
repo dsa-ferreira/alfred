@@ -3,7 +3,7 @@
 ```
 tools = web tools + alfred_* local tools (owner turns only) + tools of reachable MCP servers
 msgs  = [system prompt (+ today's date, reachable servers' instructions)]
-        + last N history entries (+ the ask input)
+        + last N history entries (+ the ask or reminder input)
 loop up to ai.max_requests_per_turn:
     reply = model(msgs, tools)          # on the brain current at the turn's start
     no tool calls -> done
@@ -19,7 +19,9 @@ the fallback notice.
 An owner message is already in the history when its turn runs (the worker
 records it at turn start), so it reaches the model as the newest entry. An
 ``/ask`` prompt is only recorded if the answer reaches the owner, so it is
-added to the messages here.
+added to the messages here. So is a due reminder (change add-reminders,
+design D5), labelled with its due time and the time of this attempt, so a
+retried turn shows how late it really is.
 
 Each attempt gets a fresh web state (change add-web-search, design D3): its
 fetch allowlist starts with the URLs in the owner's messages in the context
@@ -56,6 +58,8 @@ from alfred.mcp.registry import (
     call_tool,
     parse_arguments,
 )
+from alfred.reminders.tools import NAMES as REMINDER_TOOLS
+from alfred.reminders.when import format_now, format_when
 from alfred.web.tools import NAMES as WEB_TOOLS
 from alfred.web.tools import WebTurn
 
@@ -187,6 +191,14 @@ class WebTools(Protocol):
     async def call(self, turn: WebTurn, name: str, raw_arguments: Any) -> ToolOutcome: ...
 
 
+class ReminderTools(Protocol):
+    """Setting, listing and cancelling reminders (``alfred.reminders.tools.ReminderTools``)."""
+
+    definitions: list[dict[str, Any]]
+
+    async def call(self, name: str, raw_arguments: Any) -> ToolOutcome: ...
+
+
 class MemoryTools(Protocol):
     """Search and recall of archived conversations (``alfred.memory.service.Memory``)."""
 
@@ -199,10 +211,13 @@ class MemoryTools(Protocol):
 
 @dataclass(frozen=True)
 class TurnInput:
-    kind: Literal["owner", "ask"]
+    kind: Literal["owner", "ask", "reminder"]
     text: str
     queue_item_id: int
     source: str | None = None  # the service, for ask turns
+    # For reminder turns: the reminder's number and when it was due.
+    reminder_id: int | None = None
+    due_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -271,6 +286,7 @@ class Agent:
         *,
         memory: MemoryTools | None = None,
         web: WebTools | None = None,
+        reminders: ReminderTools | None = None,
         brains: Brains | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -282,6 +298,7 @@ class Agent:
         self._connect = connect
         self._memory = memory
         self._web = web
+        self._reminders = reminders
         self._now = now
         self._zone = ZoneInfo(config.ai.timezone)
 
@@ -301,6 +318,8 @@ class Agent:
             local.append(END_CONVERSATION_TOOL)
             if self._memory is not None:
                 local += [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
+            if self._reminders is not None:
+                local += self._reminders.definitions
             if len(self._brains.brains) > 1:
                 local.append(set_model_tool(self._brains.names))
         definitions[:0] = local
@@ -351,6 +370,7 @@ class Agent:
         cfg = self._config
         others = [b.name for b in self._brains.brains if b != brain]
         state = _State(brain, can_fall_back and brain != self._brains.default)
+        now = self._now()
         state.messages.append(
             {
                 "role": "system",
@@ -358,7 +378,8 @@ class Agent:
                     cfg.ai.persona,
                     owner_address=cfg.ai.owner_address,
                     ask=turn.kind == "ask",
-                    today=self._now().astimezone(self._zone).date(),
+                    reminder=turn.kind == "reminder",
+                    today=now.astimezone(self._zone).date(),
                     unavailable=tools.unavailable,
                     instructions=tools.instructions,
                     brain=brain_line(brain.name, brain.tag, others),
@@ -366,9 +387,11 @@ class Agent:
             }
         )
         entries = await self._history.recent(cfg.history.max_entries)
-        state.messages += to_messages(entries)
+        state.messages += to_messages(entries, self._zone)
         if turn.kind == "ask":
             state.messages.append({"role": "user", "content": f"[ask:{turn.source}] {turn.text}"})
+        elif turn.kind == "reminder":
+            state.messages.append({"role": "user", "content": self._reminder_input(turn, now)})
         if self._web is not None:
             # Only text the owner (or the asking service) wrote can open a page
             # without a search; replies, notices and recalls can't.
@@ -406,6 +429,14 @@ class Agent:
             notices.too_many_steps(cfg.ai.owner_address, state.side_effects),
             retryable=False,
             side_effects_possible=state.side_effects,
+        )
+
+    def _reminder_input(self, turn: TurnInput, now: datetime) -> str:
+        """``[reminder:#12 due Monday 9 November 2026, 17:00; now 17:12] call mum``."""
+        due = turn.due_at or now
+        return (
+            f"[reminder:#{turn.reminder_id} due {format_when(due, self._zone)}; "
+            f"now {format_now(now, due, self._zone)}] {turn.text}"
         )
 
     async def _ask_model(self, state: _State, definitions: list[dict[str, Any]]) -> ModelReply:
@@ -457,6 +488,8 @@ class Agent:
             and self._memory is not None
         ):
             outcome = await self._memory_tool(self._memory, call)
+        elif call.name in REMINDER_TOOLS and turn.kind == "owner" and self._reminders is not None:
+            outcome = await self._reminder_tool(self._reminders, call)
         elif call.name == SET_MODEL and turn.kind == "owner" and len(self._brains.brains) > 1:
             outcome = self._set_model(turn, call)
         elif call.name in WEB_TOOLS and self._web is not None and state.web is not None:
@@ -496,6 +529,13 @@ class Agent:
     async def _web_tool(self, web: WebTools, web_turn: WebTurn, call: ToolCall) -> ToolOutcome:
         try:
             return await web.call(web_turn, call.name, call.arguments)
+        except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
+            log.exception("tool %s failed", call.name)
+            return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")
+
+    async def _reminder_tool(self, reminders: ReminderTools, call: ToolCall) -> ToolOutcome:
+        try:
+            return await reminders.call(call.name, call.arguments)
         except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
             log.exception("tool %s failed", call.name)
             return ToolOutcome(False, f"Error: tool {call.name!r} failed: {type(exc).__name__}")

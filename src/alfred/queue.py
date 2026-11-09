@@ -1,10 +1,15 @@
 """The AI-bound queue and its single worker (design D8).
 
-Owner messages and ``/ask`` prompts are rows in ``queue_items``. One worker
+Owner messages, ``/ask`` prompts and due reminders are rows in
+``queue_items``. One worker
 takes the oldest ``pending`` row and runs its turn; nothing behind it starts
 until it is done or failed. While the AI is unreachable (and no tool has run
 in the turn) the head item is retried with backoff and keeps its place.
 Pending rows simply resume after a restart.
+
+A reminder always reaches the owner (change add-reminders, design D6): a
+blank or ``NO_REPLY`` answer, or a turn that fails for good, is replaced by
+the fixed reminder notice.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,6 +32,7 @@ from alfred.agent.turn import TurnFailed, TurnInput, TurnResult
 from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
 from alfred.history import History
+from alfred.reminders.store import ReminderRow
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +45,10 @@ class Outbox(Protocol):
 
 class TurnRunner(Protocol):
     async def run(self, turn: TurnInput) -> TurnResult: ...
+
+
+class ReminderLookup(Protocol):
+    async def get(self, reminder_id: int) -> ReminderRow | None: ...
 
 
 class Summariser(Protocol):
@@ -120,6 +131,8 @@ class Worker:
         owner_address: str,
         memory: Summariser | None = None,
         typing: Callable[[], AbstractAsyncContextManager[None]] | None = None,
+        reminders: ReminderLookup | None = None,
+        zone: ZoneInfo | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._queue = queue
@@ -131,6 +144,8 @@ class Worker:
         self._outbox = outbox
         self._config = config
         self._owner_address = owner_address
+        self._reminders = reminders
+        self._zone = zone or ZoneInfo("UTC")
         self._now = now
 
     async def run_forever(self) -> None:
@@ -158,7 +173,10 @@ class Worker:
             # Recorded when the turn starts (once, even if retried), so it is
             # the newest entry of its own context and after earlier replies.
             await self._history.append("owner", item.text, queue_item_id=item.id)
-        turn = TurnInput(item.kind, item.text, item.id, item.source)  # type: ignore[arg-type]
+        if item.kind == "reminder":
+            turn = await self._reminder_turn(item)
+        else:
+            turn = TurnInput(item.kind, item.text, item.id, item.source)  # type: ignore[arg-type]
         indicator = (
             self._typing()
             if self._typing is not None and item.kind == "owner"
@@ -168,12 +186,13 @@ class Worker:
             async with indicator:
                 result = await self._agent.run(turn)
         except TurnFailed as failure:
-            await self._turn_failed(item, failure)
+            await self._turn_failed(item, turn, failure)
             return
         except Exception as exc:
             log.exception("queue item %s: unexpected error", item.id)
             await self._turn_failed(
                 item,
+                turn,
                 TurnFailed(
                     f"internal error: {type(exc).__name__}",
                     notices.failed(self._owner_address),
@@ -182,9 +201,38 @@ class Worker:
                 ),
             )
             return
-        await self._complete(item, result)
+        await self._complete(item, turn, result)
 
-    async def _turn_failed(self, item: QueueItem, failure: TurnFailed) -> None:
+    async def _reminder_turn(self, item: QueueItem) -> TurnInput:
+        """The reminder's text and due time, read through ``reminder_id``."""
+        reminder = None
+        if self._reminders is not None and item.reminder_id is not None:
+            reminder = await self._reminders.get(item.reminder_id)
+        if reminder is None:
+            log.error("queue item %s: reminder #%s not found", item.id, item.reminder_id)
+            return TurnInput(
+                "reminder", item.text, item.id, reminder_id=item.reminder_id, due_at=item.created_at
+            )
+        return TurnInput(
+            "reminder", reminder.text, item.id, reminder_id=reminder.id, due_at=reminder.due_at
+        )
+
+    def _reminder_notice(self, turn: TurnInput) -> str:
+        due = (turn.due_at or self._now()).astimezone(self._zone)
+        today = self._now().astimezone(self._zone).date()
+        return notices.reminder(self._owner_address, turn.text, due, today)
+
+    async def _deliver_reminder(self, item: QueueItem, turn: TurnInput, message: str) -> None:
+        """Record the reminder and what the owner was told, then send it."""
+        await self._history.append(
+            "reminder", turn.text, queue_item_id=item.id, reminder_id=turn.reminder_id
+        )
+        await self._history.append(
+            "reminder_reply", message, queue_item_id=item.id, reminder_id=turn.reminder_id
+        )
+        await self._send(item, message)
+
+    async def _turn_failed(self, item: QueueItem, turn: TurnInput, failure: TurnFailed) -> None:
         if failure.fallback_notice is not None:
             await self._send(item, failure.fallback_notice)
         if failure.retryable:
@@ -198,11 +246,14 @@ class Worker:
             )
             return
         log.error("queue item %s (%s) failed: %s", item.id, item.kind, failure.reason)
+        if item.kind == "reminder":
+            # Before finishing, so a crash in between can't lose the reminder.
+            await self._deliver_reminder(item, turn, self._reminder_notice(turn))
         await self._queue.finish(item.id, "failed", failure.reason)
         if item.kind == "owner":
             await self._send(item, failure.notice)
 
-    async def _complete(self, item: QueueItem, result: TurnResult) -> None:
+    async def _complete(self, item: QueueItem, turn: TurnInput, result: TurnResult) -> None:
         # The owner's brain choice changed, so they hear of it even when an
         # /ask ends in NO_REPLY. Not recorded: the next prompt names the brain.
         if result.fallback_notice is not None:
@@ -210,6 +261,12 @@ class Worker:
         if item.kind == "owner":
             await self._history.append("assistant", result.reply, queue_item_id=item.id)
             await self._send(item, result.reply)
+        elif item.kind == "reminder":
+            reply = result.reply
+            if not reply.strip() or is_no_reply(reply):
+                log.warning("reminder item %s: the model gave no message; plain notice", item.id)
+                reply = self._reminder_notice(turn)
+            await self._deliver_reminder(item, turn, reply)
         elif is_no_reply(result.reply):
             log.info("ask %s from %s: NO_REPLY, owner not notified", item.id, item.source)
         else:

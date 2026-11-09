@@ -1,9 +1,11 @@
-"""``alfred serve``: the bot, the service API, the AI worker and the memory sweeper.
+"""``alfred serve``: the bot, the service API, the AI worker, the memory sweeper
+and the due-reminder loop.
 
-Four asyncio tasks share the database engine and the queue's in-process
-signal (design D1). SIGTERM or SIGINT stops all four; a turn in progress is
+Five asyncio tasks share the database engine and the queue's in-process
+signal (design D1). SIGTERM or SIGINT stops all five; a turn in progress is
 interrupted and its item stays ``pending``, so it runs again after restart,
-and a summary in progress is simply made again later. If any task stops on
+a summary in progress is simply made again later, and a reminder claim is
+one transaction, so it either happened or happens again. If any task stops on
 its own (for example the port is taken), the others are stopped too and
 ``serve`` raises.
 """
@@ -15,6 +17,7 @@ import contextlib
 import logging
 import signal
 from collections.abc import Generator
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from aiogram import Bot
@@ -30,6 +33,8 @@ from alfred.mcp.client import http_connector
 from alfred.memory.embedding import EmbeddingClient
 from alfred.memory.service import Memory
 from alfred.queue import Queue, Worker
+from alfred.reminders.loop import run_due_loop
+from alfred.reminders.tools import ReminderTools
 from alfred.telegram.bot import ALLOWED_UPDATES, TelegramOutbox, make_dispatcher
 from alfred.web.tools import WebTools
 
@@ -80,6 +85,7 @@ async def serve(config: Config) -> None:
     brains = Brains(config.ai.model, config.ai.models)
     # Web search and fetch share one HTTP client (change add-web-search).
     web = WebTools.from_config(config)
+    reminders = ReminderTools.from_config(config, sessions)
     agent = Agent(
         config,
         model,
@@ -88,6 +94,7 @@ async def serve(config: Config) -> None:
         http_connector(),
         memory=memory,
         web=web,
+        reminders=reminders,
         brains=brains,
     )
     worker = Worker(
@@ -99,6 +106,8 @@ async def serve(config: Config) -> None:
         owner_address=config.ai.owner_address,
         memory=memory,
         typing=outbox.typing,
+        reminders=reminders.store,
+        zone=ZoneInfo(config.ai.timezone),
     )
     dispatcher = make_dispatcher(config.telegram.owner_user_id, queue, config.ai.owner_address)
     server = _Server(
@@ -130,11 +139,16 @@ async def serve(config: Config) -> None:
         ),
         asyncio.create_task(worker.run_forever(), name="worker"),
         asyncio.create_task(memory.run_sweeper(), name="memory"),
+        asyncio.create_task(
+            run_due_loop(reminders.store, queue.signal, config.reminders.check_interval_s),
+            name="reminders",
+        ),
     }
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(
         "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
-        "embeddings by %s at %s, web search at %s, %d MCP server(s)",
+        "embeddings by %s at %s, web search at %s, reminders checked every %gs, "
+        "%d MCP server(s)",
         config.server.host,
         config.server.port,
         brains.current.name,
@@ -144,6 +158,7 @@ async def serve(config: Config) -> None:
         config.memory.embedding_model,
         config.memory.embedding_base_url,
         config.web.searxng_url,
+        config.reminders.check_interval_s,
         len(config.mcp_servers),
     )
     failed: asyncio.Task[object] | None = None
@@ -162,7 +177,7 @@ async def serve(config: Config) -> None:
         with contextlib.suppress(RuntimeError):  # polling may already be stopped
             await dispatcher.stop_polling()
         for task in tasks:
-            if task.get_name() in ("worker", "memory"):
+            if task.get_name() in ("worker", "memory", "reminders"):
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()

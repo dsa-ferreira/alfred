@@ -172,3 +172,81 @@ def test_upgrade_downgrade_upgrade(postgres_url: str) -> None:
         command.check(cfg)
     finally:
         engine.dispose()
+
+
+# --- reminders (migration 0003) ---------------------------------------------------
+
+
+def test_reminder_schema(database_url: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        reminder_columns = {c["name"] for c in inspector.get_columns("reminders")}
+        queue_columns = {c["name"] for c in inspector.get_columns("queue_items")}
+        entry_columns = {c["name"] for c in inspector.get_columns("entries")}
+        reminder_indexes = {i["name"] for i in inspector.get_indexes("reminders")}
+    finally:
+        engine.dispose()
+    assert {
+        "id",
+        "text",
+        "due_at",
+        "status",
+        "created_at",
+        "fired_at",
+        "cancelled_at",
+    } == reminder_columns
+    assert "reminder_id" in queue_columns
+    assert "reminder_id" in entry_columns
+    assert "ix_reminders_pending_due" in reminder_indexes
+
+
+def test_reminder_status_is_checked(database_url: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            outer = conn.begin()
+            with pytest.raises(IntegrityError):
+                conn.execute(
+                    text("INSERT INTO reminders (text, due_at, status) VALUES ('x', now(), 'done')")
+                )
+            outer.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_to_0002(postgres_url: str) -> None:
+    from alembic import command
+
+    from alfred.db.migrate import alembic_config
+
+    url = _new_database(postgres_url, "reminders_round_trip", vector=True)
+    sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    cfg = alembic_config(sa_url)
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO conversations (id) VALUES (42)"))
+            conn.execute(
+                text("INSERT INTO entries (conversation_id, kind, text) VALUES (42, 'owner', 'hi')")
+            )
+            conn.execute(text("INSERT INTO reminders (text, due_at) VALUES ('call mum', now())"))
+        command.downgrade(cfg, "0002")
+        inspector = inspect(engine)
+        assert "reminders" not in inspector.get_table_names()
+        assert "reminder_id" not in {c["name"] for c in inspector.get_columns("entries")}
+        assert "reminder_id" not in {c["name"] for c in inspector.get_columns("queue_items")}
+        with engine.connect() as conn:
+            outer = conn.begin()
+            with pytest.raises(IntegrityError):
+                conn.execute(text("INSERT INTO queue_items (kind, text) VALUES ('reminder', 'x')"))
+            outer.rollback()
+            kinds = [k for (k,) in conn.execute(text("SELECT kind FROM entries"))]
+        assert kinds == ["owner"]
+
+        command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()

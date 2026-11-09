@@ -155,3 +155,11 @@ def test_date_span() -> None:
     start = datetime(2026, 10, 3, 10, tzinfo=UTC)
     end = datetime(2026, 10, 3, 11, tzinfo=UTC)
     assert date_span(start, end, LISBON) == "Sat 3 Oct 2026 to Sat 3 Oct 2026"
+
+
+def test_render_reminder() -> None:
+    entries = [
+        TranscriptEntry("reminder", None, "call mum", reminder_id=12),
+        TranscriptEntry("reminder_reply", None, "Your call to mum is due, sir.", reminder_id=12),
+    ]
+    assert render(entries) == "[reminder:#12] call mum\nalfred: Your call to mum is due, sir."

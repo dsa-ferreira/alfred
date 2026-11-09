@@ -569,6 +569,7 @@ async def _transcript_entries(session: AsyncSession, conversation_id: int) -> li
             Entry.text,
             Entry.recalled_conversation_id,
             recalled.title,
+            Entry.reminder_id,
         )
         .outerjoin(recalled, recalled.id == Entry.recalled_conversation_id)
         .where(Entry.conversation_id == conversation_id)

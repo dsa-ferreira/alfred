@@ -18,6 +18,7 @@ from alfred.config import (
     McpServer,
     MemoryConfig,
     QueueConfig,
+    RemindersConfig,
     ServerConfig,
     Service,
     TelegramConfig,
@@ -35,6 +36,7 @@ def make_config(
     queue: dict[str, Any] | None = None,
     memory: dict[str, Any] | None = None,
     web: dict[str, Any] | None = None,
+    reminders: dict[str, Any] | None = None,
     mcp_servers: Sequence[McpServer] = (),
     services: Sequence[Service] = (),
 ) -> Config:
@@ -51,6 +53,7 @@ def make_config(
         database_url=SecretStr("postgresql+psycopg://unused"),
         memory=MemoryConfig(**(memory or {})),
         web=WebConfig(**(web or {})),
+        reminders=RemindersConfig(**(reminders or {})),
     )
 
 

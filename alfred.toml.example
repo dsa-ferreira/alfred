@@ -72,6 +72,13 @@ fetch_timeout_s = 20
 # Largest page download, in bytes; a bigger page is refused as too large.
 fetch_max_bytes = 5000000
 
+[reminders]
+# Time used for a reminder on a date with no clock time ("on Friday"), HH:MM.
+default_time = "09:00"
+# Checks for due reminders run on the clock: every whole minute and every
+# check_interval_s within it (at most 60). Reminders are queued at their minute.
+check_interval_s = 30
+
 [mcp]
 # Seconds to wait for each server's tool list at the start of a turn.
 list_timeout_s = 10

@@ -228,3 +228,43 @@ def test_web_rules_name_the_untrusted_marker() -> None:
     # The rules quote the marker's opening words, so the model can match them.
     assert UNTRUSTED_START.startswith("<<<UNTRUSTED WEB CONTENT")
     assert "<<<UNTRUSTED WEB CONTENT>>>" in _flat(OPERATING_RULES)
+
+
+# --- Reminders -------------------------------------------------------------------
+
+
+def test_reminder_routing_rules_with_and_without_persona() -> None:
+    for persona in (None, "Be terse."):
+        for kwargs in ({"ask": False}, {"ask": True}, {"ask": False, "reminder": True}):
+            prompt = _flat(make_prompt(persona, owner_address="sir", **kwargs))
+            # Timed request: a reminder, times passed as said and confirmed.
+            assert '"remind me to call my mother at five"' in prompt
+            assert "call alfred_remind_set with the time as the owner said it" in prompt
+            assert "as in_minutes or at (HH:MM, YYYY-MM-DD HH:MM or YYYY-MM-DD)" in prompt
+            assert "Never work out times yourself" in prompt
+            assert "confirm the reminder in your own words with the time the tool returns" in prompt
+            assert "Never mention reminder numbers to the owner, except when listing" in prompt
+            # Task keyword wins.
+            assert 'if the owner says "task" or "todo", add it to their to-do list' in prompt
+            assert '"add a task to call mum at five"' in prompt
+            # No time: to-do list.
+            assert '("remind me to buy groceries") goes to the to-do list' in prompt
+
+
+def test_reminder_messages_explained_with_custom_persona() -> None:
+    prompt = _flat(make_prompt("Be terse.", owner_address="sir", ask=False))
+    assert "[reminder:#<id> ...] is a reminder the owner set earlier" in prompt
+    assert "The assistant message after it is what the owner was told" in prompt
+
+
+def test_reminder_turn_rule() -> None:
+    from alfred.agent.prompts import ASK_RULE, REMINDER_RULE
+
+    for persona in (None, "Be terse."):
+        prompt = make_prompt(persona, owner_address="sir", ask=False, reminder=True)
+        assert prompt.endswith(REMINDER_RULE)
+        assert ASK_RULE not in prompt
+        assert NO_REPLY not in prompt
+    assert "If it is late, say how late" in _flat(REMINDER_RULE)
+    assert "Don't mention the reminder's number" in _flat(REMINDER_RULE)
+    assert REMINDER_RULE not in make_prompt(None, owner_address="sir", ask=False)

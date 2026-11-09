@@ -175,6 +175,25 @@ class WebConfig(_Section):
     fetch_max_bytes: PositiveInt = 5_000_000
 
 
+_CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
+
+
+def _check_clock(value: str) -> str:
+    if not _CLOCK.fullmatch(value):
+        raise ValueError("must be a 24-hour time HH:MM, such as 09:00")
+    return value
+
+
+class RemindersConfig(_Section):
+    """Timed reminders (change add-reminders, design D9)."""
+
+    # The time of a reminder on a date with no clock time ("on Friday").
+    default_time: Annotated[str, AfterValidator(_check_clock)] = "09:00"
+    # Checks run on the clock: at every whole minute and every
+    # check_interval_s within it, so at most 60.
+    check_interval_s: Annotated[float, Field(gt=0, le=60)] = 30
+
+
 class MCPConfig(_Section):
     list_timeout_s: PositiveFloat = 10
     call_timeout_s: PositiveFloat = 60
@@ -209,6 +228,7 @@ class FileConfig(_Section):
     queue: QueueConfig = QueueConfig()
     memory: MemoryConfig = MemoryConfig()
     web: WebConfig = WebConfig()
+    reminders: RemindersConfig = RemindersConfig()
     mcp: MCPConfig = MCPConfig()
     server: ServerConfig = ServerConfig()
     services: list[ServiceEntry] = []
@@ -249,6 +269,7 @@ class Config:
     database_url: SecretStr
     memory: MemoryConfig = MemoryConfig()
     web: WebConfig = WebConfig()
+    reminders: RemindersConfig = RemindersConfig()
 
     @property
     def summary_model(self) -> str:
@@ -306,6 +327,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         queue=parsed.queue,
         memory=parsed.memory,
         web=parsed.web,
+        reminders=parsed.reminders,
         mcp=parsed.mcp,
         server=parsed.server,
         services=tuple(Service(s.name, SecretStr(service_tokens[s.name])) for s in parsed.services),

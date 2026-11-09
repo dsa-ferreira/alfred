@@ -471,3 +471,31 @@ def test_empty_brain_tag_is_named(tmp_path: Path) -> None:
 def test_alias_clashing_with_the_unaliased_startup_brain(tmp_path: Path) -> None:
     found = problems(MINIMAL + '\n[ai.models]\nsome-model = "bonsai:8b"\n', tmp_path)
     assert any(p.startswith("ai.models:") and "'some-model'" in p for p in found), found
+
+
+# --- Reminders ------------------------------------------------------------------
+
+
+def test_reminder_defaults(tmp_path: Path) -> None:
+    reminders = load_config(env_for(write(tmp_path, MINIMAL))).reminders
+    assert reminders.default_time == "09:00"
+    assert reminders.check_interval_s == 30
+
+
+def test_reminder_custom_values(tmp_path: Path) -> None:
+    text = MINIMAL + '\n[reminders]\ndefault_time = "07:30"\ncheck_interval_s = 10\n'
+    reminders = load_config(env_for(write(tmp_path, text))).reminders
+    assert reminders.default_time == "07:30"
+    assert reminders.check_interval_s == 10
+
+
+@pytest.mark.parametrize("value", ["9am", "9:00", "24:00", "12:60", ""])
+def test_invalid_default_time(tmp_path: Path, value: str) -> None:
+    found = problems(MINIMAL + f'\n[reminders]\ndefault_time = "{value}"\n', tmp_path)
+    assert any(p.startswith("reminders.default_time:") for p in found), found
+
+
+@pytest.mark.parametrize("value", ["0", "61", "300"])
+def test_check_interval_between_0_and_60(tmp_path: Path, value: str) -> None:
+    found = problems(MINIMAL + f"\n[reminders]\ncheck_interval_s = {value}\n", tmp_path)
+    assert any(p.startswith("reminders.check_interval_s:") for p in found), found

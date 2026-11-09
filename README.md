@@ -42,11 +42,11 @@ and the homelab services.
                        └───────────────┬─────────────────┘
                                        │
                                    Postgres
-                     (conversations, entries, queue, tool calls)
+               (conversations, entries, queue, tool calls, reminders)
 ```
 
-One process, one event loop: the bot, the API and the queue worker run as
-three asyncio tasks. Only one AI turn runs at a time.
+One process, one event loop: the bot, the API, the queue worker, the memory
+sweeper and the due-reminder loop run as five asyncio tasks. Only one AI turn runs at a time.
 
 ## Configuration
 
@@ -90,6 +90,8 @@ reported together and alfred exits. Error messages never contain secret values.
 | `web.fetch_page_chars` | integer | `8000` | Characters of page text in one fetch result. The model reads further with a start offset. Not affected by `ai.tool_result_max_chars`. |
 | `web.fetch_timeout_s` | number | `20` | Timeout of one web search, and of one page fetch including its redirects, in seconds. |
 | `web.fetch_max_bytes` | integer | `5000000` | Largest page download, in bytes. A bigger page is refused as too large. |
+| `reminders.default_time` | `HH:MM` | `"09:00"` | Time of a reminder set for a date with no clock time ("on Friday"), in `ai.timezone`. A value that is not a 24-hour `HH:MM` stops alfred at startup. |
+| `reminders.check_interval_s` | number | `30` | Seconds between checks for due reminders, at most `60`. Checks run on the clock, at every whole minute and every `check_interval_s` within it (`:00` and `:30` for 30), so a reminder is queued at the start of its minute. Checking makes no AI requests. |
 | `mcp.list_timeout_s` | number | `10` | Time allowed for each MCP server's tool list at the start of a turn. A server that doesn't answer is unavailable for that turn. |
 | `mcp.call_timeout_s` | number | `60` | Time allowed for one MCP tool call. |
 | `mcp.instructions_max_chars` | integer | `2000` | Each MCP server's instructions are cut to this many characters (with a `[truncated]` note and a logged warning) before they reach the model. |
@@ -332,6 +334,62 @@ Pages can contain text written to steer the AI, so fetch is limited:
 Every failure (SearXNG down, refused URL, blocked address, HTTP error,
 unsupported type, timeout, too large) reaches the model as the tool's result;
 the turn continues. Fetches and refusals are logged at INFO with the URL.
+
+## Reminders
+
+alfred keeps timed reminders itself and messages you in the Telegram chat
+when one comes due. In owner turns the model has three tools:
+`alfred_remind_set`, `alfred_reminders_list` and `alfred_reminder_cancel`
+(to move a reminder, it cancels and sets it again). They are not offered in
+`/ask` or reminder turns.
+
+**Reminder or to-do?** The operating rules route requests:
+
+- "task" or "todo" in the request goes to your to-do list tools (an MCP
+  server such as Trello), even with a time: "add a task to call mum at five".
+- Any other request with a time or date is a reminder: "remind me to call my
+  mother at five", "in 20 minutes", "on Friday".
+- Any other "remind me" goes to the to-do list: "remind me to buy groceries".
+
+**Times.** The model passes the time as you said it and alfred works it out
+in `ai.timezone`; the model never does date arithmetic.
+
+| Form | Meaning |
+| --- | --- |
+| `in_minutes: 90` | 90 minutes from now (1 minute to one year). |
+| `at: "17:00"` | The next 17:00: today if still ahead, otherwise tomorrow. |
+| `at: "2026-11-13 09:30"` | That date and time. |
+| `at: "2026-11-13"` | That date at `reminders.default_time`. |
+
+A time that has passed or can't be read is refused. A local time that a DST
+change skips moves forward by the gap; one that happens twice uses the first.
+The tool gives the model the day and time as a person says them
+(`Reminder set for today at 17:00: call mum`, or "tomorrow at 05:00", "on
+Friday at 09:30"), and alfred confirms in its own words: "Very good. I shall
+remind you to call your mother at 17:00." Reminder numbers appear only when
+you ask which reminders are set; a "five" read as 05:00 shows as "tomorrow".
+
+**Delivery.** Reminders are stored in Postgres and due times are whole
+minutes (`in_minutes` drops the seconds, so "in 2 minutes" at 13:55:37 is
+13:57). At the start of every minute (and every `reminders.check_interval_s`
+within it) alfred moves due reminders into the message queue, in due order,
+without any AI request, so a reminder is queued at second `:00` of its
+minute. It reaches you once the model has written it: a few seconds later,
+longer if the AI has to wake up or another turn is running. The model writes the
+message, seeing `[reminder:#12 due …; now …]`, so it can say when it is late.
+It waits its turn behind other queue items and, while the AI is unreachable,
+is retried like any item. Reminders that came due while alfred was down are
+sent when it starts, however late. A reminder always reaches you: if the
+model answers `NO_REPLY` or nothing, or the turn fails, alfred sends a fixed
+notice instead:
+
+```
+Your reminder, due at 17:00: "call mum". My apologies for the plain delivery, sir.
+```
+
+A delivered reminder and what you were told are kept in the conversation, so
+you can answer it: "snooze 15 minutes" sets a new reminder with the same
+text. Recurring reminders aren't supported.
 
 ## Deployment
 

@@ -206,3 +206,21 @@ async def test_summary_stored_without_token_counts(
     assert summary_lines(caplog) == [f"conversation {cid} summary: token counts not reported"]
     stored = await row(sessions, cid)
     assert stored.title == "Chicken thighs recipe" and stored.summary is not None
+
+
+async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSession]) -> None:
+    from alfred.memory.transcript import render
+    from alfred.reminders.store import Reminders
+
+    reminder_id = await Reminders(sessions).set("call mum", NOW)
+    history = History(sessions)
+    await history.append("reminder", "call mum", reminder_id=reminder_id)
+    await history.append("reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id)
+    await history.append("owner", "done")
+    reset = await history.reset()
+    assert reset.archived_id is not None
+    m = memory(sessions, FakeModel(), FakeEmbedder())
+    entries = await m.transcript_entries(reset.archived_id)
+    assert render(entries) == (
+        f"[reminder:#{reminder_id}] call mum\nalfred: Your call to mum, sir.\nOwner: done"
+    )

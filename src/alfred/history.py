@@ -9,17 +9,23 @@ it commits.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.db.models import Conversation, Entry
+from alfred.db.models import Conversation, Entry, Reminder
 from alfred.memory.transcript import recall_label
+from alfred.reminders.when import format_when
 
-EntryKind = Literal["owner", "assistant", "notice", "ask_prompt", "ask_reply"]
+EntryKind = Literal[
+    "owner", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
+]
+UTC_ZONE = ZoneInfo("UTC")
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,9 @@ class HistoryEntry:
     recalled_id: int | None = None
     recalled_title: str | None = None
     recalled_summary: str | None = None
+    # For reminder entries: the reminder's number and when it was due.
+    reminder_id: int | None = None
+    reminder_due_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +64,7 @@ class History:
         text_: str,
         source: str | None = None,
         queue_item_id: int | None = None,
+        reminder_id: int | None = None,
     ) -> int:
         """Add an entry to the current conversation. Returns the conversation ID.
 
@@ -71,6 +81,7 @@ class History:
                     source=source,
                     text=text_,
                     queue_item_id=queue_item_id,
+                    reminder_id=reminder_id,
                 )
                 .on_conflict_do_nothing(index_elements=["queue_item_id", "kind"])
             )
@@ -90,6 +101,7 @@ class History:
                     Entry.source,
                     Entry.text,
                     Entry.recalled_conversation_id,
+                    Entry.reminder_id,
                 )
                 .join(Conversation, Conversation.id == Entry.conversation_id)
                 .where(Conversation.ended_at.is_(None))
@@ -105,8 +117,11 @@ class History:
                     newest.c.recalled_conversation_id,
                     recalled.title,
                     recalled.summary,
+                    newest.c.reminder_id,
+                    Reminder.due_at,
                 )
                 .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
+                .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
                 .order_by(newest.c.id)
             )
             return [HistoryEntry(*row) for row in rows]
@@ -147,12 +162,14 @@ async def current_id(session: AsyncSession, *, lock: bool) -> int:
     return found
 
 
-def to_messages(entries: list[HistoryEntry]) -> list[dict[str, Any]]:
+def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[dict[str, Any]]:
     """Map entries to chat-completions messages.
 
     Owner messages and ask prompts are ``user`` turns (ask prompts prefixed
     ``[ask:<service>]``), replies are ``assistant`` turns, and notices are
-    ``user`` turns prefixed ``[notice:<service>]``. Recalls are ``user`` turns
+    ``user`` turns prefixed ``[notice:<service>]``. Delivered reminders are
+    ``user`` turns prefixed ``[reminder:#<id> due <time in zone>]``, followed
+    by what the owner was told. Recalls are ``user`` turns
     prefixed ``[recall:#<id> "<title>"]``: the newest with its transcript,
     older ones with only the recalled conversation's summary (memory design D9).
     """
@@ -173,6 +190,10 @@ def to_messages(entries: list[HistoryEntry]) -> list[dict[str, Any]]:
                 messages.append({"role": "user", "content": f"[ask:{e.source}] {e.text}"})
             case "notice":
                 messages.append({"role": "user", "content": f"[notice:{e.source}] {e.text}"})
-            case "assistant" | "ask_reply":
+            case "reminder":
+                due = f" due {format_when(e.reminder_due_at, zone)}" if e.reminder_due_at else ""
+                label = f"[reminder:#{e.reminder_id}{due}]"
+                messages.append({"role": "user", "content": f"{label} {e.text}"})
+            case "assistant" | "ask_reply" | "reminder_reply":
                 messages.append({"role": "assistant", "content": e.text})
     return messages
