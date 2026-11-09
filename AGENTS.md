@@ -30,14 +30,16 @@ calls itself. Planning lives in `openspec/`; read the active change
 
 ## Adding a tool group
 
-Everything the model can call is a toolset (`alfred.agent.toolset`); the
-turn loop in `agent/turn.py` names no tool. To add one:
+Everything the model can call is a toolset. The contract lives in
+`alfred.tools.base`, which imports nothing else from alfred; the turn loop in
+`agent/turn.py` names no tool. To add one:
 
-- Subclass `LocalToolset` in the feature's own module: set `definitions`,
-  implement `call(name, raw_arguments, attempt)`, and override `offered`
-  if it is not for every turn (`owner_only` for owner turns). Override
-  `open` / `new_attempt` only for per-turn or per-attempt state (see
-  `web/tools.py`).
+- Subclass `LocalToolset` in the feature's own package, or in `alfred/tools/`
+  if it belongs to no feature (like `conversation.py` and `brains.py`). Set
+  `definitions`, implement `call(name, raw_arguments, attempt)`, and
+  override `offered` if it is not for every turn (`owner_only` for owner
+  turns). Override `open` / `new_attempt` only for per-turn or per-attempt
+  state (see `web/tools.py`).
 - Add it to `build_toolsets` in `app.py`. The list order is the order the
   tools are offered in; alfred's own tools come before `McpTools`.
 - Exceptions from `call` become error results for the model (`safe_call`).

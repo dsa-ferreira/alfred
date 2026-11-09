@@ -22,10 +22,8 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from aiogram import Bot
 
-from alfred.agent.brains import Brains, BrainTools
-from alfred.agent.conversation import ConversationTools
+from alfred.agent.brains import Brains
 from alfred.agent.model import ModelClient
-from alfred.agent.toolset import Toolset
 from alfred.agent.turn import Agent
 from alfred.api import create_app
 from alfred.config import Config
@@ -41,6 +39,9 @@ from alfred.queue import Queue, Worker
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
 from alfred.telegram.bot import ALLOWED_UPDATES, TelegramOutbox, make_dispatcher
+from alfred.tools.base import Toolset
+from alfred.tools.brains import BrainTools
+from alfred.tools.conversation import ConversationTools
 from alfred.web.tools import WebTools
 
 log = logging.getLogger(__name__)

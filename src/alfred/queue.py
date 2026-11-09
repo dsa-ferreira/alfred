@@ -28,12 +28,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.prompts import is_no_reply
-from alfred.agent.turn import TurnFailed, TurnInput, TurnResult
+from alfred.agent.turn import TurnFailed, TurnResult
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.reminders.store import ReminderRow
+from alfred.tools.base import TurnInput
 
 log = logging.getLogger(__name__)
 

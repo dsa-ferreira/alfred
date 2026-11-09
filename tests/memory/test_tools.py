@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from alfred.agent.toolset import AttemptContext, ToolOutcome
-from alfred.agent.turn import TurnInput
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS, MemoryTools
+from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
 
 OWNER = TurnInput("owner", "remember the chicken?", 1)
 

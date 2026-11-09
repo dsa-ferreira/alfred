@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.turn import TurnInput
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import (
     NAMES,
@@ -16,6 +15,7 @@ from alfred.reminders.tools import (
     REMINDERS_LIST,
     ReminderTools,
 )
+from alfred.tools.base import TurnInput
 
 LISBON = ZoneInfo("Europe/Lisbon")
 

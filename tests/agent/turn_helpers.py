@@ -11,10 +11,10 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.brains import SET_MODEL, Brains
+from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelReply
 from alfred.agent.prompts import OPERATING_RULES
-from alfred.agent.turn import Agent, TurnInput
+from alfred.agent.turn import Agent
 from alfred.db.models import TurnToolCall
 from alfred.history import History
 from alfred.mcp.registry import ServerInstructions
@@ -22,6 +22,8 @@ from alfred.mcp.toolset import server_instructions
 from alfred.memory.search import ConversationSearch
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
+from alfred.tools.base import TurnInput
+from alfred.tools.brains import SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH, WebTools

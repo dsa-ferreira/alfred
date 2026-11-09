@@ -9,14 +9,14 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
-from alfred.agent.brains import SET_MODEL
-from alfred.agent.conversation import END_CONVERSATION
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona
-from alfred.agent.toolset import AttemptContext, LocalToolset
-from alfred.agent.turn import Agent, TurnFailed, TurnInput
+from alfred.agent.turn import Agent, TurnFailed
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
+from alfred.tools.base import AttemptContext, LocalToolset, TurnInput
+from alfred.tools.brains import SET_MODEL
+from alfred.tools.conversation import END_CONVERSATION
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH
 from tests.agent.turn_helpers import (
     BAD_MODEL,

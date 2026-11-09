@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 
-from alfred.agent.toolset import AttemptContext, PromptNote, dispatch
-from alfred.agent.turn import TurnInput
 from alfred.mcp.registry import ServerInstructions
 from alfred.mcp.toolset import McpTools, server_instructions, unavailable_note
+from alfred.tools.base import AttemptContext, PromptNote, TurnInput, dispatch
 from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, config, in_process, make_cookbook, make_mcparr
 
 MCPARR = config("mcparr")

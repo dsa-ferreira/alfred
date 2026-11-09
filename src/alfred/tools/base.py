@@ -1,4 +1,8 @@
-"""What every group of tools the model can call has in common.
+"""The toolset contract: what every group of tools the model can call has in common.
+
+It depends on nothing else in alfred, so the agent loop and every tool group
+(here in ``alfred.tools``, or in a feature package such as ``alfred.web``)
+depend on it rather than on each other.
 
 A :class:`Toolset` is one source of tools: alfred's own (web, reminders,
 memory, ...) or the configured MCP servers. The agent opens each toolset once
@@ -23,14 +27,25 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from alfred.agent.turn import TurnInput
+from datetime import datetime
+from typing import Any, Literal, Protocol
 
 log = logging.getLogger(__name__)
 
 LOCAL_GROUP = "alfred"  # how alfred's own tools are grouped in the context-size line
+
+
+@dataclass(frozen=True)
+class TurnInput:
+    """What a turn answers: an owner message, an ``/ask`` prompt or a due reminder."""
+
+    kind: Literal["owner", "ask", "reminder"]
+    text: str
+    queue_item_id: int
+    source: str | None = None  # the service, for ask turns
+    # For reminder turns: the reminder's number and when it was due.
+    reminder_id: int | None = None
+    due_at: datetime | None = None
 
 
 @dataclass(frozen=True)

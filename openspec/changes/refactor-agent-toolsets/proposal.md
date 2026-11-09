@@ -26,9 +26,14 @@ import graph further. This change makes the next feature cheap to add.
 - What a toolset adds to the system prompt (today only the MCP server
   instructions and the unavailable-servers note) arrives as generic prompt
   notes, so the system prompt no longer has MCP-specific parameters.
-- `ToolOutcome` and `parse_arguments` move from `mcp/registry.py` to the
-  agent's toolset module; `backoff_s` moves out of `queue.py`, so memory no
-  longer imports the queue.
+- `ToolOutcome` and `parse_arguments` move from `mcp/registry.py` into the
+  toolset contract; `backoff_s` moves out of `queue.py`, so memory no longer
+  imports the queue.
+- The toolset contract (the interfaces, `ToolOutcome`, `TurnInput`) lives in
+  a new `alfred.tools` package, together with alfred's own tools that belong
+  to no feature package (conversation reset, brain switching). The agent loop
+  and every tool then depend on the contract; no tool depends on the agent
+  package for it.
 - `memory/service.py` splits into summaries, the sweeper, and search/recall.
 - `tests/agent/test_turn.py` splits by toolset.
 - `app.py` builds the list of toolsets and passes it to the agent.
@@ -54,9 +59,10 @@ None. This is a pure refactor; the change sets `skip_specs: true`.
 ## Impact
 
 - Code: `src/alfred/agent/turn.py` (shrinks to the loop and brain fallback),
-  new `agent/toolset.py` and `agent/context.py`, `agent/prompts.py`,
-  `agent/brains.py`, `app.py`, `queue.py`, `mcp/registry.py` plus a new MCP
-  toolset, `web/tools.py`, `reminders/tools.py`, `memory/service.py` (split).
+  a new `src/alfred/tools/` package (`base.py`, `conversation.py`,
+  `brains.py`), new `agent/context.py`, `agent/prompts.py`, `agent/brains.py`,
+  `app.py`, `queue.py`, `mcp/registry.py` plus a new MCP toolset,
+  `web/tools.py`, `reminders/tools.py`, `memory/service.py` (split).
 - Tests: `tests/agent/test_turn.py` split; setup in memory, queue, prompt and
   registry tests adapts to the new constructors and module paths.
 - No change to configuration, the database, the HTTP API, Telegram, or the

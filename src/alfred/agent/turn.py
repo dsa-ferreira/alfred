@@ -14,7 +14,7 @@ fail "stopped after too many steps"
 ```
 
 The agent names no tool: what is offered on which turn, and what a call
-does, is up to the toolsets (``alfred.agent.toolset``) that ``app.py``
+does, is up to the toolsets (``alfred.tools.base``) that ``app.py``
 passes in.
 
 A non-retryable model error on a brain other than the startup one makes the
@@ -40,7 +40,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -50,18 +50,19 @@ from alfred.agent.brains import Brain, Brains
 from alfred.agent.context import context_sizes, largest_tools
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.agent.prompts import brain_line, system_prompt
-from alfred.agent.toolset import (
-    AttemptContext,
-    OpenToolset,
-    ToolOutcome,
-    Toolset,
-    dispatch,
-    parse_arguments,
-)
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
 from alfred.history import History, to_messages
 from alfred.reminders.when import format_now, format_when
+from alfred.tools.base import (
+    AttemptContext,
+    OpenToolset,
+    ToolOutcome,
+    Toolset,
+    TurnInput,
+    dispatch,
+    parse_arguments,
+)
 
 log = logging.getLogger(__name__)
 
@@ -76,17 +77,6 @@ class Model(Protocol):
         *,
         model: str | None = None,
     ) -> ModelReply: ...
-
-
-@dataclass(frozen=True)
-class TurnInput:
-    kind: Literal["owner", "ask", "reminder"]
-    text: str
-    queue_item_id: int
-    source: str | None = None  # the service, for ask turns
-    # For reminder turns: the reminder's number and when it was due.
-    reminder_id: int | None = None
-    due_at: datetime | None = None
 
 
 @dataclass(frozen=True)

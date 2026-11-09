@@ -10,8 +10,7 @@ import httpx
 import pytest
 import respx
 
-from alfred.agent.toolset import AttemptContext
-from alfred.agent.turn import TurnInput
+from alfred.tools.base import AttemptContext, TurnInput
 from alfred.web.fetch import Fetcher, make_http_client
 from alfred.web.search import SearxngClient
 from alfred.web.tools import (

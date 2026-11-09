@@ -16,13 +16,13 @@ from aiogram.types import User
 from pydantic import SecretStr
 
 import alfred.app
-from alfred.agent.brains import BrainTools
-from alfred.agent.conversation import ConversationTools
 from alfred.config import ServerConfig
 from alfred.mcp.toolset import McpTools
 from alfred.memory.search import ConversationSearch, MemoryTools
 from alfred.memory.sweeper import Sweeper
 from alfred.reminders.tools import ReminderTools
+from alfred.tools.brains import BrainTools
+from alfred.tools.conversation import ConversationTools
 from alfred.web.tools import WebTools
 from tests.helpers import make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession

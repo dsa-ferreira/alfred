@@ -11,29 +11,27 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import ColumnElement, and_, exists, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.toolset import (
-    AttemptContext,
-    LocalToolset,
-    ToolOutcome,
-    owner_only,
-    parse_arguments,
-)
 from alfred.config import Config
 from alfred.db.models import Conversation, Entry
 from alfred.history import current_id
 from alfred.memory.embedding import EmbeddingError
 from alfred.memory.summaries import load_transcript
 from alfred.memory.transcript import TranscriptEntry, date_span, recall_label, render
-
-if TYPE_CHECKING:
-    from alfred.agent.turn import TurnInput
+from alfred.tools.base import (
+    AttemptContext,
+    LocalToolset,
+    ToolOutcome,
+    TurnInput,
+    owner_only,
+    parse_arguments,
+)
 
 log = logging.getLogger(__name__)
 

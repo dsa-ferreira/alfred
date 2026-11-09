@@ -14,23 +14,21 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from alfred.agent.toolset import (
+from alfred.config import Config
+from alfred.tools.base import (
     LOCAL_GROUP,
     AttemptContext,
     PromptNote,
     ToolOutcome,
+    TurnInput,
     parse_arguments,
 )
-from alfred.config import Config
 from alfred.web.allowlist import Allowlist, normalise
 from alfred.web.extract import NoReadableContent, extract, supported
 from alfred.web.fetch import Fetcher, FetchError, make_http_client
 from alfred.web.search import CATEGORIES, TIME_RANGES, SearchUnavailable, SearxngClient
-
-if TYPE_CHECKING:
-    from alfred.agent.turn import TurnInput
 
 log = logging.getLogger(__name__)
 

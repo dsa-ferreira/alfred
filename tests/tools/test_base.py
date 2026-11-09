@@ -4,15 +4,15 @@ from typing import Any
 
 import pytest
 
-from alfred.agent.toolset import (
+from alfred.tools.base import (
     AttemptContext,
     LocalToolset,
     ToolOutcome,
+    TurnInput,
     dispatch,
     owner_only,
     safe_call,
 )
-from alfred.agent.turn import TurnInput
 
 
 def definition(name: str) -> dict[str, Any]:

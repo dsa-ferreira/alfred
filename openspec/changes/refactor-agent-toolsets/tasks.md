@@ -49,3 +49,10 @@ Each class keeps working with today's `Agent` until group 6 switches it over.
 
 - [x] 8.1 Update the module docstrings of `agent/turn.py`, `agent/toolset.py` and `agent/prompts.py` to the new structure, and add a short "Adding a tool group" note to `AGENTS.md` (implement `Toolset`, add it to the list in `app.py`); verify the note matches the code
 - [x] 8.2 Run `make lint` and `make test`; verify both pass and `uv run pytest --collect-only -q` collects at least 708 tests plus the ones added in this change
+
+## 9. Separate the toolset contract from the agent (one commit, design D10)
+
+- [x] 9.1 Create `src/alfred/tools/` with `base.py` holding everything from `agent/toolset.py` plus `TurnInput` (moved from `agent/turn.py`); delete `agent/toolset.py`; update every importer in `src/` and `tests/`; verify `make test` passes and `grep -rn "alfred.agent.toolset" src tests` finds nothing
+- [x] 9.2 Move `ConversationTools` to `src/alfred/tools/conversation.py` and `BrainTools`, `SET_MODEL` and `set_model_tool` to `src/alfred/tools/brains.py` (`Brains` stays in `agent/brains.py`); update `app.py`; move their unit tests and the set-model turn tests to `tests/tools/`; verify `make test` passes and `uv run pytest --collect-only -q` still collects 731 tests
+- [x] 9.3 Verify the dependency direction: `grep -rn "from alfred.agent" src/alfred/tools src/alfred/web src/alfred/reminders src/alfred/memory src/alfred/mcp` shows only `alfred.agent.brains` (in `tools/brains.py`) and `alfred.agent.model` (in `memory/summaries.py`)
+- [x] 9.4 Update the module docstrings and the AGENTS.md "Adding a tool group" note to `alfred.tools.base`; run `make lint` and `make test`; commit following the commit-messages skill; verify the note matches the code and both checks pass

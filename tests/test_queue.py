@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.brains import Brains
-from alfred.agent.conversation import END_CONVERSATION
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
 from alfred.backoff import backoff_s
@@ -24,6 +23,7 @@ from alfred.memory.summaries import Summaries
 from alfred.queue import Queue, Worker, reset_marker
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import REMIND_SET, ReminderTools
+from alfred.tools.conversation import END_CONVERSATION
 from tests.helpers import FakeEmbedder, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_mcparr

@@ -7,14 +7,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.conversation import END_CONVERSATION
 from alfred.agent.model import ModelUnreachable
 from alfred.agent.prompts import ASK_RULE, NO_REPLY, REMINDER_RULE
-from alfred.agent.turn import TurnFailed, TurnInput
+from alfred.agent.turn import TurnFailed
 from alfred.history import History
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
 from alfred.reminders.tools import REMIND_SET, ReminderTools
+from alfred.tools.base import TurnInput
+from alfred.tools.conversation import END_CONVERSATION
 from tests.agent.turn_helpers import (
     DUE,
     Clock,

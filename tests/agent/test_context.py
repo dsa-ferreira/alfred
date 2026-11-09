@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.model import Usage
-from alfred.agent.turn import TurnInput
 from alfred.history import History
+from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, agent, owner_turn
 from tests.helpers import FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook

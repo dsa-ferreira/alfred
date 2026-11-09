@@ -20,9 +20,9 @@ from typing import Any
 
 from mcp.types import CallToolResult, TextContent, Tool
 
-from alfred.agent.toolset import ToolOutcome, parse_arguments
 from alfred.config import McpServer
 from alfred.mcp.client import Connector
+from alfred.tools.base import ToolOutcome, parse_arguments
 
 log = logging.getLogger(__name__)
 

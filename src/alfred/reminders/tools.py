@@ -11,18 +11,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.toolset import (
-    AttemptContext,
-    LocalToolset,
-    ToolOutcome,
-    owner_only,
-    parse_arguments,
-)
 from alfred.config import Config
 from alfred.reminders.store import Reminders
 from alfred.reminders.when import (
@@ -33,9 +26,14 @@ from alfred.reminders.when import (
     parse_text,
     resolve,
 )
-
-if TYPE_CHECKING:
-    from alfred.agent.turn import TurnInput
+from alfred.tools.base import (
+    AttemptContext,
+    LocalToolset,
+    ToolOutcome,
+    TurnInput,
+    owner_only,
+    parse_arguments,
+)
 
 log = logging.getLogger(__name__)
 

@@ -6,11 +6,11 @@ import httpx
 import respx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.conversation import END_CONVERSATION
 from alfred.agent.prompts import NO_REPLY
-from alfred.agent.turn import TurnInput
 from alfred.db.models import Conversation, Entry
 from alfred.history import History
+from alfred.tools.base import TurnInput
+from alfred.tools.conversation import END_CONVERSATION
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH
 from tests.agent.turn_helpers import (
     NOW,

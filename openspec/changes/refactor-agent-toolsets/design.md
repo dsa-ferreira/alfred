@@ -34,6 +34,10 @@ See proposal.md for why. What shapes the approach today:
 - A new local tool group is one module implementing the toolset interface
   plus one entry in the list `app.py` builds.
 - Identical observable behaviour, including log lines the tests check.
+- Tool code (`alfred.tools`, `web`, `reminders`, `memory`, `mcp`) imports the
+  toolset contract from `alfred.tools.base`, never from `alfred.agent`. The
+  only exceptions are the state and clients the tools act on:
+  `agent.brains.Brains`, and `agent.model` for summaries.
 
 **Non-Goals:**
 
@@ -51,8 +55,8 @@ class Toolset(Protocol):
 
 class OpenToolset(Protocol):
     definitions: list[dict[str, Any]]
-    group: str                                   # context-size log group
-    prompt_notes: list[PromptNote]
+    prompt_notes: Sequence[PromptNote]
+    def group_of(self, name: str) -> str         # context-size log group
     def new_attempt(self, attempt: AttemptContext) -> None
     def handles(self, name: str) -> bool
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome
@@ -64,9 +68,10 @@ web, conversation, memory, reminders, brains, MCP. The concatenated
 "more than one brain") moves into each toolset's `open`, which returns `None`
 when it is not offered.
 
-A base class `LocalToolset` supplies `group = "alfred"`, empty
-`prompt_notes`, and a no-op `new_attempt`, so most toolsets implement only
-`open`, `handles` and `call`.
+A base class `LocalToolset` supplies `group_of` returning `"alfred"`, empty
+`prompt_notes`, a no-op `new_attempt`, `handles` from its definitions, and
+an `open` that returns itself when `offered(turn)` is true, so most toolsets
+implement only `call` (and `offered` if they are gated).
 
 *Alternative considered:* opening per attempt (simpler, no `new_attempt`).
 Rejected because it would list the MCP servers again after a brain
@@ -123,20 +128,21 @@ unavailable note if any server is down. `server_instructions`,
 
 `agent/context.py` takes the open toolsets and the start-of-turn messages.
 Instructions come from notes with a `log_label`. Tool sizes are grouped by
-each toolset's `group` (the MCP toolset reports per-server groups through a
-`group_of(name)` override), groups in definition order except `alfred`,
-which is listed last as today. `largest_tools` moves with it unchanged.
+each toolset's `group_of(name)` (the MCP toolset reports the tool's server),
+groups in definition order except `alfred`, which is listed last as today. `largest_tools` moves with it unchanged.
 
 ### D7. Where things live
 
 ```
-agent/toolset.py      Toolset, OpenToolset, LocalToolset, AttemptContext,
-                      PromptNote, ToolOutcome, parse_arguments, safe_call
+tools/base.py         Toolset, OpenToolset, LocalToolset, AttemptContext,
+                      PromptNote, ToolOutcome, TurnInput, parse_arguments,
+                      owner_only, dispatch, safe_call
+tools/conversation.py ConversationTools (alfred_end_conversation)
+tools/brains.py       BrainTools (alfred_set_model), over agent.brains.Brains
 agent/turn.py         Agent (loop, fallback, input messages, _record),
-                      TurnInput, TurnResult, TurnFailed
+                      TurnResult, TurnFailed
 agent/context.py      context_sizes, largest_tools
-agent/conversation.py ConversationTools (alfred_end_conversation)
-agent/brains.py       Brains + BrainTools (alfred_set_model)
+agent/brains.py       Brains (state only)
 memory/search.py      search and recall + MemoryTools
 reminders/tools.py    ReminderTools implements Toolset (store stays public)
 web/tools.py          WebTools implements Toolset; WebTurn becomes its attempt state
@@ -168,11 +174,40 @@ that uses them.
 ### D9. How "no behaviour change" is checked
 
 - Existing test assertions do not change. Diffs to existing tests touch only
-  imports, fixtures and constructor calls; review checks this.
+  imports, fixtures and constructor calls; review checks this. Two kinds of
+  exception, both about structure rather than behaviour: the `serve` wiring
+  tests find the web, memory and reminder objects inside the agent's
+  toolsets instead of its keyword arguments, and a log filter follows the
+  logger name `alfred.memory.service` to `alfred.memory.summaries`.
 - The number of collected tests does not go down (recorded before step 1,
   compared at the end).
 - New unit tests cover only the new seams: dispatch order, the unknown-tool
   fallback, `safe_call`, and `new_attempt` being called each attempt.
+
+### D10. The contract lives outside the agent package
+
+Decided after groups 1-8 were implemented. With the contract in
+`agent/toolset.py`, every feature package imported `alfred.agent`, so the
+dependency pointed from the tools to the loop. The contract moves to
+`alfred/tools/base.py`; the agent and all tools depend on it instead:
+
+```
+agent/  -->  tools/base.py  <--  tools/*, web, reminders, memory, mcp
+```
+
+`TurnInput` moves with it, because every toolset's `open` receives one;
+`TurnResult` and `TurnFailed` stay in `agent/turn.py`, since only the agent
+and the worker use them. The two toolsets that belong to no feature package,
+`ConversationTools` and `BrainTools`, move to `alfred/tools/`. `Brains` stays
+in `agent/brains.py`: the fallback needs it, and `tools/brains.py` may
+depend on that state class while `tools/base.py` depends on nothing in
+`agent/`.
+
+*Alternatives considered:* moving only the two toolsets out of `agent/`
+(the contract would still live in the agent package, so features would keep
+importing it); moving every feature's toolset into `tools/` (rejected: it
+splits each feature across two packages, e.g. web's allowlist away from the
+tools that use it).
 
 ## Risks / Trade-offs
 

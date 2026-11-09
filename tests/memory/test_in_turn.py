@@ -6,10 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import NO_REPLY
-from alfred.agent.turn import TurnInput
 from alfred.db.models import Entry
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
+from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import agent, memory, owner_turn, tool_rows
 from tests.helpers import FakeEmbedder, FakeModel, add_queue_item, calls, text
 from tests.memory.test_search import CHICKEN, at, seed

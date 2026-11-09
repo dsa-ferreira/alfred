@@ -11,12 +11,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from alfred.agent.toolset import AttemptContext, PromptNote, ToolOutcome
 from alfred.mcp.client import Connector
 from alfred.mcp.registry import ServerInstructions, TurnTools, build_turn_tools, call_tool
+from alfred.tools.base import AttemptContext, PromptNote, ToolOutcome, TurnInput
 
 if TYPE_CHECKING:
-    from alfred.agent.turn import TurnInput
     from alfred.config import Config, McpServer
 
 

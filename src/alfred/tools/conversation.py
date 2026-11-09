@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from alfred.agent.toolset import AttemptContext, LocalToolset, ToolOutcome, owner_only
-
-if TYPE_CHECKING:
-    from alfred.agent.turn import TurnInput
+from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, TurnInput, owner_only
 
 END_CONVERSATION = "alfred_end_conversation"
 
