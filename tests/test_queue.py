@@ -15,9 +15,10 @@ from alfred import notices
 from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
+from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
-from alfred.db.models import QueueItem
+from alfred.db.models import Attachment, Entry, QueueItem
 from alfred.history import History, strip_stamp
 from alfred.memory.summaries import Summaries
 from alfred.queue import Queue, Worker, reset_marker
@@ -713,3 +714,39 @@ async def test_snooze(sessions: async_sessionmaker[AsyncSession]) -> None:
     assert snoozed.text == "call mum" and snoozed.id != rid
     assert timedelta(minutes=14) < snoozed.due_at - before < timedelta(minutes=16)
     assert s.outbox.sent[-1] == "Very good. In 15 minutes."
+
+
+# --- Attachments (change add-attachments, design D2) -------------------------------
+
+
+async def test_retried_turn_links_attachments_once(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    down = ModelUnreachable("refused")
+    s = Setup(sessions, FakeModel([down, text("A receipt for 12.40 EUR.")]))
+    photo = NewAttachment("image", "image/jpeg", 1000, "attachments/a", width=10, height=10)
+    pdf = NewAttachment("pdf", "application/pdf", 2000, "attachments/b", "x.pdf", pages=["p1"])
+    item_id = await s.queue.enqueue_owner("what are these?", 5, [photo, pdf])
+
+    assert await s.worker.step()  # attempt 1: the owner entry is recorded, the AI is down
+    await s.drain()
+
+    async with sessions() as session:
+        entries = list(await session.scalars(select(Entry).where(Entry.queue_item_id == item_id)))
+        attachments = list(await session.scalars(select(Attachment).order_by(Attachment.position)))
+    owner = [e for e in entries if e.kind == "owner"]
+    assert len(owner) == 1
+    assert [(a.queue_item_id, a.entry_id) for a in attachments] == [
+        (item_id, owner[0].id),
+        (item_id, owner[0].id),
+    ]
+    assert s.outbox.sent == ["A receipt for 12.40 EUR."]
+
+
+async def test_append_returns_the_entry_id_on_a_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    item = await Queue(sessions).enqueue_owner("hi")
+    first = await history.append("owner", "hi", queue_item_id=item)
+    assert await history.append("owner", "hi", queue_item_id=item) == first

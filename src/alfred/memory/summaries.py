@@ -9,6 +9,7 @@ picks it up later.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.agent.model import ModelError, ModelReply, token_counts
+from alfred.attachments.handles import refs_by_entry
 from alfred.backoff import backoff_s
 from alfred.config import Config
 from alfred.db.models import Conversation, Entry
@@ -197,9 +199,15 @@ async def load_transcript(session: AsyncSession, conversation_id: int) -> list[T
             Entry.recalled_conversation_id,
             recalled.title,
             Entry.reminder_id,
+            Entry.id,
         )
         .outerjoin(recalled, recalled.id == Entry.recalled_conversation_id)
         .where(Entry.conversation_id == conversation_id)
         .order_by(Entry.id)
     )
-    return [TranscriptEntry(*row) for row in rows]
+    entries = [TranscriptEntry(*row) for row in rows]
+    refs = await refs_by_entry(session, (e.entry_id for e in entries if e.kind == "owner"))
+    return [
+        dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
+        for e in entries
+    ]

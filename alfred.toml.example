@@ -11,6 +11,8 @@ owner_user_id = 123456789
 # OpenAI-compatible server; alfred posts to {base_url}/v1/chat/completions.
 base_url = "http://ai.lan"
 model = "gemma4:26b-a4b-it-qat"
+# Whether [ai] model can see images, when no [ai.models] alias names it (see below).
+vision = false
 # Seconds per model request. Long enough for the AI server to wake and load the model.
 request_timeout_s = 300
 # Model requests allowed in one turn before it is stopped.
@@ -28,9 +30,12 @@ timezone = "Europe/Lisbon"
 # Brains the owner can switch between from the chat ("set your brain to bonsai"),
 # as alias = "model tag" on [ai] base_url. Default: none, only [ai] model.
 # [ai] model is the startup brain; it is listed under its tag if no alias names it.
+# A brain that can see images is written as a table with vision = true; only
+# those are sent images (with [attachments]). vision defaults to false.
 # [ai.models]
-# gemma = "gemma4:26b-a4b-it-qat"
-# bonsai = "bonsai:8b"
+# gemma = { model = "gemma4:26b-a4b-it-qat", vision = true }
+# bonsai = { model = "bonsai-2:27b", vision = true }
+# qwen = "qwen3:14b"
 
 [history]
 # Most recent conversation entries sent to the model each turn.
@@ -78,6 +83,28 @@ default_time = "09:00"
 # Checks for due reminders run on the clock: every whole minute and every
 # check_interval_s within it (at most 60). Reminders are queued at their minute.
 check_interval_s = 30
+
+# Photos, image files and PDFs from the owner. Default: off, text only.
+# The files are kept in an S3-compatible bucket (Garage); the key comes from
+# ALFRED_S3_ACCESS_KEY_ID and ALFRED_S3_SECRET_ACCESS_KEY, required with this section.
+# [attachments]
+# S3 endpoint and bucket (required).
+# endpoint_url = "http://garage.lan:3900"
+# bucket = "alfred"
+# region = "garage"
+# Largest file accepted, in bytes; at most 20000000, the most a Telegram bot can download.
+# max_bytes = 20000000
+# How many of the newest owner messages send their images (and PDF page 1) to the
+# model; older attachments are sent as a handle the model can open with a tool.
+# inline_turns = 1
+# Characters of a PDF's page 1 text sent with the message that brings it.
+# first_page_chars = 4000
+# Characters of PDF text in one alfred_read_document result.
+# read_chars = 8000
+# Longer side, in pixels, of images and rendered PDF pages sent to the model.
+# image_max_px = 1536
+# Seconds to wait for the rest of an album before queueing it as one message.
+# album_wait_s = 2
 
 [mcp]
 # Seconds to wait for each server's tool list at the start of a turn.

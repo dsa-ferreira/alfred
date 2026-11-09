@@ -132,3 +132,40 @@ async def test_token_counts_not_reported(
     assert turn_lines(caplog, turn, "request") == [
         f"turn {turn.queue_item_id} request 1: token counts not reported"
     ]
+
+
+# --- images (change add-attachments, design D11) ----------------------------------
+
+
+def test_images_are_counted_not_measured() -> None:
+    from alfred.agent.context import context_sizes
+
+    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 50_000}}
+    text_part = {"type": "text", "text": "what's the total?"}
+    messages = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": [text_part, image, image]},
+        {"role": "assistant", "content": "12.40 EUR."},
+    ]
+    line = context_sizes(messages, [])
+    without = [
+        {"role": "user", "content": [text_part]},
+        {"role": "assistant", "content": "12.40 EUR."},
+    ]
+    assert line.endswith(f"history 2 entries {size(without)} chars, 2 images")
+    assert size(without) < 1000  # the base64 isn't counted
+
+
+def test_one_image() -> None:
+    from alfred.agent.context import context_sizes
+
+    image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+    messages = [{"role": "system", "content": "s"}, {"role": "user", "content": [image]}]
+    assert context_sizes(messages, []).endswith(", 1 image")
+
+
+def test_no_images_no_count() -> None:
+    from alfred.agent.context import context_sizes
+
+    messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}]
+    assert context_sizes(messages, []).endswith("chars")

@@ -14,6 +14,11 @@
   ``reminder``/``reminder_reply`` entries point at the row through
   ``reminder_id``, never copying its text or due time.
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
+- ``attachments``: the owner's photos, image files and PDFs (change
+  add-attachments, design D1). The bytes are in the object store under
+  ``object_key``; the row is written with its queue item and linked to the
+  owner entry (``entry_id``) when the turn records it. ``attachment_pages``
+  holds each PDF page's text.
 """
 
 from __future__ import annotations
@@ -65,6 +70,7 @@ ENTRY_TSV = "to_tsvector('english', text)"
 QUEUE_KINDS = ("owner", "ask", "reminder")
 REMINDER_STATUSES = ("pending", "fired", "cancelled")
 QUEUE_STATUSES = ("pending", "done", "failed")
+ATTACHMENT_KINDS = ("image", "pdf")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -198,3 +204,42 @@ class TurnToolCall(Base):
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     result_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+    __table_args__ = (
+        CheckConstraint(_in("kind", ATTACHMENT_KINDS), name="kind"),
+        Index("ix_attachments_queue_item_id", "queue_item_id", "position"),
+        Index("ix_attachments_entry_id", "entry_id"),
+    )
+
+    # The number the model sees in a handle ("#7").
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    queue_item_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("queue_items.id"), nullable=False
+    )
+    # The owner entry of the message, once its turn has recorded it.
+    entry_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("entries.id"))
+    # Order within the message (an album).
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    mime: Mapped[str] = mapped_column(String(128), nullable=False)
+    file_name: Mapped[str | None] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    object_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AttachmentPage(Base):
+    __tablename__ = "attachment_pages"
+
+    attachment_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("attachments.id"), primary_key=True
+    )
+    # 1-based, as the model and the owner count them.
+    page: Mapped[int] = mapped_column(Integer, primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)

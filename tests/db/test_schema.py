@@ -250,3 +250,97 @@ def test_downgrade_to_0002(postgres_url: str) -> None:
         command.check(cfg)
     finally:
         engine.dispose()
+
+
+# --- attachments (migration 0004) -------------------------------------------------
+
+
+def test_attachment_schema(database_url: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("attachments")}
+        page_columns = {c["name"] for c in inspector.get_columns("attachment_pages")}
+    finally:
+        engine.dispose()
+    assert {
+        "id",
+        "queue_item_id",
+        "entry_id",
+        "position",
+        "kind",
+        "mime",
+        "file_name",
+        "size_bytes",
+        "object_key",
+        "width",
+        "height",
+        "page_count",
+        "created_at",
+    } == columns
+    assert {"attachment_id", "page", "text"} == page_columns
+
+
+def test_attachment_kind_and_key_are_checked(database_url: str) -> None:
+    engine = create_engine(database_url)
+    insert = (
+        "INSERT INTO attachments (queue_item_id, position, kind, mime, size_bytes, object_key) "
+        "VALUES (:item, 0, :kind, 'image/jpeg', 1, :key)"
+    )
+    try:
+        with engine.connect() as conn:
+            outer = conn.begin()
+            item = conn.scalar(
+                text("INSERT INTO queue_items (kind, text) VALUES ('owner', '') RETURNING id")
+            )
+            conn.execute(text(insert), {"item": item, "kind": "image", "key": "attachments/a"})
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text(insert), {"item": item, "kind": "voice", "key": "attachments/b"})
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text(insert), {"item": item, "kind": "pdf", "key": "attachments/a"})
+            outer.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_to_0003(postgres_url: str) -> None:
+    from alembic import command
+
+    from alfred.db.migrate import alembic_config
+
+    url = _new_database(postgres_url, "attachments_round_trip", vector=True)
+    sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    cfg = alembic_config(sa_url)
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            item = conn.scalar(
+                text("INSERT INTO queue_items (kind, text) VALUES ('owner', 'hi') RETURNING id")
+            )
+            attachment = conn.scalar(
+                text(
+                    "INSERT INTO attachments "
+                    "(queue_item_id, position, kind, mime, size_bytes, object_key, page_count) "
+                    "VALUES (:item, 0, 'pdf', 'application/pdf', 10, 'attachments/x', 1) "
+                    "RETURNING id"
+                ),
+                {"item": item},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO attachment_pages (attachment_id, page, text) VALUES (:a, 1, 'p')"
+                ),
+                {"a": attachment},
+            )
+        command.downgrade(cfg, "0003")
+        tables = set(inspect(engine).get_table_names())
+        assert "attachments" not in tables and "attachment_pages" not in tables
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT text FROM queue_items")) == "hi"
+
+        command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()

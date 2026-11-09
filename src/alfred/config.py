@@ -2,8 +2,10 @@
 
 Every non-secret setting lives in the TOML file (path from ``ALFRED_CONFIG``,
 default ``alfred.toml``). Secrets are only read from environment variables:
-``ALFRED_TELEGRAM_BOT_TOKEN``, ``ALFRED_DATABASE_URL`` and the variables named
-by each service's and MCP server's ``token_env``.
+``ALFRED_TELEGRAM_BOT_TOKEN``, ``ALFRED_DATABASE_URL``, the object store key
+(``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``, only with
+``[attachments]``) and the variables named by each service's and MCP server's
+``token_env``.
 
 Everything is validated once. All problems are collected into one
 :class:`ConfigError` whose messages name keys and variables but never include
@@ -26,6 +28,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     SecretStr,
@@ -39,6 +42,10 @@ CONFIG_ENV = "ALFRED_CONFIG"
 DEFAULT_CONFIG_PATH = "alfred.toml"
 BOT_TOKEN_ENV = "ALFRED_TELEGRAM_BOT_TOKEN"
 DATABASE_URL_ENV = "ALFRED_DATABASE_URL"
+S3_ACCESS_KEY_ID_ENV = "ALFRED_S3_ACCESS_KEY_ID"
+S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
+# Telegram bots can't download files larger than this.
+TELEGRAM_MAX_BYTES = 20_000_000
 
 RESERVED_SERVER_NAME = "alfred"
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
@@ -102,9 +109,25 @@ class TelegramConfig(_Section):
     owner_user_id: PositiveInt
 
 
+class BrainEntry(_Section):
+    """An ``[ai.models]`` entry written as a table (change add-attachments, design D9)."""
+
+    model: Annotated[str, Field(min_length=1)]
+    vision: bool = False
+
+
+def _brain_entries(value: Any) -> Any:
+    """``alias = "tag"`` is short for ``alias = { model = "tag" }``."""
+    if not isinstance(value, Mapping):
+        return value
+    return {k: {"model": v} if isinstance(v, str) else v for k, v in value.items()}
+
+
 class AIConfig(_Section):
     base_url: HttpUrlStr = "http://ai.lan"
     model: Annotated[str, Field(min_length=1)] = "gemma4:26b-a4b-it-qat"
+    # Whether the [ai] model can see images, when no alias names it.
+    vision: bool = False
     request_timeout_s: PositiveFloat = 300
     max_requests_per_turn: PositiveInt = 12
     tool_result_max_chars: PositiveInt = 4000
@@ -112,15 +135,18 @@ class AIConfig(_Section):
     owner_address: Annotated[str, Field(min_length=1)] = "sir"
     # The owner's timezone: today's date in the prompt, and search dates.
     timezone: TimeZoneName = "Europe/Lisbon"
-    # The brains the owner can switch between: alias -> model tag.
-    models: dict[Name, Annotated[str, Field(min_length=1)]] = {}
+    # The brains the owner can switch between: alias -> model tag, or
+    # alias -> { model = tag, vision = true }. Both are read as a BrainEntry.
+    models: Annotated[dict[Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
 
     @field_validator("models")
     @classmethod
-    def _check_models(cls, models: dict[str, str], info: ValidationInfo) -> dict[str, str]:
+    def _check_models(
+        cls, models: dict[str, BrainEntry], info: ValidationInfo
+    ) -> dict[str, BrainEntry]:
         by_tag: dict[str, list[str]] = {}
-        for alias, tag in models.items():
-            by_tag.setdefault(tag, []).append(alias)
+        for alias, entry in models.items():
+            by_tag.setdefault(entry.model, []).append(alias)
         problems = [
             "aliases " + ", ".join(repr(a) for a in aliases) + f" all name {tag!r}"
             for tag, aliases in by_tag.items()
@@ -194,6 +220,34 @@ class RemindersConfig(_Section):
     check_interval_s: Annotated[float, Field(gt=0, le=60)] = 30
 
 
+class AttachmentsConfig(_Section):
+    """Images and PDFs from the owner (change add-attachments, design D1 and D10).
+
+    The section's presence turns attachments on; the object store key comes
+    from ``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``.
+    """
+
+    endpoint_url: HttpUrlStr
+    bucket: Annotated[str, Field(min_length=1)]
+    region: Annotated[str, Field(min_length=1)] = "garage"
+    max_bytes: Annotated[int, Field(gt=0)] = TELEGRAM_MAX_BYTES
+    # How many of the newest owner messages carry their attachments inline.
+    inline_turns: Annotated[int, Field(ge=0)] = 1
+    first_page_chars: PositiveInt = 4000
+    read_chars: PositiveInt = 8000
+    image_max_px: PositiveInt = 1536
+    album_wait_s: PositiveFloat = 2
+
+    @field_validator("max_bytes")
+    @classmethod
+    def _within_telegram_limit(cls, value: int) -> int:
+        if value > TELEGRAM_MAX_BYTES:
+            raise ValueError(
+                f"must be at most {TELEGRAM_MAX_BYTES} (20 MB, the largest file a bot can download)"
+            )
+        return value
+
+
 class MCPConfig(_Section):
     list_timeout_s: PositiveFloat = 10
     call_timeout_s: PositiveFloat = 60
@@ -229,6 +283,8 @@ class FileConfig(_Section):
     memory: MemoryConfig = MemoryConfig()
     web: WebConfig = WebConfig()
     reminders: RemindersConfig = RemindersConfig()
+    # None: attachments are off and alfred reads text only.
+    attachments: AttachmentsConfig | None = None
     mcp: MCPConfig = MCPConfig()
     server: ServerConfig = ServerConfig()
     services: list[ServiceEntry] = []
@@ -254,6 +310,12 @@ class McpServer:
 
 
 @dataclass(frozen=True)
+class S3Key:
+    access_key_id: SecretStr
+    secret_access_key: SecretStr
+
+
+@dataclass(frozen=True)
 class Config:
     """The validated configuration with its secrets resolved."""
 
@@ -270,6 +332,9 @@ class Config:
     memory: MemoryConfig = MemoryConfig()
     web: WebConfig = WebConfig()
     reminders: RemindersConfig = RemindersConfig()
+    attachments: AttachmentsConfig | None = None
+    # Set exactly when ``attachments`` is.
+    s3_key: S3Key | None = None
 
     @property
     def summary_model(self) -> str:
@@ -316,6 +381,12 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     service_tokens = _resolve_tokens(source, "services", services_raw, problems)
     server_tokens = _resolve_tokens(source, "mcp_servers", servers_raw, problems)
     problems += _duplicate_tokens(service_tokens)
+    s3_key: S3Key | None = None
+    if isinstance(data.get("attachments"), Mapping):
+        key_id = _require_env(source, S3_ACCESS_KEY_ID_ENV, problems, "[attachments] is set")
+        secret = _require_env(source, S3_SECRET_ACCESS_KEY_ENV, problems, "[attachments] is set")
+        if key_id is not None and secret is not None:
+            s3_key = S3Key(SecretStr(key_id), SecretStr(secret))
 
     if problems or parsed is None:
         raise ConfigError(problems)
@@ -328,6 +399,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         memory=parsed.memory,
         web=parsed.web,
         reminders=parsed.reminders,
+        attachments=parsed.attachments,
+        s3_key=s3_key if parsed.attachments is not None else None,
         mcp=parsed.mcp,
         server=parsed.server,
         services=tuple(Service(s.name, SecretStr(service_tokens[s.name])) for s in parsed.services),
@@ -403,10 +476,13 @@ def _duplicate_names(section: str, entries: list[dict[str, Any]]) -> list[str]:
     return [f"{section}: duplicate name {name!r}" for name, n in counts.items() if n > 1]
 
 
-def _require_env(source: Mapping[str, str], var: str, problems: list[str]) -> str | None:
+def _require_env(
+    source: Mapping[str, str], var: str, problems: list[str], because: str | None = None
+) -> str | None:
     value = source.get(var, "").strip()
     if not value:
-        problems.append(f"{var} is required but not set")
+        why = f" ({because})" if because else ""
+        problems.append(f"{var} is required but not set{why}")
         return None
     return value
 

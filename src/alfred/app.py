@@ -1,8 +1,8 @@
-"""``alfred serve``: the bot, the service API, the AI worker, the memory sweeper
-and the due-reminder loop.
+"""``alfred serve``: the bot, the service API, the AI worker, the memory sweeper,
+the due-reminder loop and, with ``[attachments]``, the orphan file sweeper.
 
-Five asyncio tasks share the database engine and the queue's in-process
-signal (design D1). SIGTERM or SIGINT stops all five; a turn in progress is
+Five asyncio tasks (six with attachments) share the database engine and the
+queue's in-process signal (design D1). SIGTERM or SIGINT stops them all; a turn in progress is
 interrupted and its item stays ``pending``, so it runs again after restart,
 a summary in progress is simply made again later, and a reminder claim is
 one transaction, so it either happened or happens again. If any task stops on
@@ -27,6 +27,11 @@ from alfred.agent.brains import Brains
 from alfred.agent.model import ModelClient
 from alfred.agent.turn import Agent
 from alfred.api import create_app
+from alfred.attachments.inline import InlineAttachments
+from alfred.attachments.intake import Intake
+from alfred.attachments.store import S3Store
+from alfred.attachments.sweeper import OrphanSweeper
+from alfred.attachments.tools import AttachmentTools
 from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.history import History
@@ -39,7 +44,12 @@ from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue, Worker
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
-from alfred.telegram.bot import ALLOWED_UPDATES, TelegramOutbox, make_dispatcher
+from alfred.telegram.bot import (
+    ALLOWED_UPDATES,
+    TelegramDownloader,
+    TelegramOutbox,
+    make_dispatcher,
+)
 from alfred.tools.base import Toolset
 from alfred.tools.brains import BrainTools
 from alfred.tools.calculator import CalculatorTools
@@ -62,8 +72,9 @@ def configure_logging(level: str) -> None:
     logging.basicConfig(
         level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True
     )
-    # Per-request lines from the HTTP clients are noise at INFO.
-    for name in ("httpx", "httpx2", "aiogram.event"):
+    # Per-request lines from the HTTP and S3 clients are noise at INFO, and
+    # botocore's DEBUG lines show signed request headers.
+    for name in ("httpx", "httpx2", "aiogram.event", "botocore", "aiobotocore"):
         logging.getLogger(name).setLevel(max(logging.WARNING, logging.getLogger().level))
 
 
@@ -75,6 +86,7 @@ def build_toolsets(
     web: WebTools | None = None,
     memory: Searcher | None = None,
     reminders: ReminderTools | None = None,
+    attachments: AttachmentTools | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> list[Toolset]:
     """What the model may call, in the order it is offered; alfred's own tools first.
@@ -88,6 +100,9 @@ def build_toolsets(
     toolsets.append(ConversationTools())
     if memory is not None:
         toolsets.append(MemoryTools(memory))
+    # Only with [attachments] (change add-attachments, design D8).
+    if attachments is not None:
+        toolsets.append(attachments)
     if reminders is not None:
         toolsets.append(reminders)
     toolsets.append(BrainTools(brains))
@@ -124,19 +139,45 @@ async def serve(config: Config) -> None:
     search = ConversationSearch(config, sessions, embedder)
     # Turns pass the current brain's tag per request; summaries never do, so
     # they stay on the summary model (change add-brain-switching, design D2).
-    brains = Brains(config.ai.model, config.ai.models)
+    brains = Brains.from_config(config.ai)
     # Web search and fetch share one HTTP client (change add-web-search).
     web = WebTools.from_config(config)
     reminders = ReminderTools.from_config(config, sessions)
+    # Photos, image files and PDFs, only with [attachments] (change add-attachments).
+    store: S3Store | None = None
+    intake: Intake | None = None
+    attachment_tools: AttachmentTools | None = None
+    inline: InlineAttachments | None = None
+    orphans: OrphanSweeper | None = None
+    if config.attachments is not None:
+        assert config.s3_key is not None
+        store = await S3Store.open(config.attachments, config.s3_key)
+        intake = Intake(
+            config.attachments,
+            store,
+            queue,
+            TelegramDownloader(bot),
+            owner_address=config.ai.owner_address,
+        )
+        attachment_tools = AttachmentTools(store, sessions, brains, config.attachments)
+        inline = InlineAttachments(store, config.attachments)
+        orphans = OrphanSweeper(store, sessions)
     agent = Agent(
         config,
         model,
         history,
         sessions,
         toolsets=build_toolsets(
-            config, http_connector(), brains=brains, web=web, memory=search, reminders=reminders
+            config,
+            http_connector(),
+            brains=brains,
+            web=web,
+            memory=search,
+            reminders=reminders,
+            attachments=attachment_tools,
         ),
         brains=brains,
+        attachments=inline,
     )
     worker = Worker(
         queue,
@@ -150,7 +191,13 @@ async def serve(config: Config) -> None:
         reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
     )
-    dispatcher = make_dispatcher(config.telegram.owner_user_id, queue, config.ai.owner_address)
+    dispatcher = make_dispatcher(
+        config.telegram.owner_user_id,
+        queue,
+        config.ai.owner_address,
+        intake=intake,
+        album_wait_s=config.attachments.album_wait_s if config.attachments else 2,
+    )
     server = _Server(
         uvicorn.Config(
             create_app(config.services, queue, history, outbox),
@@ -185,11 +232,13 @@ async def serve(config: Config) -> None:
             name="reminders",
         ),
     }
+    if orphans is not None:
+        tasks.add(asyncio.create_task(orphans.run_forever(), name="attachments"))
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(
         "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
         "embeddings by %s at %s, web search at %s, reminders checked every %gs, "
-        "%d MCP server(s)",
+        "attachments %s, %d MCP server(s)",
         config.server.host,
         config.server.port,
         brains.current.name,
@@ -200,6 +249,12 @@ async def serve(config: Config) -> None:
         config.memory.embedding_base_url,
         config.web.searxng_url,
         config.reminders.check_interval_s,
+        (
+            f"in bucket {config.attachments.bucket} at {config.attachments.endpoint_url} "
+            f"(vision: {', '.join(b.name for b in brains.brains if b.vision) or 'none'})"
+            if config.attachments
+            else "off"
+        ),
         len(config.mcp_servers),
     )
     failed: asyncio.Task[object] | None = None
@@ -218,7 +273,7 @@ async def serve(config: Config) -> None:
         with contextlib.suppress(RuntimeError):  # polling may already be stopped
             await dispatcher.stop_polling()
         for task in tasks:
-            if task.get_name() in ("worker", "memory", "reminders"):
+            if task.get_name() in ("worker", "memory", "reminders", "attachments"):
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()
@@ -227,6 +282,8 @@ async def serve(config: Config) -> None:
             await summary_model.aclose()
         await embedder.aclose()
         await web.aclose()
+        if store is not None:
+            await store.aclose()
         await engine.dispose()
     if failed is not None:
         exc = failed.exception() if not failed.cancelled() else None

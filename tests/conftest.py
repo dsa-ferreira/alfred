@@ -26,7 +26,9 @@ from alfred.web.fetch import make_http_client
 # doesn't give it; containers are stopped by the fixture instead.
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
-TABLES = "turn_tool_calls, entries, conversations, queue_items, reminders"
+TABLES = (
+    "attachment_pages, attachments, turn_tool_calls, entries, conversations, queue_items, reminders"
+)
 POSTGRES_IMAGE = "docker.io/pgvector/pgvector:0.8.7-pg17-trixie"
 
 

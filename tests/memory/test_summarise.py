@@ -157,7 +157,8 @@ async def test_long_transcript_is_shortened(sessions: async_sessionmaker[AsyncSe
 async def test_current_conversation_is_not_summarised(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    cid = await History(sessions).append("owner", "still talking")
+    await History(sessions).append("owner", "still talking")
+    cid = await History(sessions).current_conversation_id()
     model = FakeModel()
     assert await memory(sessions, model, FakeEmbedder()).summarise(cid) is None
     assert model.requests == []

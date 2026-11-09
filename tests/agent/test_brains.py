@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from alfred.agent.brains import Brains
+from alfred.config import AIConfig, BrainEntry
 
 GEMMA = "gemma4:26b-a4b-it-qat"
 
@@ -55,3 +56,27 @@ def test_fall_back_on_the_default_does_nothing() -> None:
     brains = Brains(GEMMA, {"gemma": GEMMA, "bonsai": "bonsai:8b"})
     assert brains.fall_back() is False
     assert brains.current.name == "gemma"
+
+
+# --- Vision (change add-attachments, design D9) ---------------------------------
+
+
+def test_vision_per_brain() -> None:
+    brains = Brains(GEMMA, {"gemma": BrainEntry(model=GEMMA, vision=True), "bonsai": "bonsai:8b"})
+    assert [(b.name, b.vision) for b in brains.brains] == [("gemma", True), ("bonsai", False)]
+
+
+def test_unaliased_startup_brain_takes_ai_vision() -> None:
+    ai = AIConfig(model="qwen3:14b", vision=True, models={"bonsai": "bonsai:8b"})
+    brains = Brains.from_config(ai)
+    assert [(b.name, b.vision) for b in brains.brains] == [("qwen3:14b", True), ("bonsai", False)]
+    assert brains.current.vision is True
+
+
+def test_ai_vision_ignored_when_an_alias_names_the_startup_model() -> None:
+    ai = AIConfig(model=GEMMA, vision=True, models={"gemma": GEMMA})
+    assert Brains.from_config(ai).current.vision is False
+
+
+def test_vision_defaults_to_false() -> None:
+    assert Brains.from_config(AIConfig()).current.vision is False

@@ -16,7 +16,11 @@ from aiogram.types import User
 from pydantic import SecretStr
 
 import alfred.app
-from alfred.config import ServerConfig
+from alfred.attachments.inline import InlineAttachments
+from alfred.attachments.intake import Intake
+from alfred.attachments.sweeper import OrphanSweeper
+from alfred.attachments.tools import AttachmentTools
+from alfred.config import AttachmentsConfig, BrainEntry, S3Key, ServerConfig
 from alfred.mcp.toolset import McpTools
 from alfred.memory.search import ConversationSearch, MemoryTools
 from alfred.memory.sweeper import Sweeper
@@ -26,7 +30,7 @@ from alfred.tools.calculator import CalculatorTools
 from alfred.tools.conversation import ConversationTools
 from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
-from tests.helpers import make_config
+from tests.helpers import FakeStore, make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession
 
 
@@ -303,3 +307,116 @@ async def test_reminder_loop_failure_stops_serve(
     monkeypatch.setattr(alfred.app, "run_due_loop", broken_loop)
     with pytest.raises(RuntimeError, match="reminders stopped unexpectedly: RuntimeError"):
         await asyncio.wait_for(alfred.app.serve(serve_config(database_url, free_port())), 10)
+
+
+# --- attachments (change add-attachments) ------------------------------------------
+
+
+class ClosingStore(FakeStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def with_attachments(config: Any) -> Any:
+    return type(config)(
+        **{
+            **config.__dict__,
+            "attachments": AttachmentsConfig(
+                endpoint_url="http://garage.lan:3900", bucket="alfred", album_wait_s=0.5
+            ),
+            "s3_key": S3Key(SecretStr("key-id"), SecretStr("LEAK-s3-secret")),
+            "ai": config.ai.model_copy(
+                update={"models": {"gemma": BrainEntry(model=config.ai.model, vision=True)}}
+            ),
+        }
+    )
+
+
+async def test_attachment_wiring(
+    database_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = PollingSession()
+    monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
+    monkeypatch.setattr(Sweeper, "run_forever", SweeperProbe().run)
+    orphans = SweeperProbe()
+    monkeypatch.setattr(OrphanSweeper, "run_forever", lambda self: orphans.run())
+    stores: list[tuple[ClosingStore, Any, Any]] = []
+
+    async def open_store(config: Any, key: Any) -> ClosingStore:
+        store = ClosingStore()
+        stores.append((store, config, key))
+        return store
+
+    monkeypatch.setattr(alfred.app.S3Store, "open", open_store)
+    agents: list[dict[str, Any]] = []
+    dispatchers: list[dict[str, Any]] = []
+    real_agent, real_dispatcher = alfred.app.Agent, alfred.app.make_dispatcher
+
+    def record_agent(*args: Any, **kwargs: Any) -> Any:
+        agents.append(kwargs)
+        return real_agent(*args, **kwargs)
+
+    def record_dispatcher(*args: Any, **kwargs: Any) -> Any:
+        dispatchers.append(kwargs)
+        return real_dispatcher(*args, **kwargs)
+
+    monkeypatch.setattr(alfred.app, "Agent", record_agent)
+    monkeypatch.setattr(alfred.app, "make_dispatcher", record_dispatcher)
+    config = with_attachments(serve_config(database_url, free_port()))
+    with caplog.at_level("INFO", logger="alfred.app"):
+        task = asyncio.create_task(alfred.app.serve(config))
+        await asyncio.wait_for(orphans.started.wait(), 5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, 10)
+
+    ((store, store_config, key),) = stores
+    assert store_config is config.attachments and key is config.s3_key
+    assert store.closed and orphans.stopped.is_set()
+    assert [type(t) for t in agents[0]["toolsets"]][2:4] == [MemoryTools, AttachmentTools]
+    assert isinstance(agents[0]["attachments"], InlineAttachments)
+    assert isinstance(dispatchers[0]["intake"], Intake)
+    assert dispatchers[0]["album_wait_s"] == 0.5
+    assert "attachments in bucket alfred at http://garage.lan:3900 (vision: gemma)" in caplog.text
+    assert "LEAK-s3-secret" not in caplog.text
+
+
+async def test_no_attachments_without_the_section(
+    database_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = PollingSession()
+    monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
+    sweeper = SweeperProbe()
+    monkeypatch.setattr(Sweeper, "run_forever", sweeper.run)
+
+    async def no_store(*args: Any) -> None:
+        raise AssertionError("no object store without [attachments]")
+
+    monkeypatch.setattr(alfred.app.S3Store, "open", no_store)
+    agents: list[dict[str, Any]] = []
+    dispatchers: list[dict[str, Any]] = []
+    real_agent, real_dispatcher = alfred.app.Agent, alfred.app.make_dispatcher
+
+    def record_agent(*args: Any, **kwargs: Any) -> Any:
+        agents.append(kwargs)
+        return real_agent(*args, **kwargs)
+
+    def record_dispatcher(*args: Any, **kwargs: Any) -> Any:
+        dispatchers.append(kwargs)
+        return real_dispatcher(*args, **kwargs)
+
+    monkeypatch.setattr(alfred.app, "Agent", record_agent)
+    monkeypatch.setattr(alfred.app, "make_dispatcher", record_dispatcher)
+    with caplog.at_level("INFO", logger="alfred.app"):
+        task = asyncio.create_task(alfred.app.serve(serve_config(database_url, free_port())))
+        await asyncio.wait_for(sweeper.started.wait(), 5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, 10)
+
+    assert AttachmentTools not in [type(t) for t in agents[0]["toolsets"]]
+    assert agents[0]["attachments"] is None
+    assert dispatchers[0]["intake"] is None
+    assert "attachments off" in caplog.text

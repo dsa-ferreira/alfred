@@ -23,6 +23,7 @@ the first one that handles a name wins a clash.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections.abc import Sequence
@@ -49,9 +50,26 @@ class TurnInput:
 
 
 @dataclass(frozen=True)
+class ModelImage:
+    """An image ready for the model: already scaled down and encoded (change add-attachments)."""
+
+    data: bytes
+    mime: str  # image/jpeg or image/png
+
+    def data_url(self) -> str:
+        return f"data:{self.mime};base64,{base64.b64encode(self.data).decode('ascii')}"
+
+    def part(self) -> dict[str, Any]:
+        """The chat-completions content part that carries it."""
+        return {"type": "image_url", "image_url": {"url": self.data_url()}}
+
+
+@dataclass(frozen=True)
 class ToolOutcome:
     ok: bool
     text: str
+    # Sent to the model with the text, as image parts of the tool message (design D5).
+    images: tuple[ModelImage, ...] = ()
 
 
 def parse_arguments(raw: str | dict[str, Any] | None) -> dict[str, Any] | str:

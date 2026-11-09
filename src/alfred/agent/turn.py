@@ -51,6 +51,7 @@ from alfred.agent.brains import Brain, Brains
 from alfred.agent.context import context_sizes, largest_tools
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.agent.prompts import brain_line, system_prompt
+from alfred.attachments.inline import ImageCache, InlineAttachments
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
 from alfred.history import History, stamped, strip_stamp, to_messages
@@ -142,6 +143,8 @@ class _Turn:
     opened: list[OpenToolset]
     definitions: list[dict[str, Any]]
     notes: list[str]
+    # The turn's attachment images, kept across attempts (change add-attachments).
+    images: ImageCache | None = None
 
 
 class Agent:
@@ -154,10 +157,12 @@ class Agent:
         *,
         toolsets: Sequence[Toolset] = (),
         brains: Brains | None = None,
+        attachments: InlineAttachments | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
-        self._brains = brains or Brains(config.ai.model, config.ai.models)
+        self._attachments = attachments
+        self._brains = brains or Brains.from_config(config.ai)
         self._model = model
         self._history = history
         self._sessions = sessions
@@ -177,6 +182,7 @@ class Agent:
             opened,
             [d for t in opened for d in t.definitions],
             [n.text for t in opened for n in t.prompt_notes],
+            self._attachments.new_cache() if self._attachments is not None else None,
         )
 
         fallback_notice: str | None = None
@@ -236,7 +242,10 @@ class Agent:
                 ),
             }
         )
-        state.messages += to_messages(entries, self._zone)
+        inline = {}
+        if self._attachments is not None and this.images is not None and turn.kind == "owner":
+            inline = await self._attachments.build(entries, vision=brain.vision, cache=this.images)
+        state.messages += to_messages(entries, self._zone, inline)
         if turn.kind == "ask":
             ask = f"[ask:{turn.source}] {turn.text}"
             state.messages.append({"role": "user", "content": stamped(ask, now, self._zone)})
@@ -268,9 +277,7 @@ class Agent:
             state.messages.append(reply.assistant_message())
             for call in reply.tool_calls:
                 outcome = await self._run_tool(this, call, state)
-                state.messages.append(
-                    {"role": "tool", "tool_call_id": call.id, "content": outcome.text}
-                )
+                state.messages.append(tool_message(call.id, outcome))
 
         raise TurnFailed(
             f"stopped after {cfg.ai.max_requests_per_turn} model requests",
@@ -330,7 +337,7 @@ class Agent:
     ) -> None:
         arguments = parse_arguments(call.arguments)
         stored: Any = arguments if isinstance(arguments, dict) else {"_raw": call.arguments}
-        excerpt = outcome.text[:EXCERPT_CHARS]
+        excerpt = outcome.text[:EXCERPT_CHARS] + images_note(outcome)
         log.info(
             "turn %s tool call #%d %s %s -> %s: %s",
             turn.queue_item_id,
@@ -351,3 +358,17 @@ class Agent:
                     result_excerpt=excerpt,
                 )
             )
+
+
+def tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:
+    """The result for the model; with images, a list of parts (change add-attachments, D5)."""
+    if not outcome.images:
+        return {"role": "tool", "tool_call_id": call_id, "content": outcome.text}
+    parts = [{"type": "text", "text": outcome.text}, *(i.part() for i in outcome.images)]
+    return {"role": "tool", "tool_call_id": call_id, "content": parts}
+
+
+def images_note(outcome: ToolOutcome) -> str:
+    """`` [1 image]``: what the excerpt keeps of a result's images, never their data."""
+    n = len(outcome.images)
+    return f" [{n} image{'' if n == 1 else 's'}]" if n else ""

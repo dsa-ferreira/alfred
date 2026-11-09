@@ -7,8 +7,8 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import SendMessage, TelegramMethod
-from aiogram.types import Chat, Message, Update
+from aiogram.methods import GetFile, SendMessage, TelegramMethod
+from aiogram.types import Chat, File, Message, Update
 
 OWNER = 42
 TOKEN = "123456:TEST-token"
@@ -20,6 +20,9 @@ class FakeSession(BaseSession):
         self.requests: list[TelegramMethod[Any]] = []
         # Called with each request; may raise to simulate Telegram errors.
         self.on_request: Callable[[TelegramMethod[Any]], None] | None = None
+        # Files the owner sent, by file_id, for getFile and downloads.
+        self.files: dict[str, bytes] = {}
+        self.downloaded: list[str] = []  # the URLs streamed
 
     # Signature fixed by BaseSession, including its ``timeout`` parameter.
     async def make_request(  # type: ignore[no-untyped-def]
@@ -31,6 +34,14 @@ class FakeSession(BaseSession):
         self.requests.append(method)
         if self.on_request is not None:
             self.on_request(method)
+        if isinstance(method, GetFile):
+            data = self.files.get(method.file_id)
+            return File(
+                file_id=method.file_id,
+                file_unique_id=method.file_id,
+                file_size=None if data is None else len(data),
+                file_path=f"documents/{method.file_id}",
+            )
         if isinstance(method, SendMessage):
             return Message(
                 message_id=len(self.requests),
@@ -40,9 +51,16 @@ class FakeSession(BaseSession):
             )
         return True
 
-    async def stream_content(self, *args: Any, **kwargs: Any) -> AsyncGenerator[bytes]:
-        raise NotImplementedError
-        yield b""
+    async def stream_content(  # type: ignore[override]
+        self, url: str, *args: Any, **kwargs: Any
+    ) -> AsyncGenerator[bytes]:
+        self.downloaded.append(url)
+        file_id = url.rsplit("/", 1)[-1]
+        if file_id not in self.files:
+            raise RuntimeError(f"Telegram refused {url}")  # quotes the URL, token and all
+        data = self.files[file_id]
+        for start in range(0, len(data), 1000):
+            yield data[start : start + 1000]
 
     async def close(self) -> None:
         pass

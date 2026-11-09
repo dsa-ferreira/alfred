@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -14,7 +15,7 @@ from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona, is_no_rep
 from alfred.agent.turn import Agent, TurnFailed
 from alfred.history import STAMP, History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.base import AttemptContext, LocalToolset, TurnInput
+from alfred.tools.base import AttemptContext, LocalToolset, ModelImage, ToolOutcome, TurnInput
 from alfred.tools.brains import SET_MODEL
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
@@ -504,3 +505,49 @@ async def test_other_brackets_are_kept(sessions: async_sessionmaker[AsyncSession
     model = FakeModel([text("Saved [draft] for later.")])
     result = await agent(sessions, model).run(await owner_turn(sessions, "save it"))
     assert result.reply == "Saved [draft] for later."
+
+
+# --- images in tool results (change add-attachments, design D5) -----------------
+
+
+class Camera(LocalToolset):
+    """A tool whose result carries images."""
+
+    definitions = [
+        {"type": "function", "function": {"name": "snap", "parameters": {"type": "object"}}}
+    ]
+
+    def __init__(self, count: int = 1) -> None:
+        self.count = count
+
+    async def call(self, name: str, raw_arguments: object, attempt: AttemptContext) -> ToolOutcome:
+        images = tuple(ModelImage(b"img%d" % i, "image/png") for i in range(self.count))
+        return ToolOutcome(True, "Here it is.", images)
+
+
+@pytest.mark.parametrize(("count", "note"), [(1, "[1 image]"), (2, "[2 images]")])
+async def test_tool_result_with_images(
+    sessions: async_sessionmaker[AsyncSession], count: int, note: str
+) -> None:
+    model = FakeModel([calls(("snap", "{}")), text("A red square, sir.")])
+    a = Agent(make_config(), model, History(sessions), sessions, toolsets=[Camera(count)])
+    await a.run(await owner_turn(sessions, "look"))
+    result = model.requests[1][0][-1]
+    assert result["role"] == "tool" and result["tool_call_id"] == "c0"
+    assert result["content"][0] == {"type": "text", "text": "Here it is."}
+    assert [p["image_url"]["url"] for p in result["content"][1:]] == [
+        f"data:image/png;base64,{base64.b64encode(b'img%d' % i).decode()}" for i in range(count)
+    ]
+    (row,) = await tool_rows(sessions)
+    assert row.result_excerpt == f"Here it is. {note}"
+    assert "base64" not in row.result_excerpt
+
+
+async def test_tool_result_without_images_stays_text(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(("snap", "{}")), text("Nothing there.")])
+    a = Agent(make_config(), model, History(sessions), sessions, toolsets=[Camera(0)])
+    await a.run(await owner_turn(sessions, "look"))
+    assert model.requests[1][0][-1]["content"] == "Here it is."
+    assert (await tool_rows(sessions))[0].result_excerpt == "Here it is."

@@ -4,6 +4,10 @@ A transcript is one line per entry: ``Owner:``, ``alfred:``,
 ``[notice:<service>]``, ``[ask:<service>]``, ``[reminder:#<id>]`` and, for a recall, only
 ``[recalled #<id> "<title>"]``, so a recalled conversation is never summarised
 or recalled again as part of the conversation it was brought into.
+
+An owner line ends with the handles of its attachments (change add-attachments,
+design D11), so a recalled conversation's files can be opened again; never
+image data or PDF text.
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+from alfred.attachments.handles import AttachmentRef, handle, with_handles
 
 SUMMARY_PROMPT = """\
 You title and summarise a finished chat between the owner and alfred, their \
@@ -33,6 +39,8 @@ class TranscriptEntry:
     recalled_id: int | None = None
     recalled_title: str | None = None
     reminder_id: int | None = None
+    entry_id: int | None = None
+    attachments: tuple[AttachmentRef, ...] = ()
 
 
 def render(entries: list[TranscriptEntry]) -> str:
@@ -43,7 +51,7 @@ def render(entries: list[TranscriptEntry]) -> str:
 def _line(e: TranscriptEntry) -> str:
     match e.kind:
         case "owner":
-            return f"Owner: {e.text}"
+            return f"Owner: {with_handles(e.text, (handle(a) for a in e.attachments))}"
         case "assistant" | "ask_reply" | "reminder_reply":
             return f"alfred: {e.text}"
         case "reminder":

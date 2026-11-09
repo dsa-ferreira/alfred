@@ -4,7 +4,10 @@ alfred is a Telegram bot that is its owner's two-way channel to the local AI
 and the homelab services.
 
 - **Owner → AI.** Every text message the owner sends the bot goes to the AI
-  (Ollama on `ai.lan` by default, or any OpenAI-compatible server). alfred runs
+  (Ollama on `ai.lan` by default, or any OpenAI-compatible server), and so do
+  photos, image files and PDFs when [attachments](#attachments) are
+  configured. Voice notes, stickers, videos and other files get a short
+  notice instead. alfred runs
   the agent loop itself: it offers the model the tools of the configured MCP
   servers (mcparr, cookbook, ...), runs the tool calls, and sends back the
   final answer, formatted for Telegram.
@@ -72,12 +75,13 @@ reported together and alfred exits. Error messages never contain secret values.
 | `telegram.owner_user_id` | integer | required | Your Telegram user ID. Only this user's private chat with the bot is answered; notices and `/ask` answers go to this user. |
 | `ai.base_url` | URL | `"http://ai.lan"` | OpenAI-compatible server. alfred posts to `{base_url}/v1/chat/completions`. |
 | `ai.model` | string | `"gemma4:26b-a4b-it-qat"` | Model name sent with every request, and the brain alfred starts on. |
-| `ai.models` | table | none | Brains the owner can switch between from the chat ("set your brain to bonsai"), as `alias = "model tag"` on `ai.base_url`. `ai.model` is a brain too, under its tag when no alias names it. The choice lasts until a restart; a brain that fails is dropped for `ai.model`. Aliases are lowercase letters, digits and hyphens. Summaries always use `memory.summary_model`. |
+| `ai.models` | table | none | Brains the owner can switch between from the chat ("set your brain to bonsai"), as `alias = "model tag"` on `ai.base_url`, or `alias = { model = "model tag", vision = true }` for a model that can see images. `vision` defaults to `false`; only brains with vision are sent images (see [Attachments](#attachments)). `ai.model` is a brain too, under its tag when no alias names it. The choice lasts until a restart; a brain that fails is dropped for `ai.model`. Aliases are lowercase letters, digits and hyphens. Summaries always use `memory.summary_model`. |
+| `ai.vision` | boolean | `false` | Whether `ai.model` can see images, when no `ai.models` alias names it. An alias's own `vision` applies otherwise. |
 | `ai.request_timeout_s` | number | `300` | Timeout of one model request, in seconds. Long enough for the AI server to wake and load the model. |
 | `ai.max_requests_per_turn` | integer | `12` | Model requests allowed in one turn. A turn that needs more is stopped and the owner is told. |
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
-| `ai.owner_address` | string | `"sir"` | How alfred addresses you: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, text only). Used as written. |
+| `ai.owner_address` | string | `"sir"` | How alfred addresses you: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, unsupported messages). Used as written. |
 | `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt, the times on history messages, `alfred_date` and the dates of conversation search use it. An unknown name stops alfred at startup. |
 | `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
@@ -98,6 +102,15 @@ reported together and alfred exits. Error messages never contain secret values.
 | `web.fetch_max_bytes` | integer | `5000000` | Largest page download, in bytes. A bigger page is refused as too large. |
 | `reminders.default_time` | `HH:MM` | `"09:00"` | Time of a reminder set for a date with no clock time ("on Friday"), in `ai.timezone`. A value that is not a 24-hour `HH:MM` stops alfred at startup. |
 | `reminders.check_interval_s` | number | `30` | Seconds between checks for due reminders, at most `60`. Checks run on the clock, at every whole minute and every `check_interval_s` within it (`:00` and `:30` for 30), so a reminder is queued at the start of its minute. Checking makes no AI requests. |
+| `attachments.endpoint_url` | URL | required in `[attachments]` | S3-compatible endpoint (the homelab's Garage) where photos, image files and PDFs are kept. Without an `[attachments]` section alfred reads text only and needs no object store. |
+| `attachments.bucket` | string | required in `[attachments]` | Bucket for the files, under `attachments/<random id>`. |
+| `attachments.region` | string | `"garage"` | Region name used to sign requests; Garage's default is `garage`. |
+| `attachments.max_bytes` | integer | `20000000` | Largest file accepted, in bytes. At most `20000000`, the largest file a Telegram bot can download. |
+| `attachments.inline_turns` | integer | `1` | How many of the newest owner messages send their images (and a PDF's page 1) to the model. Older attachments reach it as a handle it can open with a tool. |
+| `attachments.first_page_chars` | integer | `4000` | Characters of a PDF's page 1 text sent with the message that brings it. |
+| `attachments.read_chars` | integer | `8000` | Characters of PDF text in one `alfred_read_document` result. Not affected by `ai.tool_result_max_chars`. |
+| `attachments.image_max_px` | integer | `1536` | Longer side, in pixels, of images and rendered PDF pages sent to the model. The stored file is not changed. |
+| `attachments.album_wait_s` | number | `2` | Seconds to wait for the rest of a Telegram album; the whole album is queued as one message. |
 | `mcp.list_timeout_s` | number | `10` | Time allowed for each MCP server's tool list at the start of a turn. A server that doesn't answer is unavailable for that turn. |
 | `mcp.call_timeout_s` | number | `60` | Time allowed for one MCP tool call. |
 | `mcp.instructions_max_chars` | integer | `2000` | Each MCP server's instructions are cut to this many characters (with a `[truncated]` note and a logged warning) before they reach the model. |
@@ -124,6 +137,8 @@ with `ALFRED_` and use `A-Z`, `0-9` and `_`.
 | `ALFRED_CONFIG` | no | Path of the TOML file. Default `alfred.toml` in the working directory. |
 | `ALFRED_TELEGRAM_BOT_TOKEN` | yes | Bot token from BotFather. |
 | `ALFRED_DATABASE_URL` | yes | Postgres URL, e.g. `postgresql://alfred:<password>@postgres.lan/alfred`. `postgres://` and `postgresql://` are switched to the psycopg 3 driver. `alfred migrate` needs only this one. |
+| `ALFRED_S3_ACCESS_KEY_ID` | with `[attachments]` | Access key ID of the object store key, limited to `attachments.bucket`. |
+| `ALFRED_S3_SECRET_ACCESS_KEY` | with `[attachments]` | Its secret key. Never logged. |
 | the `token_env` of each service | yes | Bearer token the service sends to `/notify` and `/ask`. |
 | the `token_env` of each MCP server | yes | Bearer token alfred sends to that MCP server. |
 
@@ -396,6 +411,63 @@ Your reminder, due at 17:00: "call mum". My apologies for the plain delivery, si
 A delivered reminder and what you were told are kept in the conversation, so
 you can answer it: "snooze 15 minutes" sets a new reminder with the same
 text. Recurring reminders aren't supported.
+
+## Attachments
+
+With an `[attachments]` section, the owner can send photos, images as files
+(JPEG, PNG, WebP, GIF) and PDFs, each with an optional caption, and ask about
+them over several messages ("what's the total?", then "and the date?").
+Without the section alfred reads text only, as before, and needs no object
+store.
+
+- **What is refused.** Files over `attachments.max_bytes` (never downloaded),
+  images that can't be decoded, and PDFs that are damaged, need a password or
+  have no pages each get a short notice saying why, and nothing is queued for
+  that message. Voice notes, stickers, videos and other files get "I can read
+  text, images and PDFs". If a file can't be downloaded or stored, alfred
+  asks for it again.
+- **Albums.** Photos sent as one Telegram album become one message with all
+  of them attached, in album order, with the album's caption. alfred waits
+  `attachments.album_wait_s` after the last part before queueing it. A part
+  it refuses gets its own notice; the rest is still queued.
+- **Storage.** Each file goes to the bucket under `attachments/<random id>`
+  (never its file name). Its type, size, file name and each PDF page's text
+  are in Postgres. Files are kept as long as their conversation, archived
+  conversations included. Objects that no row refers to (left by a crash
+  between upload and the database write) are deleted after a day by a
+  background task that runs at startup and then daily.
+- **What the model sees.** Every attachment has a number and reaches the
+  model as a handle in the owner's message:
+
+  ```
+  [Mon 9 Nov 14:05] what's the total? [attachment #7: image "receipt.jpg"]
+  [Mon 9 Nov 14:09] [attachment #9: PDF "invoice.pdf", 12 pages, text]
+  ```
+
+  On the turn it arrives (`attachments.inline_turns`), an image is also sent
+  as an image, and a PDF with up to `attachments.first_page_chars` of page
+  1's text, plus page 1 as an image when it has no text (a scan). Images are
+  turned upright, scaled down to `attachments.image_max_px` and sent as JPEG
+  (PNG when transparent); the stored file is not changed. Later turns carry
+  only the handle, so a long conversation with many files costs no more per
+  turn.
+- **Tools.** On owner turns the model gets `alfred_read_document` (a PDF's
+  text by page range, `--- page N ---` blocks up to
+  `attachments.read_chars`, then where to continue) and, on a brain with
+  vision, `alfred_view_attachment` (an image, or one PDF page rendered as an
+  image). Both only reach attachments of the current conversation or of a
+  conversation recalled into it; recalled transcripts keep the handles.
+- **Brains without vision.** Only brains with `vision = true` (see
+  `ai.models` and `ai.vision`) are sent images. Other brains get the handle
+  marked `(this brain can't see images)`, a PDF's page 1 text, and
+  `alfred_read_document`, but no `alfred_view_attachment`. A turn that falls
+  back to such a brain stops sending images too.
+- **Context size.** The context line counts image parts as images, not as
+  characters of base64: `history 12 entries 4210 chars, 1 image`.
+
+The bucket and a key limited to it are created on the object store; alfred
+needs `ALFRED_S3_ACCESS_KEY_ID` and `ALFRED_S3_SECRET_ACCESS_KEY`. Postgres
+backups don't cover the files: back up the bucket too.
 
 ## Calculator and dates
 

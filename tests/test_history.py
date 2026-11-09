@@ -6,10 +6,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.attachments.handles import AttachmentRef, handle
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.models import Conversation, Entry
-from alfred.history import STAMP, History, HistoryEntry, strip_stamp, to_messages
+from alfred.history import STAMP, History, HistoryEntry, Inline, strip_stamp, to_messages
 from alfred.reminders.store import Reminders
+from alfred.tools.base import ModelImage
+from tests.helpers import image_file, owner_with_files, pdf_file
 
 
 def unstamped(messages: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -72,7 +75,8 @@ async def test_archived_conversations_are_kept(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    old = await history.append("owner", "old topic")
+    await history.append("owner", "old topic")
+    old = await history.current_conversation_id()
     await history.append("assistant", "ok")
     reset = await history.reset()
     assert reset.archived_id == old
@@ -94,8 +98,8 @@ async def test_notice_after_reset_lands_in_new_conversation(
     history = History(sessions)
     await history.append("owner", "before")
     new = (await history.reset()).new_id
-    landed = await history.append("notice", "backup done", source="backup")
-    assert landed == new
+    await history.append("notice", "backup done", source="backup")
+    assert await history.current_conversation_id() == new
     assert [e.text for e in await history.recent(30)] == ["backup done"]
 
 
@@ -222,9 +226,8 @@ async def test_reminder_set_in_an_archived_conversation(
     reset = await history.reset()
     assert reset.archived_id == set_in
 
-    delivered_in = await history.append("reminder", "call mum", reminder_id=reminder_id)
+    await history.append("reminder", "call mum", reminder_id=reminder_id)
     await history.append("reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id)
-    assert delivered_in == reset.new_id
     async with sessions() as session:
         rows = (
             await session.execute(
@@ -301,3 +304,78 @@ def test_strip_stamp() -> None:
     assert strip_stamp("[Mon 9 Nov 14:06] [notice:x] y") == "[notice:x] y"
     assert strip_stamp("Saved [draft] for later.") == "Saved [draft] for later."
     assert strip_stamp("At [Mon 9 Nov 14:06] it was.") == "At [Mon 9 Nov 14:06] it was."
+
+
+# --- Attachment handles (change add-attachments, design D4) -----------------------
+
+INVOICE_P1 = "Invoice 2026-118 from Lisbon Plumbing, total 240.00 EUR"
+
+
+async def test_pdf_handle(sessions: async_sessionmaker[AsyncSession]) -> None:
+    pdf = pdf_file([INVOICE_P1, *(f"page {n} text" for n in range(2, 13))])
+    await owner_with_files(sessions, "file this", [pdf])
+    (entry,) = await History(sessions).recent(30)
+    (ref,) = entry.attachments
+    assert (ref.kind, ref.page_count, ref.first_page) == ("pdf", 12, INVOICE_P1)
+    assert unstamped(to_messages([entry])) == [
+        {
+            "role": "user",
+            "content": f'file this [attachment #{ref.id}: PDF "invoice.pdf", 12 pages, text]',
+        }
+    ]
+
+
+async def test_scanned_pdf_handle_without_caption(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await owner_with_files(sessions, "", [pdf_file(["12"], name=None)])
+    (entry,) = await History(sessions).recent(30)
+    assert unstamped(to_messages([entry])) == [
+        {"role": "user", "content": "[attachment #1: PDF, 1 page, scanned]"}
+    ]
+
+
+async def test_owner_entry_with_two_images(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    await history.append("owner", "earlier")
+    await owner_with_files(
+        sessions,
+        "which is cheapest?",
+        [image_file("attachments/a", "shop-a.jpg"), image_file("attachments/b")],
+    )
+    await history.append("assistant", "The second.")
+    entries = await history.recent(30)
+    assert [len(e.attachments) for e in entries] == [0, 2, 0]
+    assert [r.object_key for r in entries[1].attachments] == ["attachments/a", "attachments/b"]
+    assert unstamped(to_messages(entries)) == [
+        {"role": "user", "content": "earlier"},
+        {
+            "role": "user",
+            "content": 'which is cheapest? [attachment #1: image "shop-a.jpg"] '
+            "[attachment #2: image]",
+        },
+        {"role": "assistant", "content": "The second."},
+    ]
+
+
+async def test_inline_entry_gets_image_parts(sessions: async_sessionmaker[AsyncSession]) -> None:
+    _, entry_id = await owner_with_files(sessions, "what's this?", [image_file()])
+    (entry,) = await History(sessions).recent(30)
+    image = ModelImage(b"jpeg", "image/jpeg")
+    (message,) = to_messages(
+        [entry], inline={entry_id: Inline(["[attachment #1: image]"], [image])}
+    )
+    text_part, image_part = message["content"]
+    assert strip_stamp(text_part["text"]) == "what's this? [attachment #1: image]"
+    assert STAMP.match(text_part["text"])
+    assert image_part == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,anBlZw=="},
+    }
+
+
+def test_handle_note() -> None:
+    ref = AttachmentRef(7, "image", "image/jpeg", "attachments/x", "receipt.jpg")
+    assert handle(ref, "this brain can't see images") == (
+        '[attachment #7: image "receipt.jpg" (this brain can\'t see images)]'
+    )

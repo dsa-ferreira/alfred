@@ -28,7 +28,15 @@ from alfred.tools.brains import SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH, WebTools
-from tests.helpers import FakeEmbedder, FakeModel, add_queue_item, calls, make_agent, make_config
+from tests.helpers import (
+    FakeEmbedder,
+    FakeModel,
+    FakeStore,
+    add_queue_item,
+    calls,
+    make_agent,
+    make_config,
+)
 from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook, make_mcparr
 from tests.mcp.servers import config as server_config
 from tests.web.test_fetch import Resolver
@@ -61,6 +69,7 @@ def agent(
     web: WebTools | None = None,
     brains: Brains | None = None,
     reminders: ReminderTools | None = None,
+    store: FakeStore | None = None,
     now: datetime | Callable[[], datetime] = NOW,
     **config: object,
 ) -> Agent:
@@ -76,6 +85,7 @@ def agent(
         web=web,
         reminders=reminders,
         brains=brains,
+        store=store,
         now=now if callable(now) else lambda: now,
     )
 

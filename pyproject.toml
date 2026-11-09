@@ -19,6 +19,9 @@ dependencies = [
     "tzdata>=2026.6",
     "trafilatura>=2.3.1",
     "pint>=0.26.2",
+    "aiobotocore>=3.10.0",
+    "pypdfium2>=5.15.2",
+    "pillow>=13.0.0",
 ]
 
 [project.scripts]
@@ -31,6 +34,7 @@ dev = [
     "respx",
     "testcontainers[postgres]",
     "ruff",
+    "moto[s3,server]>=5.2.5",
 ]
 
 [build-system]

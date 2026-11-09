@@ -17,7 +17,33 @@ def _partial(partial: bool) -> str:
 
 
 def text_only(address: str) -> str:
+    """Anything but text, when attachments are not configured."""
     return f"I'm afraid I can only read text messages, {address}."
+
+
+# --- attachments (change add-attachments, design D12) ---------------------------
+
+
+def unsupported(address: str) -> str:
+    """A message type alfred can't read (voice, sticker, other files...)."""
+    return f"I can read text, images and PDFs, {address}."
+
+
+def too_large(address: str, limit_bytes: int) -> str:
+    return (
+        f"I'm afraid that file is too large; I accept files up to "
+        f"{limit_bytes / 1_000_000:g} MB, {address}."
+    )
+
+
+def unreadable(address: str, what: str = "file") -> str:
+    """An image that can't be decoded, or a damaged, locked or empty PDF (``what``)."""
+    return f"I'm afraid I can't open that {what}, {address}."
+
+
+def not_kept(address: str) -> str:
+    """Downloading or storing a file failed; nothing was queued."""
+    return f"I'm afraid I couldn't keep that file. Kindly send it again, {address}."
 
 
 def failed(address: str, partial: bool = False) -> str:

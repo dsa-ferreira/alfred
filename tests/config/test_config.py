@@ -446,7 +446,10 @@ def test_brains_default_to_none(tmp_path: Path) -> None:
 def test_brains_are_read(tmp_path: Path) -> None:
     text = MINIMAL + '\n[ai.models]\nsome = "some-model"\nbonsai = "bonsai:8b"\n'
     config = load_config(env_for(write(tmp_path, text)))
-    assert config.ai.models == {"some": "some-model", "bonsai": "bonsai:8b"}
+    assert {a: (e.model, e.vision) for a, e in config.ai.models.items()} == {
+        "some": ("some-model", False),
+        "bonsai": ("bonsai:8b", False),
+    }
 
 
 @pytest.mark.parametrize("alias", ["Gemma", "-gemma", "gem_ma"])
@@ -465,7 +468,7 @@ def test_same_brain_tag_twice_names_both_aliases(tmp_path: Path) -> None:
 
 def test_empty_brain_tag_is_named(tmp_path: Path) -> None:
     found = problems(MINIMAL + '\n[ai.models]\nbonsai = ""\n', tmp_path)
-    assert any(p.startswith("ai.models.bonsai:") for p in found), found
+    assert any(p.startswith("ai.models.bonsai") for p in found), found
 
 
 def test_alias_clashing_with_the_unaliased_startup_brain(tmp_path: Path) -> None:
@@ -499,3 +502,116 @@ def test_invalid_default_time(tmp_path: Path, value: str) -> None:
 def test_check_interval_between_0_and_60(tmp_path: Path, value: str) -> None:
     found = problems(MINIMAL + f"\n[reminders]\ncheck_interval_s = {value}\n", tmp_path)
     assert any(p.startswith("reminders.check_interval_s:") for p in found), found
+
+
+# --- Vision (change add-attachments) ----------------------------------------------
+
+
+def test_vision_declared(tmp_path: Path) -> None:
+    text = MINIMAL + (
+        '\n[ai.models]\ngemma = { model = "gemma4:26b-a4b-it-qat", vision = true }\n'
+        'bonsai = "bonsai:8b"\n'
+    )
+    config = load_config(env_for(write(tmp_path, text)))
+    assert config.ai.models["gemma"].vision is True
+    assert config.ai.models["gemma"].model == "gemma4:26b-a4b-it-qat"
+    assert config.ai.models["bonsai"].vision is False
+
+
+def test_vision_defaults_to_false(tmp_path: Path) -> None:
+    assert load_config(env_for(write(tmp_path, MINIMAL))).ai.vision is False
+
+
+def test_startup_model_without_an_alias_declares_vision(tmp_path: Path) -> None:
+    text = MINIMAL.replace('model = "some-model"', 'model = "qwen3:14b"\nvision = true')
+    config = load_config(env_for(write(tmp_path, text)))
+    assert config.ai.vision is True
+
+
+def test_same_tag_twice_one_as_a_table(tmp_path: Path) -> None:
+    found = problems(
+        MINIMAL + '\n[ai.models]\ngemma = "gemma4:26b-a4b-it-qat"\n'
+        'g4 = { model = "gemma4:26b-a4b-it-qat", vision = true }\n',
+        tmp_path,
+    )
+    assert any(p.startswith("ai.models:") and "'gemma'" in p and "'g4'" in p for p in found)
+
+
+def test_unknown_key_in_a_brain_table(tmp_path: Path) -> None:
+    found = problems(
+        MINIMAL + '\n[ai.models]\ngemma = { model = "gemma4:26b-a4b-it-qat", vison = true }\n',
+        tmp_path,
+    )
+    assert found == ["ai.models.gemma.vison: unknown key"], found
+
+
+def test_brain_table_needs_a_model(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[ai.models]\ngemma = { vision = true }\n", tmp_path)
+    assert found == ["ai.models.gemma.model: required but not set"], found
+
+
+# --- Attachments (change add-attachments) ----------------------------------------
+
+ATTACHMENTS = '\n[attachments]\nendpoint_url = "http://garage.lan:3900"\nbucket = "alfred"\n'
+S3 = {"ALFRED_S3_ACCESS_KEY_ID": "GKkey-id", "ALFRED_S3_SECRET_ACCESS_KEY": "s3-secret-value"}
+
+
+def test_attachments_off_by_default(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL)))
+    assert config.attachments is None
+    assert config.s3_key is None
+
+
+def test_attachment_defaults(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL + ATTACHMENTS), **S3))
+    a = config.attachments
+    assert a is not None
+    assert (a.endpoint_url, a.bucket, a.region) == ("http://garage.lan:3900", "alfred", "garage")
+    assert a.max_bytes == 20_000_000
+    assert a.inline_turns == 1
+    assert a.first_page_chars == 4000
+    assert a.read_chars == 8000
+    assert a.image_max_px == 1536
+    assert a.album_wait_s == 2
+    assert config.s3_key is not None
+    assert config.s3_key.access_key_id.get_secret_value() == "GKkey-id"
+    assert config.s3_key.secret_access_key.get_secret_value() == "s3-secret-value"
+
+
+def test_attachment_custom_values(tmp_path: Path) -> None:
+    text = (
+        MINIMAL
+        + ATTACHMENTS
+        + (
+            'region = "eu"\nmax_bytes = 1000\ninline_turns = 2\nfirst_page_chars = 10\n'
+            "read_chars = 20\nimage_max_px = 800\nalbum_wait_s = 0.5\n"
+        )
+    )
+    a = load_config(env_for(write(tmp_path, text), **S3)).attachments
+    assert a is not None
+    assert (a.region, a.max_bytes, a.inline_turns) == ("eu", 1000, 2)
+    assert (a.first_page_chars, a.read_chars, a.image_max_px, a.album_wait_s) == (10, 20, 800, 0.5)
+
+
+def test_size_limit_above_telegrams(tmp_path: Path) -> None:
+    found = problems(MINIMAL + ATTACHMENTS + "max_bytes = 50000000\n", tmp_path, **S3)
+    assert any(p.startswith("attachments.max_bytes:") and "20 MB" in p for p in found), found
+
+
+def test_attachments_need_endpoint_and_bucket(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[attachments]\n", tmp_path, **S3)
+    assert "attachments.endpoint_url: required but not set" in found
+    assert "attachments.bucket: required but not set" in found
+
+
+def test_attachments_invalid_endpoint(tmp_path: Path) -> None:
+    text = MINIMAL + ATTACHMENTS.replace("http://garage.lan:3900", "garage.lan")
+    found = problems(text, tmp_path, **S3)
+    assert any(p.startswith("attachments.endpoint_url:") for p in found), found
+
+
+@pytest.mark.parametrize("missing", list(S3))
+def test_object_store_key_missing(tmp_path: Path, missing: str) -> None:
+    env = {k: v for k, v in S3.items() if k != missing}
+    found = problems(MINIMAL + ATTACHMENTS, tmp_path, **env)
+    assert any(p.startswith(f"{missing} is required") for p in found), found

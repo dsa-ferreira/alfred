@@ -18,6 +18,8 @@ def _chars(value: Any) -> int:
 def context_sizes(messages: list[dict[str, Any]], opened: Sequence[OpenToolset]) -> str:
     """The sizes of the system prompt, the tools by group and the history, without their text.
 
+    Images in the history are counted (``1 image``), never measured in characters.
+
     ``messages`` is the system prompt followed by the history (and the ask
     input), as built at the start of the attempt. Notes with a log label (a
     server's instructions) are listed inside the system prompt's size; tool
@@ -49,8 +51,29 @@ def context_sizes(messages: list[dict[str, Any]], opened: Sequence[OpenToolset])
     if by_group:
         line += " (" + ", ".join(f"{g} {n}" for g, n in by_group.items()) + ")"
 
-    history = messages[1:]
-    return line + f"; history {len(history)} entries {_chars(history)} chars"
+    history, images = _without_images(messages[1:])
+    line += f"; history {len(history)} entries {_chars(history)} chars"
+    if images:
+        line += f", {images} image{'' if images == 1 else 's'}"
+    return line
+
+
+def _without_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """The messages with each image part's data left out, and how many there were.
+
+    Images are counted, not measured: their base64 says nothing about what
+    they cost the model (change add-attachments, design D11).
+    """
+    images = 0
+    kept: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            parts = [p for p in content if p.get("type") != "image_url"]
+            images += len(content) - len(parts)
+            message = {**message, "content": parts}
+        kept.append(message)
+    return kept, images
 
 
 def largest_tools(definitions: list[dict[str, Any]], count: int = LARGEST_TOOLS) -> str:

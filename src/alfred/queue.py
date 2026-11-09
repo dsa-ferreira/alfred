@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -29,9 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.prompts import is_no_reply
 from alfred.agent.turn import TurnFailed, TurnResult
+from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
-from alfred.db.models import QueueItem
+from alfred.db.models import Attachment, AttachmentPage, QueueItem
 from alfred.history import History
 from alfred.reminders.store import ReminderRow
 from alfred.tools.base import TurnInput
@@ -73,10 +74,43 @@ class Queue:
         self._sessions = sessions
         self.signal = asyncio.Event()
 
-    async def enqueue_owner(self, text: str, telegram_message_id: int | None = None) -> int:
-        return await self._insert(
-            QueueItem(kind="owner", text=text, telegram_message_id=telegram_message_id)
-        )
+    async def enqueue_owner(
+        self,
+        text: str,
+        telegram_message_id: int | None = None,
+        attachments: Sequence[NewAttachment] = (),
+    ) -> int:
+        """Queue an owner message, with its attachments, in one transaction.
+
+        The files must already be in the object store: the commit is what
+        makes the message exist (change add-attachments, design D2).
+        """
+        async with self._sessions.begin() as session:
+            item = QueueItem(kind="owner", text=text, telegram_message_id=telegram_message_id)
+            session.add(item)
+            await session.flush()
+            for position, new in enumerate(attachments):
+                row = Attachment(
+                    queue_item_id=item.id,
+                    position=position,
+                    kind=new.kind,
+                    mime=new.mime,
+                    file_name=new.file_name,
+                    size_bytes=new.size_bytes,
+                    object_key=new.object_key,
+                    width=new.width,
+                    height=new.height,
+                    page_count=new.page_count,
+                )
+                session.add(row)
+                await session.flush()
+                session.add_all(
+                    AttachmentPage(attachment_id=row.id, page=n, text=page)
+                    for n, page in enumerate(new.pages, start=1)
+                )
+            item_id = item.id
+        self.signal.set()
+        return item_id
 
     async def enqueue_ask(self, source: str, prompt: str) -> int:
         return await self._insert(QueueItem(kind="ask", source=source, text=prompt))

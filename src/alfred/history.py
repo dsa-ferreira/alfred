@@ -8,8 +8,10 @@ it commits.
 
 from __future__ import annotations
 
+import dataclasses
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -19,9 +21,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.db.models import Conversation, Entry, Reminder
+from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
+from alfred.db.models import Attachment, Conversation, Entry, Reminder
 from alfred.memory.transcript import recall_label
 from alfred.reminders.when import format_when
+from alfred.tools.base import ModelImage
 
 EntryKind = Literal[
     "owner", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
@@ -43,6 +47,22 @@ class HistoryEntry:
     reminder_due_at: datetime | None = None
     # When the entry was recorded; stamped on user messages (change add-utility-tools, D1).
     created_at: datetime | None = None
+    entry_id: int | None = None
+    # An owner entry's files, in message order (change add-attachments, design D4).
+    attachments: tuple[AttachmentRef, ...] = ()
+
+
+@dataclass(frozen=True)
+class Inline:
+    """How an owner entry in the inline window is sent (change add-attachments, design D4).
+
+    ``handles`` replace the plain handles (a PDF's with its page 1 text, a
+    note when an image can't be shown); ``images`` follow the text as image
+    parts.
+    """
+
+    handles: list[str]
+    images: list[ModelImage] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -69,14 +89,16 @@ class History:
         queue_item_id: int | None = None,
         reminder_id: int | None = None,
     ) -> int:
-        """Add an entry to the current conversation. Returns the conversation ID.
+        """Add an entry to the current conversation. Returns the entry's ID.
 
         With ``queue_item_id``, an entry of the same kind for that item that
-        already exists is kept and nothing is added (a retried turn).
+        already exists is kept and nothing is added (a retried turn); its ID
+        is returned. An owner entry takes the attachments queued with its
+        item, in the same transaction (change add-attachments, design D2).
         """
         async with self._sessions.begin() as session:
             conversation_id = await current_id(session, lock=True)
-            await session.execute(
+            entry_id = await session.scalar(
                 insert(Entry)
                 .values(
                     conversation_id=conversation_id,
@@ -87,8 +109,20 @@ class History:
                     reminder_id=reminder_id,
                 )
                 .on_conflict_do_nothing(index_elements=["queue_item_id", "kind"])
+                .returning(Entry.id)
             )
-            return conversation_id
+            if entry_id is None:  # already recorded by an earlier attempt
+                entry_id = await session.scalar(
+                    select(Entry.id).where(Entry.queue_item_id == queue_item_id, Entry.kind == kind)
+                )
+                assert entry_id is not None
+            if kind == "owner" and queue_item_id is not None:
+                await session.execute(
+                    update(Attachment)
+                    .where(Attachment.queue_item_id == queue_item_id, Attachment.entry_id.is_(None))
+                    .values(entry_id=entry_id)
+                )
+            return entry_id
 
     async def recent(self, limit: int) -> list[HistoryEntry]:
         """The newest ``limit`` entries of the current conversation, oldest first.
@@ -124,12 +158,19 @@ class History:
                     newest.c.reminder_id,
                     Reminder.due_at,
                     newest.c.created_at,
+                    newest.c.id,
                 )
                 .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
                 .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
                 .order_by(newest.c.id)
             )
-            return [HistoryEntry(*row) for row in rows]
+            entries = [HistoryEntry(*row) for row in rows]
+            owner_ids = [e.entry_id for e in entries if e.kind == "owner" and e.entry_id]
+            refs = await refs_by_entry(session, owner_ids)
+        return [
+            dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
+            for e in entries
+        ]
 
     async def reset(self) -> Reset:
         """Archive the current conversation and start a new one."""
@@ -196,7 +237,17 @@ def strip_stamp(text_: str) -> str:
     return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
 
 
-def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[dict[str, Any]]:
+def owner_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
+    """What the owner wrote, then the handles of what they sent with it."""
+    handles = inline.handles if inline else [handle(a) for a in entry.attachments]
+    return with_handles(entry.text, handles)
+
+
+def to_messages(
+    entries: list[HistoryEntry],
+    zone: ZoneInfo = UTC_ZONE,
+    inline: Mapping[int, Inline] | None = None,
+) -> list[dict[str, Any]]:
     """Map entries to chat-completions messages.
 
     Owner messages and ask prompts are ``user`` turns (ask prompts prefixed
@@ -209,6 +260,11 @@ def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[
 
     Every ``user`` turn starts with the time its entry was recorded, before
     its label (``[Mon 9 Nov 14:05] [notice:backup] ...``); replies have none.
+
+    An owner message ends with the handles of its attachments
+    (``[attachment #7: image "receipt.jpg"]``). The owner entries in
+    ``inline`` (by entry ID) are sent as it says; with images, their content
+    is a list: the text part, then one ``image_url`` part per image.
     """
     newest_recall = max((i for i, e in enumerate(entries) if e.kind == "recall"), default=None)
     messages: list[dict[str, Any]] = []
@@ -222,7 +278,13 @@ def to_messages(entries: list[HistoryEntry], zone: ZoneInfo = UTC_ZONE) -> list[
                 else:
                     content = f"{label} Summary: {e.recalled_summary or '(no summary yet)'}"
             case "owner":
-                content = e.text
+                extra = (inline or {}).get(e.entry_id) if e.entry_id is not None else None
+                content = owner_text(e, extra)
+                if extra is not None and extra.images:
+                    text_part = {"type": "text", "text": stamped(content, e.created_at, zone)}
+                    parts = [text_part, *(image.part() for image in extra.images)]
+                    messages.append({"role": "user", "content": parts})
+                    continue
             case "ask_prompt":
                 content = f"[ask:{e.source}] {e.text}"
             case "notice":

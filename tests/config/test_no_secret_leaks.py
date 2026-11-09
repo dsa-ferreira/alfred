@@ -17,6 +17,7 @@ LEAKY = {
     "ALFRED_SERVICE_TOKEN_BACKUP": "LEAK-service-token-3",
     "ALFRED_SERVICE_TOKEN_DISK": "LEAK-service-token-3",  # duplicate of backup's
     "ALFRED_MCP_TOKEN_MCPARR": "LEAK-mcp-token-4",
+    "ALFRED_S3_SECRET_ACCESS_KEY": "LEAK-s3-secret-5",
 }
 
 INVALID_CONFIGS = {
@@ -27,6 +28,10 @@ INVALID_CONFIGS = {
     "token_env not an ALFRED variable": MINIMAL.replace(
         "ALFRED_SERVICE_TOKEN_BACKUP", "LEAK-service-token-3"
     ),
+    # The secret key is set, the key id is not, and the size limit is too big.
+    "attachments without a key id": MINIMAL
+    + '\n[attachments]\nendpoint_url = "http://garage.lan:3900"\nbucket = "alfred"\n'
+    + "max_bytes = 50000000\n",
 }
 
 
@@ -40,7 +45,7 @@ def test_startup_error_output_has_no_secrets(
 ) -> None:
     path = tmp_path / "alfred.toml"
     path.write_text(text)
-    for name in SECRETS:
+    for name in [*SECRETS, "ALFRED_S3_ACCESS_KEY_ID", "ALFRED_S3_SECRET_ACCESS_KEY"]:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ALFRED_CONFIG", str(path))
     for name, value in LEAKY.items():

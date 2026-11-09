@@ -41,7 +41,8 @@ async def recall_entries(sessions: async_sessionmaker[AsyncSession]) -> list[Ent
 
 async def test_recall_by_id(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed_41(sessions)
-    current = await History(sessions).append("owner", "remember conversation 41")
+    await History(sessions).append("owner", "remember conversation 41")
+    current = await History(sessions).current_conversation_id()
     result = await memory(sessions).recall(41)
     assert result.ok
     assert result.text == TRANSCRIPT
@@ -72,7 +73,8 @@ async def test_bad_id(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 
 async def test_current_conversation_refused(sessions: async_sessionmaker[AsyncSession]) -> None:
-    current = await History(sessions).append("owner", "hi")
+    await History(sessions).append("owner", "hi")
+    current = await History(sessions).current_conversation_id()
     result = await memory(sessions).recall(current)
     assert not result.ok and "current conversation" in result.text
     assert await recall_entries(sessions) == []
