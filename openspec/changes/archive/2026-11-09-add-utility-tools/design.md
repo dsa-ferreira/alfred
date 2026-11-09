@@ -132,8 +132,10 @@ converted to gram (mass) without more information, such as the ingredient's
 density"; `UndefinedUnitError` and `DefinitionSyntaxError` → "unknown unit
 '<x>'". The result names both quantities: `1.5 cup = 354.882 milliliter`.
 
-The `UnitRegistry` is built once, when the toolset is created (about 0.45 s,
-measured), not per call. pint names to list in the tool description: `cup`,
+The `UnitRegistry` is built once per process, on the first conversion (a
+cached `registry()`, about 0.13 to 0.45 s measured), not per call and not at
+startup, so a start with no conversions pays nothing. pint names to list in
+the tool description: `cup`,
 `tbsp`, `tsp`, `floz` (not `fl_oz`), `ml`, `l`, `g`, `kg`, `oz`, `lb`,
 `degC`, `degF`, `km/h`, `mph`, `kcal`, `kJ`, `GB`, `MiB`. pint's `cup` is the
 US cup (236.6 ml).
