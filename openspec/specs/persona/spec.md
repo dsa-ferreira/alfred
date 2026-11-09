@@ -49,7 +49,7 @@ A configured persona SHALL replace the built-in persona text and be sent as writ
 - **THEN** the model receives that text in place of the built-in persona, and no butler instructions
 
 ### Requirement: Fixed notices in the persona's voice
-The notices alfred sends to the owner without the model (only text is supported, the request failed, the AI is unreachable, the AI became unreachable mid-request, the request was stopped after too many steps, some actions may have partly completed, and the chosen brain failed so alfred went back to the startup brain) SHALL use a formal butler register and end with the configured form of address, used exactly as configured. They SHALL NOT be configurable.
+The notices alfred sends to the owner without the model (only text is supported, the request failed, the AI is unreachable, the AI became unreachable mid-request, the request was stopped after too many steps, some actions may have partly completed, the chosen brain failed so alfred went back to the startup brain, and a reminder delivered without the model) SHALL use a formal butler register and end with the configured form of address, used exactly as configured. They SHALL NOT be configurable.
 
 #### Scenario: Failure notice with the default address
 - **WHEN** an owner turn fails with no tool having run and no form of address is configured
@@ -70,3 +70,7 @@ The notices alfred sends to the owner without the model (only text is supported,
 #### Scenario: Fallback notice
 - **WHEN** the brain `bonsai` fails and alfred goes back to the startup brain `gemma`
 - **THEN** the owner receives a formal notice naming `bonsai` and `gemma`, with the form of address once
+
+#### Scenario: Reminder notice
+- **WHEN** the turn for reminder #12 "call mum", due at 17:00, fails
+- **THEN** the owner receives a formal notice containing "call mum" and 17:00, with the form of address once at the end

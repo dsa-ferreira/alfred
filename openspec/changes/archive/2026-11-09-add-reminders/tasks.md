@@ -39,7 +39,7 @@
 - [x] 8.1 Build `Reminders` in `app.serve()`, pass the tools to `Agent`, start the `reminders` task (cancelled on shutdown like `memory`), and add it to the startup log line; verify in `tests/test_serve.py`
 - [x] 8.2 Describe reminders (routing, time forms, late delivery, the fixed fallback) in the README
 - [x] 8.3 Run `make lint` and `make test` and verify both pass
-- [ ] 8.4 Against the real model, from a Telegram chat with a local alfred: set "remind me in 2 minutes to stretch", "remind me to buy groceries" and "add a task to call mum at five"; verify the first fires as a model-written reminder, the other two go to Trello, and "snooze 5 minutes" sets a new reminder
+- [x] 8.4 Against the real model, from a Telegram chat with a local alfred: set "remind me in 2 minutes to stretch", "remind me to buy groceries" and "add a task to call mum at five"; verify the first fires as a model-written reminder, the other two go to Trello, and "snooze 5 minutes" sets a new reminder
 
 ## Workflow follow-up
 

@@ -18,7 +18,7 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, the brains the owner can switch between, request timeout, maximum model requests per turn, persona, the owner's form of address, the owner's timezone, context window size, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, and the number of search results, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, the brains the owner can switch between, request timeout, maximum model requests per turn, persona, the owner's form of address, the owner's timezone, context window size, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, and the number of search results, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
 - **WHEN** the file sets only the owner user ID, model, services and MCP servers
@@ -63,6 +63,18 @@ Every non-secret setting SHALL be settable in the config file, including the own
 #### Scenario: Invalid SearXNG URL
 - **WHEN** `[web] searxng_url` is set to `oracle.lan`
 - **THEN** alfred exits at startup with an error naming `web.searxng_url`
+
+#### Scenario: Reminder defaults
+- **WHEN** the file has no `[reminders]` section
+- **THEN** a reminder for a date without a clock time is due at 09:00, and due reminders are checked at :00 and :30 of every minute
+
+#### Scenario: Check interval too long
+- **WHEN** `[reminders] check_interval_s` is set to 300
+- **THEN** alfred exits at startup with an error naming `reminders.check_interval_s`
+
+#### Scenario: Invalid default time
+- **WHEN** `[reminders] default_time` is set to `9am`
+- **THEN** alfred exits at startup with an error naming `reminders.default_time`
 
 ### Requirement: Secrets only from the environment
 Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), and the tokens of services and MCP servers. Services and MCP servers SHALL name their secret's variable with `token_env`.
