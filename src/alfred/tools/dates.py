@@ -1,4 +1,4 @@
-"""``alfred_date``: calendar arithmetic in the owner's timezone (change add-utility-tools).
+"""``alfred_date``: calendar arithmetic in the user's timezone (change add-utility-tools).
 
 The model gets weekdays and day counts wrong, so alfred works them out
 (design D5). One tool with an ``op`` keeps the definition small:
@@ -7,7 +7,7 @@ The model gets weekdays and day counts wrong, so alfred works them out
 between  from, to             -> days from one to the other (and weeks and days)
 shift    date, days/weeks/months -> the date that many days, weeks, months on
 weekday  date                 -> its weekday
-now_in   zone?                -> the date and time there (the owner's, with no zone)
+now_in   zone?                -> the date and time there (the user's, with no zone)
 ```
 
 Dates are ``YYYY-MM-DD`` or ``today``, read by the reminders' ``parse_date``,
@@ -38,7 +38,7 @@ DATE_TOOL: dict[str, Any] = {
             "Use for any date calculation instead of working it out yourself: the days "
             "between two dates (between), a date plus or minus days, weeks or months "
             "(shift), the weekday of a date (weekday), and the current date and time in "
-            "a timezone (now_in). Dates are YYYY-MM-DD or today, in the owner's timezone."
+            "a timezone (now_in). Dates are YYYY-MM-DD or today, in the user's timezone."
         ),
         "parameters": {
             "type": "object",
@@ -56,7 +56,7 @@ DATE_TOOL: dict[str, Any] = {
                 "zone": {
                     "type": "string",
                     "description": (
-                        "now_in: an IANA timezone such as Asia/Tokyo; leave out for the owner's."
+                        "now_in: an IANA timezone such as Asia/Tokyo; leave out for the user's."
                     ),
                 },
             },
@@ -115,19 +115,19 @@ def add_months(day: date, months: int) -> date:
 
 
 def offset_text(offset: timedelta) -> str:
-    """``9 hours ahead of the owner``, ``5 hours 30 minutes behind the owner``."""
+    """``9 hours ahead of the user``, ``5 hours 30 minutes behind the user``."""
     minutes = int(offset.total_seconds()) // 60
     if minutes == 0:
-        return "the same time as the owner"
+        return "the same time as the user"
     hours, rest = divmod(abs(minutes), 60)
     parts = [_plural(hours, "hour")] if hours else []
     if rest:
         parts.append(_plural(rest, "minute"))
-    return f"{' '.join(parts)} {'ahead of' if minutes > 0 else 'behind'} the owner"
+    return f"{' '.join(parts)} {'ahead of' if minutes > 0 else 'behind'} the user"
 
 
 class DateTools(LocalToolset):
-    """``alfred_date``, on every turn, in the owner's timezone."""
+    """``alfred_date``, on every turn, in the user's timezone."""
 
     definitions = [DATE_TOOL]
 
@@ -204,7 +204,7 @@ class DateTools(LocalToolset):
     def _now_in(self, zone_name: Any, now: datetime) -> str:
         if zone_name in (None, ""):
             local = now.astimezone(self._zone)
-            return f"It is {local:%H:%M} on {long_date(local.date())} (the owner's time)."
+            return f"It is {local:%H:%M} on {long_date(local.date())} (the user's time)."
         try:
             if not isinstance(zone_name, str):
                 raise ValueError(zone_name)
@@ -214,8 +214,8 @@ class DateTools(LocalToolset):
                 f"unknown timezone {zone_name!r}: use an IANA name such as Asia/Tokyo."
             ) from None
         local = now.astimezone(zone)
-        owner = now.astimezone(self._zone)
-        offset = (local.utcoffset() or timedelta()) - (owner.utcoffset() or timedelta())
+        here = now.astimezone(self._zone)
+        offset = (local.utcoffset() or timedelta()) - (here.utcoffset() or timedelta())
         return (
             f"It is {local:%H:%M} on {long_date(local.date())} in {zone_name.strip()}, "
             f"{offset_text(offset)}."

@@ -48,7 +48,7 @@ async def queue_items(sessions: async_sessionmaker[AsyncSession]) -> list[QueueI
 
 async def test_reminder_comes_due(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = Reminders(sessions)
-    rid = await store.set("call mum", DUE)
+    rid = await store.set("call mum", DUE, "diogo", ["diogo"])
     signal = asyncio.Event()
     # Started at 16:59:20: checks at 16:59:20, then on the clock at 16:59:30 and 17:00:00.
     clock = FakeClock(DUE - timedelta(seconds=40), passes=3)
@@ -65,12 +65,12 @@ async def test_reminder_comes_due(sessions: async_sessionmaker[AsyncSession]) ->
     assert (item.kind, item.reminder_id, item.status) == ("reminder", rid, "pending")
     assert item.created_at is not None
     assert signal.is_set()
-    assert await store.pending() == []
+    assert await store.pending("diogo") == []
 
 
 async def test_nothing_due(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = Reminders(sessions)
-    await store.set("call mum", DUE + timedelta(days=2))
+    await store.set("call mum", DUE + timedelta(days=2), "diogo", ["diogo"])
     signal = asyncio.Event()
     # A whole day of checks every 30 seconds.
     clock = FakeClock(DUE, passes=24 * 120)
@@ -82,7 +82,7 @@ async def test_nothing_due(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 async def test_alfred_down_at_the_due_time(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = Reminders(sessions)
-    rid = await store.set("call mum", DUE)
+    rid = await store.set("call mum", DUE, "diogo", ["diogo"])
     signal = asyncio.Event()
     # alfred starts at 19:40: the first pass, before any sleep, queues it.
     clock = FakeClock(DUE + timedelta(hours=2, minutes=40), passes=1)
@@ -94,8 +94,8 @@ async def test_alfred_down_at_the_due_time(sessions: async_sessionmaker[AsyncSes
 
 async def test_days_late(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = Reminders(sessions)
-    later = await store.set("water the plants", DUE - timedelta(days=1))
-    first = await store.set("call mum", DUE - timedelta(days=3))
+    later = await store.set("water the plants", DUE - timedelta(days=1), "diogo", ["diogo"])
+    first = await store.set("call mum", DUE - timedelta(days=3), "diogo", ["diogo"])
     signal = asyncio.Event()
     await run(store, signal, FakeClock(DUE, passes=1))
     assert [i.reminder_id for i in await queue_items(sessions)] == [first, later]

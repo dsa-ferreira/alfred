@@ -1,6 +1,6 @@
 """Attachments sent with the message they arrived in (design D4).
 
-The newest ``inline_turns`` owner messages (default 1: the one being
+The newest ``inline_turns`` user messages (default 1: the one being
 answered) carry what they brought: an image as an image, a PDF as its
 handle with up to ``first_page_chars`` of page 1's text, plus page 1 as an
 image when it has no text. A brain without vision gets no images, and the
@@ -82,9 +82,9 @@ class InlineAttachments:
     async def build(
         self, entries: Sequence[HistoryEntry], *, vision: bool, cache: ImageCache
     ) -> dict[int, Inline]:
-        """How each owner entry in the inline window is sent, by entry ID."""
-        owners = [e for e in entries if e.kind == "owner"]
-        window = owners[-self._config.inline_turns :] if self._config.inline_turns else []
+        """How each user entry in the inline window is sent, by entry ID."""
+        users = [e for e in entries if e.kind == "user"]
+        window = users[-self._config.inline_turns :] if self._config.inline_turns else []
         found: dict[int, Inline] = {}
         for entry in window:
             if entry.attachments and entry.entry_id is not None:

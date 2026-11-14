@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from typing import Any
 
@@ -13,17 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.attachments.intake import DownloadFailed, Intake
-from alfred.config import AttachmentsConfig
+from alfred.config import AttachmentsConfig, Users
 from alfred.db.models import Attachment, QueueItem
 from alfred.queue import Queue
 from alfred.telegram import bot as bot_module
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
-from tests.helpers import FakeStore
+from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore
 from tests.telegram.fake_bot import OWNER, TOKEN, make_bot, message_update
 
 PDF = "application/pdf"
+USERS = Users((DIOGO, ANA))
 
 
 async def queued(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
@@ -36,12 +38,13 @@ async def queued(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
 
 async def test_owner_message_is_queued(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
     update = message_update(text="what's downloading?")
     await dispatcher.feed_update(bot, update)
     (item,) = await queued(sessions)
-    assert (item.kind, item.text, item.telegram_message_id) == (
-        "owner",
+    assert (item.kind, item.user_name, item.text, item.telegram_message_id) == (
+        "user",
+        "diogo",
         "what's downloading?",
         update.message.message_id,
     )
@@ -52,7 +55,7 @@ async def test_stranger_ignored(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
     with caplog.at_level(logging.INFO):
         await dispatcher.feed_update(bot, message_update(user_id=999, text="secret plans"))
     assert await queued(sessions) == []
@@ -63,7 +66,7 @@ async def test_stranger_ignored(
 
 async def test_group_chat_ignored(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
     await dispatcher.feed_update(bot, message_update(chat_type="group", text="hello bot"))
     assert await queued(sessions) == []
     assert session.requests == []
@@ -74,7 +77,7 @@ async def test_group_chat_ignored(sessions: async_sessionmaker[AsyncSession]) ->
 
 async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, _ = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
     await dispatcher.feed_update(
         bot,
         message_update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}]),
@@ -97,7 +100,7 @@ async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSe
 )  # fmt: skip
 async def test_text_only(sessions: async_sessionmaker[AsyncSession], content: dict) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions), "sir")
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
     await dispatcher.feed_update(bot, message_update(**content))
     assert await queued(sessions) == []
     (sent,) = session.sent()
@@ -108,7 +111,9 @@ async def test_text_only_uses_configured_address(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(OWNER, Queue(sessions), "Mr. Ferreira")
+    dispatcher = make_dispatcher(
+        Users((dataclasses.replace(DIOGO, address="Mr. Ferreira"),)), Queue(sessions)
+    )
     photo = [{"file_id": "p", "file_unique_id": "p", "width": 1, "height": 1}]
     await dispatcher.feed_update(bot, message_update(photo=photo))
     (sent,) = session.sent()
@@ -126,9 +131,8 @@ def files_dispatcher(
         store,
         Queue(sessions),
         FakeDownloader(files),
-        owner_address="sir",
     )
-    return make_dispatcher(OWNER, Queue(sessions), "sir", intake=intake, album_wait_s=0.05)
+    return make_dispatcher(USERS, Queue(sessions), intake=intake, album_wait_s=0.05)
 
 
 async def attachments_of(sessions: async_sessionmaker[AsyncSession]) -> list[Attachment]:
@@ -303,7 +307,7 @@ async def test_failed_download_never_quotes_the_token() -> None:
 
 async def test_telegram_formatting() -> None:
     bot, session = make_bot()
-    await TelegramOutbox(bot, OWNER).send("**disk full**\n```\ndf -h\n```")
+    await TelegramOutbox(bot).send(DIOGO, "**disk full**\n```\ndf -h\n```")
     (sent,) = session.sent()
     assert sent.parse_mode == "HTML"
     assert sent.text == "<b>disk full</b>\n<pre>df -h</pre>"
@@ -317,7 +321,7 @@ async def test_formatting_rejected_falls_back_to_plain_text() -> None:
             raise TelegramBadRequest(method, "Bad Request: can't parse entities: whatever")
 
     session.on_request = reject_html
-    await TelegramOutbox(bot, OWNER).send("**odd** text")
+    await TelegramOutbox(bot).send(DIOGO, "**odd** text")
     html, plain = session.sent()
     assert html.parse_mode == "HTML"
     assert plain.parse_mode is None and plain.text == "**odd** text"
@@ -331,14 +335,14 @@ async def test_other_errors_propagate() -> None:
 
     session.on_request = fail
     with pytest.raises(TelegramNetworkError):
-        await TelegramOutbox(bot, OWNER).send("hi")
+        await TelegramOutbox(bot).send(DIOGO, "hi")
 
 
 async def test_long_replies_are_split() -> None:
     bot, session = make_bot()
     reply = "\n\n".join(f"Paragraph {i}: " + "word " * 80 for i in range(15))
     assert len(reply) > 6000
-    await TelegramOutbox(bot, OWNER).send(reply)
+    await TelegramOutbox(bot).send(DIOGO, reply)
     sent = session.sent()
     assert len(sent) >= 2
     assert all(len(m.text) <= 4096 for m in sent)
@@ -358,7 +362,7 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
 
     bot, session = make_bot()
     queue = Queue(sessions)
-    dispatcher = make_dispatcher(OWNER, queue, "sir")
+    dispatcher = make_dispatcher(USERS, queue)
     model = FakeModel(
         [text("All good."), ModelFailed("model server answered HTTP 400: token=abc Traceback")]
     )
@@ -369,9 +373,9 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
         queue,
         agent,
         history,
-        TelegramOutbox(bot, OWNER),
+        TelegramOutbox(bot),
         cfg.queue,
-        owner_address=cfg.ai.owner_address,
+        users=cfg.users,
     )
 
     await dispatcher.feed_update(bot, message_update(text="status?"))
@@ -395,7 +399,7 @@ def chat_actions(session) -> list[SendChatAction]:  # type: ignore[no-untyped-de
 async def test_typing_while_the_block_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
     bot, session = make_bot()
-    async with TelegramOutbox(bot, OWNER).typing():
+    async with TelegramOutbox(bot).typing(DIOGO):
         await asyncio.sleep(0.05)
     actions = chat_actions(session)
     assert len(actions) >= 2  # resent while the block runs
@@ -420,7 +424,7 @@ async def test_typing_failure_is_logged_and_retried(
 
     session.on_request = fail_twice
     with caplog.at_level(logging.DEBUG, logger="alfred.telegram.bot"):
-        async with TelegramOutbox(bot, OWNER).typing():
+        async with TelegramOutbox(bot).typing(DIOGO):
             await asyncio.sleep(0.06)
     assert len(chat_actions(session)) >= 3  # kept going after the failures
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -432,7 +436,7 @@ async def test_typing_failure_is_logged_and_retried(
 async def test_typing_lets_the_block_error_through() -> None:
     bot, _ = make_bot()
     with pytest.raises(ValueError, match="boom"):
-        async with TelegramOutbox(bot, OWNER).typing():
+        async with TelegramOutbox(bot).typing(DIOGO):
             raise ValueError("boom")
 
 
@@ -444,5 +448,83 @@ async def test_typing_exit_never_raises_on_failure(monkeypatch: pytest.MonkeyPat
         raise TelegramNetworkError(method, "unreachable")
 
     session.on_request = fail
-    async with TelegramOutbox(bot, OWNER).typing():
+    async with TelegramOutbox(bot).typing(DIOGO):
         await asyncio.sleep(0.03)
+
+
+# --- Configured users (change add-multiple-users) -----------------------------------
+
+
+async def test_second_user_message_is_queued_as_hers(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, session = make_bot()
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, text="what's for dinner?"))
+    (item,) = await queued(sessions)
+    assert (item.kind, item.user_name, item.text) == ("user", "ana", "what's for dinner?")
+    assert session.sent() == []
+
+
+async def test_second_user_in_a_group_is_ignored(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, session = make_bot()
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, chat_type="group", text="x"))
+    assert await queued(sessions) == [] and session.requests == []
+
+
+async def test_text_only_notice_in_her_chat_and_address(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, session = make_bot()
+    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    sticker = {"file_id": "s", "file_unique_id": "s", "type": "regular"}
+    sticker |= {"width": 1, "height": 1, "is_animated": False, "is_video": False}
+    await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, sticker=sticker))
+    (sent,) = session.sent()
+    assert sent.chat_id == ANA_ID and sent.text == notices.text_only("madam")
+
+
+async def test_second_user_photo_and_album_are_hers(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, session = make_bot()
+    files = {f"p{i}": image_bytes(80, 60) for i in range(3)}
+    dispatcher = files_dispatcher(sessions, files, FakeStore())
+    await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, **photo("p0", caption="a")))
+    for i in (1, 2):
+        await dispatcher.feed_update(
+            bot, message_update(user_id=ANA_ID, media_group_id="g", **photo(f"p{i}"))
+        )
+    await dispatcher["albums"].drain()
+    items = await queued(sessions)
+    assert [i.user_name for i in items] == ["ana", "ana"]
+    assert {a.user_name for a in await attachments_of(sessions)} == {"ana"}
+    assert session.sent() == []
+
+
+async def test_refusal_notice_uses_her_address(sessions: async_sessionmaker[AsyncSession]) -> None:
+    bot, session = make_bot()
+    dispatcher = files_dispatcher(sessions, {}, FakeStore())
+    voice = {"file_id": "v", "file_unique_id": "v", "duration": 1}
+    await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, voice=voice))
+    (sent,) = session.sent()
+    assert sent.chat_id == ANA_ID and sent.text == notices.unsupported("madam")
+
+
+async def test_outbox_sends_to_the_users_chat() -> None:
+    bot, session = make_bot()
+    await TelegramOutbox(bot).send(ANA, "Dune is ready.")
+    (sent,) = session.sent()
+    assert sent.chat_id == ANA_ID
+
+
+async def test_typing_in_the_users_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    bot, session = make_bot()
+    async with TelegramOutbox(bot).typing(ANA):
+        await asyncio.sleep(0.03)
+    actions = chat_actions(session)
+    assert actions and all(a.chat_id == ANA_ID for a in actions)

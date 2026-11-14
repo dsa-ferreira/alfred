@@ -1,11 +1,36 @@
 # alfred configuration. Copy to alfred.toml (git-ignored) and adjust.
 # Only non-secret settings live here. Secrets come from ALFRED_* environment
-# variables; services and MCP servers name theirs with `token_env`.
+# variables; services and MCP servers name theirs with `token_env`, and users
+# name their own MCP tokens with `mcp_tokens`.
 # Every value shown is the default, except where marked "required".
 
-[telegram]
-# Your Telegram user ID (required). Only this user's private chat is answered.
-owner_user_id = 123456789
+# The people alfred serves (at least one). Each chats with alfred in their own
+# private Telegram chat and has their own conversation, memory and attachments.
+# Messages from anyone else are ignored.
+[[users]]
+# Lowercase letters, digits and hyphens (required). Services name the user
+# with it in /notify and /ask, and the AI uses it for reminders ("remind ana").
+name = "diogo"
+# The user's Telegram user ID (required).
+telegram_user_id = 123456789
+# How alfred addresses this user, in its replies and its fixed notices. Used as written.
+address = "sir"
+# Exactly one user is the admin: the default target of /notify and /ask, and
+# the only one who can switch brains. Default: false.
+admin = true
+# The tools this user is offered (default: none). Exact names as the AI sees them,
+# a prefix ending in * ("alfred_*", "cookbook_*"), or "*" for every tool.
+tools = ["*"]
+
+[[users]]
+name = "ana"
+telegram_user_id = 987654321
+address = "madam"
+# alfred's own tools, all of cookbook, and only two of mcparr's.
+tools = ["alfred_*", "cookbook_*", "mcparr_find_media", "mcparr_add_media"]
+# Per-server token variables for this user, so a server can tell users apart.
+# A server not listed here is called with its own token_env. Default: none.
+mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }
 
 [ai]
 # OpenAI-compatible server; alfred posts to {base_url}/v1/chat/completions.
@@ -19,15 +44,13 @@ request_timeout_s = 300
 max_requests_per_turn = 12
 # Tool results are cut to this many characters before they reach the model.
 tool_result_max_chars = 4000
-# How alfred addresses you, in its replies and its fixed notices. Used as written.
-owner_address = "sir"
-# Your IANA timezone, for today's date in the prompt and for conversation search dates.
+# alfred's IANA timezone, for today's date in the prompt, reminders and search dates.
 timezone = "Europe/Lisbon"
 # Replaces the built-in butler persona (alfred's voice) when set. Only the voice:
 # the built-in operating rules (tools, service notices, /ask) are always sent.
 # persona = """..."""
 
-# Brains the owner can switch between from the chat ("set your brain to bonsai"),
+# Brains the admin can switch between from the chat ("set your brain to bonsai"),
 # as alias = "model tag" on [ai] base_url. Default: none, only [ai] model.
 # [ai] model is the startup brain; it is listed under its tag if no alias names it.
 # A brain that can see images is written as a table with vision = true; only
@@ -84,7 +107,7 @@ default_time = "09:00"
 # check_interval_s within it (at most 60). Reminders are queued at their minute.
 check_interval_s = 30
 
-# Photos, image files and PDFs from the owner. Default: off, text only.
+# Photos, image files and PDFs from users. Default: off, text only.
 # The files are kept in an S3-compatible bucket (Garage); the key comes from
 # ALFRED_S3_ACCESS_KEY_ID and ALFRED_S3_SECRET_ACCESS_KEY, required with this section.
 # [attachments]
@@ -94,7 +117,7 @@ check_interval_s = 30
 # region = "garage"
 # Largest file accepted, in bytes; at most 20000000, the most a Telegram bot can download.
 # max_bytes = 20000000
-# How many of the newest owner messages send their images (and PDF page 1) to the
+# How many of the newest user messages send their images (and PDF page 1) to the
 # model; older attachments are sent as a handle the model can open with a tool.
 # inline_turns = 1
 # Characters of a PDF's page 1 text sent with the message that brings it.

@@ -1,7 +1,7 @@
 """The memory sweeper (memory design D4).
 
 It is its own task, not a queue item, so a summary that keeps failing never
-holds up owner messages. It finds archived conversations that lack a
+holds up users' messages. It finds archived conversations that lack a
 summary, or an embedding from the configured model, oldest first, and waits
 for each one's ``summary_next_at``. This also backfills conversations from
 before the upgrade and re-embeds them after a model change.

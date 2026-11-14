@@ -29,7 +29,7 @@ async def test_crash_between_upload_and_record(
     store = FakeStore(now=clock)
     await put_at(store, clock, "attachments/orphan", NOW - timedelta(days=2))
     await put_at(store, clock, "attachments/kept", NOW - timedelta(days=2))
-    await Queue(sessions).enqueue_owner("total?", None, [image_file("attachments/kept")])
+    await Queue(sessions).enqueue_user("diogo", "total?", None, [image_file("attachments/kept")])
     clock.now = NOW
     assert await OrphanSweeper(store, sessions, now=clock).sweep_once() == 1
     assert set(store.objects) == {"attachments/kept"}

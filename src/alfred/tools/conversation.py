@@ -1,10 +1,10 @@
-"""``alfred_end_conversation``: the owner ends the current conversation."""
+"""``alfred_end_conversation``: the user ends their current conversation."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, TurnInput, owner_only
+from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, TurnInput, chat_only
 
 END_CONVERSATION = "alfred_end_conversation"
 
@@ -14,7 +14,7 @@ END_CONVERSATION_TOOL: dict[str, Any] = {
         "name": END_CONVERSATION,
         "description": (
             "End the current conversation and start a fresh one with no memory of it. "
-            "Call this ONLY when the owner clearly says the conversation or topic is "
+            "Call this ONLY when the user clearly says the conversation or topic is "
             "finished (for example 'thanks, we're done', 'that's all', 'new topic'). "
             "Never call it because a question was answered, on a simple 'thanks', or "
             "when unsure. After calling it, reply with a short closing line."
@@ -25,12 +25,12 @@ END_CONVERSATION_TOOL: dict[str, Any] = {
 
 
 class ConversationTools(LocalToolset):
-    """Offered on owner turns; the worker archives the conversation after the reply."""
+    """Offered on chat turns; the worker archives the user's conversation after the reply."""
 
     definitions = [END_CONVERSATION_TOOL]
 
     def offered(self, turn: TurnInput) -> bool:
-        return owner_only(turn)
+        return chat_only(turn)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         attempt.request_reset()

@@ -1,9 +1,11 @@
 # alfred
 
-alfred is a Telegram bot that is its owner's two-way channel to the local AI
-and the homelab services.
+alfred is a Telegram bot that is a two-way channel between its users and the
+local AI and the homelab services. It serves the people listed in
+`[[users]]`, each with their own private conversation, memory and tool
+allow-list (see [Users](#users)).
 
-- **Owner → AI.** Every text message the owner sends the bot goes to the AI
+- **Users → AI.** Every text message a user sends the bot goes to the AI
   (Ollama on `ai.lan` by default, or any OpenAI-compatible server), and so do
   photos, image files and PDFs when [attachments](#attachments) are
   configured. Voice notes, stickers, videos and other files get a short
@@ -11,10 +13,11 @@ and the homelab services.
   the agent loop itself: it offers the model the tools of the configured MCP
   servers (mcparr, cookbook, ...), runs the tool calls, and sends back the
   final answer, formatted for Telegram.
-- **Services → owner.** Homelab services call alfred's HTTP API:
-  `POST /notify` sends the owner a message directly, and `POST /ask` lets the
-  AI decide whether the owner needs to hear about something.
-- **Memory.** One current conversation is kept in Postgres. The AI sees the
+- **Services → users.** Homelab services call alfred's HTTP API:
+  `POST /notify` sends a user (the admin by default) a message directly, and
+  `POST /ask` lets the AI decide whether that user needs to hear about
+  something.
+- **Memory.** Each user has one current conversation, kept in Postgres. The AI sees the
   most recent entries, including service notices. Saying the conversation is
   over ("thanks, we're done") archives it with a short title and summary and
   starts a fresh one, marked in the chat with `— #41 "Chicken thighs recipe" —`
@@ -25,8 +28,8 @@ and the homelab services.
   message from you, a service or a reminder reaches the AI with the time it
   arrived (`[Mon 9 Nov 14:05] what time is it?`), so it knows the time of day
   (see [Message times](#message-times)).
-- **Web.** The AI can search the web through the owner's SearXNG instance on
-  `oracle.lan` and read pages it found or the owner sent (see
+- **Web.** The AI can search the web through the homelab's SearXNG instance on
+  `oracle.lan` and read pages it found or the user sent (see
   [Web search and fetch](#web-search-and-fetch)).
 - **Arithmetic and dates.** The AI doesn't work sums, unit conversions or
   calendar questions out itself: alfred computes them (see
@@ -39,7 +42,7 @@ and the homelab services.
 ```
                  long polling                       OpenAI-compatible
   Telegram  <─────────────────┐                   ┌───────────────────>  AI (ai.lan)
-  (owner)                     │                   │   /v1/chat/completions
+  (users)                     │                   │   /v1/chat/completions
                        ┌──────┴───────────────────┴──────┐
                        │              alfred             │
                        │  ┌─────────┐   ┌─────────────┐  │   Streamable HTTP
@@ -72,18 +75,23 @@ reported together and alfred exits. Error messages never contain secret values.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `telegram.owner_user_id` | integer | required | Your Telegram user ID. Only this user's private chat with the bot is answered; notices and `/ask` answers go to this user. |
+| `[[users]]` | list | required | The people alfred serves, at least one (see [Users](#users)). Messages from anyone else are ignored. |
+| `users.name` | name | required | The user's name. Services target the user with it in `/notify` and `/ask`; the AI uses it to remind someone else. |
+| `users.telegram_user_id` | integer | required | The user's Telegram user ID. Only the user's private chat with the bot is answered. Unique. |
+| `users.address` | string | `"sir"` | How alfred addresses the user: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, unsupported messages) sent to the user. Used as written. |
+| `users.admin` | boolean | `false` | Exactly one user is the admin: the default target of `/notify` and `/ask`, the only one offered brain switching, and told about a brain fallback on anyone's turn. |
+| `users.tools` | list of strings | `[]` | The user's tool allow-list: exact tool names as the model sees them (`alfred_web_search`, `mcparr_find_media`), a prefix ending in `*` (`alfred_*`, `cookbook_*`), or `*` for every tool. Entries must be `*` or start with `alfred_` or a configured server's name and `_`; an exact `alfred_` name must exist. An exact MCP name the server doesn't expose is logged as a warning. Empty: no tools. |
+| `users.mcp_tokens` | table | none | `server = "ALFRED_..."`: the variable holding this user's bearer token for that MCP server. Servers not listed get their own `token_env`. Tokens may repeat. |
 | `ai.base_url` | URL | `"http://ai.lan"` | OpenAI-compatible server. alfred posts to `{base_url}/v1/chat/completions`. |
 | `ai.model` | string | `"gemma4:26b-a4b-it-qat"` | Model name sent with every request, and the brain alfred starts on. |
-| `ai.models` | table | none | Brains the owner can switch between from the chat ("set your brain to bonsai"), as `alias = "model tag"` on `ai.base_url`, or `alias = { model = "model tag", vision = true }` for a model that can see images. `vision` defaults to `false`; only brains with vision are sent images (see [Attachments](#attachments)). `ai.model` is a brain too, under its tag when no alias names it. The choice lasts until a restart; a brain that fails is dropped for `ai.model`. Aliases are lowercase letters, digits and hyphens. Summaries always use `memory.summary_model`. |
+| `ai.models` | table | none | Brains the admin can switch between from the chat ("set your brain to bonsai"), as `alias = "model tag"` on `ai.base_url`, or `alias = { model = "model tag", vision = true }` for a model that can see images. `vision` defaults to `false`; only brains with vision are sent images (see [Attachments](#attachments)). `ai.model` is a brain too, under its tag when no alias names it. The choice lasts until a restart; a brain that fails is dropped for `ai.model`. Aliases are lowercase letters, digits and hyphens. Summaries always use `memory.summary_model`. |
 | `ai.vision` | boolean | `false` | Whether `ai.model` can see images, when no `ai.models` alias names it. An alias's own `vision` applies otherwise. |
 | `ai.request_timeout_s` | number | `300` | Timeout of one model request, in seconds. Long enough for the AI server to wake and load the model. |
-| `ai.max_requests_per_turn` | integer | `12` | Model requests allowed in one turn. A turn that needs more is stopped and the owner is told. |
+| `ai.max_requests_per_turn` | integer | `12` | Model requests allowed in one turn. A turn that needs more is stopped and the user is told. |
 | `ai.tool_result_max_chars` | integer | `4000` | Tool results are cut to this many characters (with a `[truncated]` note) before they reach the model. |
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
-| `ai.owner_address` | string | `"sir"` | How alfred addresses you: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, unsupported messages). Used as written. |
 | `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt, the times on history messages, `alfred_date` and the dates of conversation search use it. An unknown name stops alfred at startup. |
-| `history.max_entries` | integer | `30` | Most recent entries of the current conversation (owner messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
+| `history.max_entries` | integer | `30` | Most recent entries of the current conversation (the user's messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |
 | `memory.summary_model` | string | `ai.model` | Model that writes the title and summary of an ended conversation, on `ai.base_url`. |
@@ -106,7 +114,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `attachments.bucket` | string | required in `[attachments]` | Bucket for the files, under `attachments/<random id>`. |
 | `attachments.region` | string | `"garage"` | Region name used to sign requests; Garage's default is `garage`. |
 | `attachments.max_bytes` | integer | `20000000` | Largest file accepted, in bytes. At most `20000000`, the largest file a Telegram bot can download. |
-| `attachments.inline_turns` | integer | `1` | How many of the newest owner messages send their images (and a PDF's page 1) to the model. Older attachments reach it as a handle it can open with a tool. |
+| `attachments.inline_turns` | integer | `1` | How many of the newest user messages send their images (and a PDF's page 1) to the model. Older attachments reach it as a handle it can open with a tool. |
 | `attachments.first_page_chars` | integer | `4000` | Characters of a PDF's page 1 text sent with the message that brings it. |
 | `attachments.read_chars` | integer | `8000` | Characters of PDF text in one `alfred_read_document` result. Not affected by `ai.tool_result_max_chars`. |
 | `attachments.image_max_px` | integer | `1536` | Longer side, in pixels, of images and rendered PDF pages sent to the model. The stored file is not changed. |
@@ -118,7 +126,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `server.port` | integer | `8080` | Listen port of the service API. |
 | `server.log_level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` | `"INFO"` | Log level. |
 | `[[services]]` | list | none | Services allowed to call `/notify` and `/ask`. |
-| `services.name` | name | required | Service name. Shown to the owner as `[name]` and to the AI as the sender. |
+| `services.name` | name | required | Service name. Shown to users as `[name]` and to the AI as the sender. |
 | `services.token_env` | variable name | required | `ALFRED_*` variable holding the service's bearer token. Tokens must be unique. |
 | `[[mcp_servers]]` | list | none | MCP servers whose tools the model is offered (see [MCP servers](#mcp-servers)). |
 | `mcp_servers.name` | name | required | Server name, used as the tool prefix (`<name>_<tool>`). `alfred` is reserved. |
@@ -142,6 +150,52 @@ with `ALFRED_` and use `A-Z`, `0-9` and `_`.
 | the `token_env` of each service | yes | Bearer token the service sends to `/notify` and `/ask`. |
 | the `token_env` of each MCP server | yes | Bearer token alfred sends to that MCP server. |
 
+## Users
+
+Each `[[users]]` entry is someone alfred serves: their Telegram user ID, how
+alfred addresses them, and which tools the AI may use on their turns.
+Messages from anyone else, and from group chats, are ignored without a reply.
+
+- **Own conversation.** Each user has their own current conversation,
+  history, archived conversations (search and recall see only their own),
+  attachments and "we're done" reset. Isolation is enforced in alfred's
+  database queries, not by the AI.
+- **Tool allow-list.** A tool is offered on a user's turn only if `tools`
+  matches its name as the AI sees it: `alfred_web_search`,
+  `mcparr_find_media`, a prefix such as `alfred_*` or `cookbook_*`, or `*`.
+  A hidden tool is refused as unknown if the AI calls it anyway, and an MCP
+  server none of the entries can match isn't contacted on that user's turns.
+  The system prompt describes only the tools offered.
+- **Admin.** Exactly one user is the admin. `/notify` and `/ask` without a
+  `user` go to the admin. Only the admin is offered brain switching; the
+  brain is shared by everyone, and the admin is also told when a brain fails
+  on someone else's turn.
+- **Reminders.** "Remind ana to buy milk at six" or "remind us" sets a
+  reminder for other users. Each recipient gets it in their own chat, told
+  who set it; the creator and any recipient can list and cancel it.
+- **Per-user MCP tokens.** `mcp_tokens` names a variable per server with that
+  user's bearer token, so a server can tell users apart. Without one, the
+  server's own `token_env` is used.
+
+```toml
+[[users]]
+name = "diogo"
+telegram_user_id = 123456789
+admin = true
+tools = ["*"]
+
+[[users]]
+name = "ana"
+telegram_user_id = 987654321
+address = "madam"
+tools = ["alfred_*", "cookbook_*", "mcparr_find_media", "mcparr_add_media"]
+mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }
+```
+
+Rows in the database name their user. If a user is renamed in the config,
+alfred logs a warning at startup naming the old name; update the rows'
+`user_name` (and `reminders.created_by`) by hand.
+
 ## Service API
 
 Services authenticate with `Authorization: Bearer <token>`, where the token is
@@ -152,10 +206,11 @@ service's name is the sender. A missing, empty or unknown token gets
 
 ### `POST /notify`
 
-Sends the owner a Telegram message directly, prefixed with the service name.
-The AI is not involved and the message doesn't wait behind queued AI work.
-Once delivered, it is recorded in the conversation as a notice from the
-service, so the owner can ask the AI about it.
+Sends a user a Telegram message directly, prefixed with the service name:
+the user named by the optional `user`, or the admin without it. The AI is
+not involved and the message doesn't wait behind queued AI work. Once
+delivered, it is recorded in that user's conversation as a notice from the
+service, so they can ask the AI about it.
 
 ```sh
 curl -sS -X POST http://alfred.lan:8080/notify \
@@ -164,22 +219,25 @@ curl -sS -X POST http://alfred.lan:8080/notify \
   -d '{"text": "Nightly backup failed: disk full"}'
 ```
 
-The owner sees `[backup] Nightly backup failed: disk full`.
+The admin sees `[backup] Nightly backup failed: disk full`. With
+`{"text": "Dune finished downloading", "user": "ana"}`, only ana gets it.
 
 | Status | Body | Meaning |
 | --- | --- | --- |
 | `200` | `{"status": "sent"}` | Telegram accepted the message. |
 | `401` | `{"detail": "missing or invalid bearer token"}` | Bad token. |
-| `422` | validation details | `text` missing, empty or not a string. |
+| `422` | validation details | `text` missing, empty or not a string, or `user` names no configured user (`unknown user 'anna'`); nothing is sent. |
 | `502` | `{"detail": "Telegram did not accept the message; retry later"}` | Delivery failed. Nothing was recorded; retry later. |
 
 ### `POST /ask`
 
-Queues an AI turn on behalf of the service and returns at once. The AI sees
-the recent conversation and the prompt, and decides whether the owner needs
-to know. If it answers exactly `NO_REPLY`, nothing is sent (the run is only
-logged). Otherwise the answer is sent to the owner prefixed with the service
-name, and the prompt and answer become part of the conversation.
+Queues an AI turn on behalf of the service for a user (the optional `user`,
+or the admin) and returns at once. The AI sees that user's recent
+conversation and the prompt, with that user's tools, and decides whether
+they need to know. If it answers exactly `NO_REPLY`, nothing is sent (the
+run is only logged). Otherwise the answer is sent to the user prefixed with
+the service name, and the prompt and answer become part of their
+conversation.
 
 ```sh
 curl -sS -X POST http://alfred.lan:8080/ask \
@@ -192,9 +250,9 @@ curl -sS -X POST http://alfred.lan:8080/ask \
 | --- | --- | --- |
 | `202` | `{"id": 17}` | Queued; `id` is the queue item, as seen in alfred's logs. |
 | `401` | `{"detail": "missing or invalid bearer token"}` | Bad token. |
-| `422` | validation details | `prompt` missing, empty or not a string. |
+| `422` | validation details | `prompt` missing, empty or not a string, or `user` names no configured user; nothing is queued. |
 
-`/ask` items share the queue with the owner's messages: they run one at a
+`/ask` items share the queue with users' messages: they run one at a
 time, in arrival order, and wait while the AI is unreachable.
 
 ### `GET /healthz`
@@ -306,7 +364,7 @@ turn 812 largest tools: cookbook_update_recipe 4120, cookbook_create_recipe 3980
 
 ## Web search and fetch
 
-alfred has two web tools of its own, offered in owner turns and in `/ask`
+alfred has two web tools of its own, offered in chat turns and in `/ask`
 turns:
 
 - **`alfred_web_search`** queries SearXNG (`web.searxng_url`, JSON format
@@ -337,7 +395,7 @@ Characters 0-8000 of 31000. More: call again with start=8000.
 Pages can contain text written to steer the AI, so fetch is limited:
 
 - **URL allowlist.** Fetch opens a URL only if it appeared in a search result
-  earlier in the same turn, or in one of the owner's own messages in the
+  earlier in the same turn, or in one of the user's own messages in the
   conversation window (in `/ask` turns, also in the service's prompt). URLs in
   alfred's replies, in notices, in recalled conversations and links inside
   fetched pages are refused without any request; the model has to search for
@@ -359,7 +417,7 @@ the turn continues. Fetches and refusals are logged at INFO with the URL.
 ## Reminders
 
 alfred keeps timed reminders itself and messages you in the Telegram chat
-when one comes due. In owner turns the model has three tools:
+when one comes due. In chat turns the model has three tools (subject to the user's allow-list):
 `alfred_remind_set`, `alfred_reminders_list` and `alfred_reminder_cancel`
 (to move a reminder, it cancels and sets it again). They are not offered in
 `/ask` or reminder turns.
@@ -414,7 +472,7 @@ text. Recurring reminders aren't supported.
 
 ## Attachments
 
-With an `[attachments]` section, the owner can send photos, images as files
+With an `[attachments]` section, users can send photos, images as files
 (JPEG, PNG, WebP, GIF) and PDFs, each with an optional caption, and ask about
 them over several messages ("what's the total?", then "and the date?").
 Without the section alfred reads text only, as before, and needs no object
@@ -437,7 +495,7 @@ store.
   between upload and the database write) are deleted after a day by a
   background task that runs at startup and then daily.
 - **What the model sees.** Every attachment has a number and reaches the
-  model as a handle in the owner's message:
+  model as a handle in the user's message:
 
   ```
   [Mon 9 Nov 14:05] what's the total? [attachment #7: image "receipt.jpg"]
@@ -451,7 +509,7 @@ store.
   (PNG when transparent); the stored file is not changed. Later turns carry
   only the handle, so a long conversation with many files costs no more per
   turn.
-- **Tools.** On owner turns the model gets `alfred_read_document` (a PDF's
+- **Tools.** On chat turns the model gets `alfred_read_document` (a PDF's
   text by page range, `--- page N ---` blocks up to
   `attachments.read_chars`, then where to continue) and, on a brain with
   vision, `alfred_view_attachment` (an image, or one PDF page rendered as an
@@ -472,7 +530,7 @@ backups don't cover the files: back up the bucket too.
 ## Calculator and dates
 
 The models alfred runs on get arithmetic and calendar questions wrong, so
-alfred has two tools of its own for them, offered on every turn (owner,
+alfred has two tools of its own for them, offered on every turn (chat,
 `/ask` and reminder). The operating rules tell the model never to do these
 in its head and to answer from the tools' results.
 
@@ -507,7 +565,7 @@ Error: cup (volume) can't be converted to gram (mass) without more information, 
 | `between` | `from`, `to` | `Friday 25 December 2026 is 46 days (6 weeks and 4 days) after Monday 9 November 2026.` |
 | `shift` | `date`, `days` / `weeks` / `months` (negative to go back) | `Sunday 31 January 2027 +1 month is Sunday 28 February 2027.` |
 | `weekday` | `date` | `3 March 2027 is a Wednesday.` |
-| `now_in` | `zone` (IANA; none for yours) | `It is 23:05 on Monday 9 November 2026 in Asia/Tokyo, 9 hours ahead of the owner.` |
+| `now_in` | `zone` (IANA; none for yours) | `It is 23:05 on Monday 9 November 2026 in Asia/Tokyo, 9 hours ahead of the user.` |
 
 A month that lacks the day gives its last day. Results outside the years 1 to
 9999, unknown zones and unreadable dates come back to the model as errors.
@@ -556,9 +614,10 @@ server for page fetch) and serves the API on port `8080`.
 2. **Telegram bot.** In Telegram, talk to [@BotFather](https://t.me/BotFather),
    send `/newbot`, and keep the token it gives you
    (`ALFRED_TELEGRAM_BOT_TOKEN`). Find your own user ID, for example by
-   messaging [@userinfobot](https://t.me/userinfobot), and put it in
-   `telegram.owner_user_id`. Then open a private chat with your bot and
-   press Start. Don't add the bot to groups; alfred ignores them.
+   messaging [@userinfobot](https://t.me/userinfobot), and put it in a
+   `[[users]]` entry's `telegram_user_id` (with `admin = true`); do the same
+   for each other user. Then each opens a private chat with the bot and
+   presses Start. Don't add the bot to groups; alfred ignores them.
 
 3. **MCP tokens.** Create a token for alfred on each MCP server (see
    [MCP servers](#mcp-servers)): an mcparr token with the scope you choose, and

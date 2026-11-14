@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 
@@ -12,18 +13,22 @@ from alfred.agent.brains import Brains
 from alfred.agent.turn import Agent
 from alfred.attachments.tools import (
     READ_DOCUMENT,
+    READ_ONLY_NOTE,
     TEXT_ONLY_NOTE,
     VIEW_ATTACHMENT,
+    VIEW_ONLY_NOTE,
     VISION_NOTE,
     AttachmentTools,
 )
-from alfred.config import AttachmentsConfig, BrainEntry
+from alfred.config import AttachmentsConfig, BrainEntry, User
 from alfred.history import History
 from alfred.memory.search import ConversationSearch
-from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
+from alfred.tools.base import AllowList, AttemptContext, ToolOutcome, TurnInput
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.helpers import (
+    ANA,
+    DIOGO,
     FakeEmbedder,
     FakeModel,
     FakeStore,
@@ -54,8 +59,10 @@ def tools(
     )
 
 
-async def call(toolset: AttachmentTools, name: str, **arguments: object) -> ToolOutcome:
-    attempt = AttemptContext(TurnInput("owner", "x", 1))
+async def call(
+    toolset: AttachmentTools, name: str, *, user: User = DIOGO, **arguments: object
+) -> ToolOutcome:
+    attempt = AttemptContext(TurnInput("chat", "x", 1, user=user))
     return await toolset.call(name, json.dumps(arguments), attempt)
 
 
@@ -75,7 +82,7 @@ def size(outcome: ToolOutcome) -> tuple[int, int]:
 
 
 async def test_owner_turn_on_a_vision_brain(sessions: async_sessionmaker[AsyncSession]) -> None:
-    opened = await tools(sessions, FakeStore()).open(TurnInput("owner", "hi", 1))
+    opened = await tools(sessions, FakeStore()).open(TurnInput("chat", "hi", 1, user=DIOGO))
     assert opened is not None
     assert [d["function"]["name"] for d in opened.definitions] == [VIEW_ATTACHMENT, READ_DOCUMENT]
     (note,) = opened.prompt_notes
@@ -86,7 +93,7 @@ async def test_owner_turn_on_a_vision_brain(sessions: async_sessionmaker[AsyncSe
 
 async def test_text_only_brain(sessions: async_sessionmaker[AsyncSession]) -> None:
     opened = await tools(sessions, FakeStore(), brains(vision=False)).open(
-        TurnInput("owner", "hi", 1)
+        TurnInput("chat", "hi", 1, user=DIOGO)
     )
     assert opened is not None
     assert [d["function"]["name"] for d in opened.definitions] == [READ_DOCUMENT]
@@ -99,8 +106,8 @@ async def test_not_offered_on_ask_and_reminder_turns(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     toolset = tools(sessions, FakeStore())
-    assert await toolset.open(TurnInput("ask", "x", 1, "disk-check")) is None
-    assert await toolset.open(TurnInput("reminder", "x", 1)) is None
+    assert await toolset.open(TurnInput("ask", "x", 1, "disk-check", user=DIOGO)) is None
+    assert await toolset.open(TurnInput("reminder", "x", 1, user=DIOGO)) is None
 
 
 # --- view -------------------------------------------------------------------------
@@ -111,7 +118,7 @@ async def test_look_again(sessions: async_sessionmaker[AsyncSession]) -> None:
     await owner_with_files(
         sessions, "total?", [image_file(name="receipt.jpg")], store, [image_bytes(4000, 3000)]
     )
-    await History(sessions).append("owner", "and the date on it?")
+    await History(sessions).append("diogo", "user", "and the date on it?")
     outcome = await call(tools(sessions, store), VIEW_ATTACHMENT, id=1)
     assert outcome.ok
     assert outcome.text == '[attachment #1: image "receipt.jpg"]: the image, attached.'
@@ -166,16 +173,18 @@ async def archived_with_invoice(
     sessions: async_sessionmaker[AsyncSession], store: FakeStore
 ) -> int:
     await invoice(sessions, store)
-    reset = await History(sessions).reset()
+    reset = await History(sessions).reset("diogo")
     assert reset.archived_id is not None
-    await History(sessions).append("owner", "about that invoice")
+    await History(sessions).append("diogo", "user", "about that invoice")
     return reset.archived_id
 
 
 async def test_from_a_recalled_conversation(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     archived = await archived_with_invoice(sessions, store)
-    recall = await ConversationSearch(make_config(), sessions, FakeEmbedder()).recall(archived)
+    recall = await ConversationSearch(make_config(), sessions, FakeEmbedder()).recall(
+        "diogo", archived
+    )
     assert recall.ok and "[attachment #1: PDF" in recall.text
     outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1, pages="2")
     assert outcome.ok and PAGES[1] in outcome.text
@@ -198,10 +207,10 @@ async def test_recalled_inside_a_recalled_conversation_is_not_reachable(
     store = FakeStore()
     search = ConversationSearch(make_config(), sessions, FakeEmbedder())
     first = await archived_with_invoice(sessions, store)  # #1 has the invoice
-    assert (await search.recall(first)).ok  # recalled into #2
-    second = (await History(sessions).reset()).archived_id
-    await History(sessions).append("owner", "hi")
-    assert second is not None and (await search.recall(second)).ok  # #2 into #3
+    assert (await search.recall("diogo", first)).ok  # recalled into #2
+    second = (await History(sessions).reset("diogo")).archived_id
+    await History(sessions).append("diogo", "user", "hi")
+    assert second is not None and (await search.recall("diogo", second)).ok  # #2 into #3
     outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1)
     assert not outcome.ok and "no attachment #1" in outcome.text
 
@@ -301,7 +310,7 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     model = FakeModel([calls((READ_DOCUMENT, '{"id": 1}')), text("Read.")])
     item = (await owner_with_files(sessions, "read it", []))[0]
     agent = Agent(config, model, History(sessions), sessions, toolsets=[toolset], brains=the_brains)
-    await agent.run(TurnInput("owner", "read it", item))
+    await agent.run(TurnInput("chat", "read it", item, user=DIOGO))
     result = model.requests[1][0][-1]["content"]
     assert len(result) > 6000
     assert all(p in result for p in pages)
@@ -324,9 +333,71 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     agent = Agent(
         make_config(), model, History(sessions), sessions, toolsets=[toolset], brains=the_brains
     )
-    await agent.run(TurnInput("owner", "what's on it?", item))
+    await agent.run(TurnInput("chat", "what's on it?", item, user=DIOGO))
     assert model.models[:2] == ["bonsai-2:27b", GEMMA]
     assert model.requests[2][0][-1]["content"] == (
         'Error: the current brain "gemma" can\'t see images.'
     )
     assert store.gets == []
+
+
+# --- Per user (change add-multiple-users) ----------------------------------------------
+
+
+async def test_another_users_attachment_is_not_reachable(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    store = FakeStore()
+    await invoice(sessions, store)  # diogo's, attachment 1
+    await History(sessions).append("ana", "user", "and the invoice?")
+    toolset = tools(sessions, store)
+    for name in (READ_DOCUMENT, VIEW_ATTACHMENT):
+        outcome = await call(toolset, name, user=ANA, id=1)
+        assert not outcome.ok
+        assert outcome.text == "Error: there is no attachment #1 in this conversation."
+    assert (await call(toolset, READ_DOCUMENT, id=1, pages="1")).ok
+
+
+async def test_attachments_belong_to_the_sender(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    store = FakeStore()
+    await owner_with_files(  # attachment 1, ana's
+        sessions, "her receipt", [image_file("attachments/r")], store, [image_bytes()], "ana"
+    )
+    await owner_with_files(  # attachment 2, diogo's
+        sessions, "mine", [image_file("attachments/s")], store, [image_bytes()]
+    )
+    toolset = tools(sessions, store)
+    assert (await call(toolset, VIEW_ATTACHMENT, user=ANA, id=1)).ok
+    assert not (await call(toolset, VIEW_ATTACHMENT, user=ANA, id=2)).ok
+    assert not (await call(toolset, VIEW_ATTACHMENT, id=1)).ok
+    assert (await call(toolset, VIEW_ATTACHMENT, id=2)).ok
+
+
+def chat(allow: AllowList) -> TurnInput:
+    return TurnInput("chat", "hi", 1, user=dataclasses.replace(ANA, tools=allow))
+
+
+async def test_only_allowed_tools_are_described(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    toolset = tools(sessions, FakeStore())
+    read_only = await toolset.open(chat(AllowList.of("alfred_read_document")))
+    assert read_only is not None
+    assert [d["function"]["name"] for d in read_only.definitions] == [READ_DOCUMENT]
+    assert [n.text for n in read_only.prompt_notes] == [READ_ONLY_NOTE]
+    assert "alfred_view_attachment" not in READ_ONLY_NOTE
+    view_only = await toolset.open(chat(AllowList.of("alfred_view_attachment")))
+    assert view_only is not None
+    assert [n.text for n in view_only.prompt_notes] == [VIEW_ONLY_NOTE]
+    assert "alfred_read_document" not in VIEW_ONLY_NOTE
+    both = await toolset.open(chat(AllowList.of("alfred_*")))
+    assert both is not None and [n.text for n in both.prompt_notes] == [VISION_NOTE]
+
+
+async def test_no_attachment_tools_allowed(sessions: async_sessionmaker[AsyncSession]) -> None:
+    toolset = tools(sessions, FakeStore())
+    assert await toolset.open(chat(AllowList.of("cookbook_*"))) is None
+    text_only = tools(sessions, FakeStore(), brains(vision=False))
+    assert await text_only.open(chat(AllowList.of("alfred_view_attachment"))) is None

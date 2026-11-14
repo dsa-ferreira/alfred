@@ -11,8 +11,8 @@ from tests.memory.test_search import at, seed
 
 TRANSCRIPT = (
     '#41 "Chicken thighs recipe", Tue 3 Nov 2026 to Tue 3 Nov 2026\n'
-    "Owner: chicken thighs tonight?\n"
-    "Owner: lemon and garlic, 200°C"
+    "User: chicken thighs tonight?\n"
+    "User: lemon and garlic, 200°C"
 )
 
 
@@ -41,9 +41,9 @@ async def recall_entries(sessions: async_sessionmaker[AsyncSession]) -> list[Ent
 
 async def test_recall_by_id(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed_41(sessions)
-    await History(sessions).append("owner", "remember conversation 41")
-    current = await History(sessions).current_conversation_id()
-    result = await memory(sessions).recall(41)
+    await History(sessions).append("diogo", "user", "remember conversation 41")
+    current = await History(sessions).current_conversation_id("diogo")
+    result = await memory(sessions).recall("diogo", 41)
     assert result.ok
     assert result.text == TRANSCRIPT
     (entry,) = await recall_entries(sessions)
@@ -55,12 +55,12 @@ async def test_recall_by_id(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 async def test_id_given_as_text(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed_41(sessions)
-    assert (await memory(sessions).recall("#41")).ok
+    assert (await memory(sessions).recall("diogo", "#41")).ok
 
 
 async def test_unknown_id(sessions: async_sessionmaker[AsyncSession]) -> None:
-    await History(sessions).append("owner", "remember conversation 9999")
-    result = await memory(sessions).recall(9999)
+    await History(sessions).append("diogo", "user", "remember conversation 9999")
+    result = await memory(sessions).recall("diogo", 9999)
     assert not result.ok
     assert result.text == "Error: there is no conversation #9999."
     assert await recall_entries(sessions) == []
@@ -68,14 +68,14 @@ async def test_unknown_id(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 async def test_bad_id(sessions: async_sessionmaker[AsyncSession]) -> None:
     for value in (None, "chicken", 0, -3, True, [41]):
-        result = await memory(sessions).recall(value)
+        result = await memory(sessions).recall("diogo", value)
         assert not result.ok and "conversation number" in result.text
 
 
 async def test_current_conversation_refused(sessions: async_sessionmaker[AsyncSession]) -> None:
-    await History(sessions).append("owner", "hi")
-    current = await History(sessions).current_conversation_id()
-    result = await memory(sessions).recall(current)
+    await History(sessions).append("diogo", "user", "hi")
+    current = await History(sessions).current_conversation_id("diogo")
+    result = await memory(sessions).recall("diogo", current)
     assert not result.ok and "current conversation" in result.text
     assert await recall_entries(sessions) == []
 
@@ -83,8 +83,8 @@ async def test_current_conversation_refused(sessions: async_sessionmaker[AsyncSe
 async def test_recalled_twice(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed_41(sessions)
     mem = memory(sessions)
-    assert (await mem.recall(41)).ok
-    again = await mem.recall(41)
+    assert (await mem.recall("diogo", 41)).ok
+    again = await mem.recall("diogo", 41)
     assert not again.ok and "already in this conversation" in again.text
     assert len(await recall_entries(sessions)) == 1
 
@@ -92,9 +92,9 @@ async def test_recalled_twice(sessions: async_sessionmaker[AsyncSession]) -> Non
 async def test_recall_again_after_reset(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed_41(sessions)
     mem = memory(sessions)
-    assert (await mem.recall(41)).ok
-    await History(sessions).reset()
-    assert (await mem.recall(41)).ok  # a new conversation may recall it again
+    assert (await mem.recall("diogo", 41)).ok
+    await History(sessions).reset("diogo")
+    assert (await mem.recall("diogo", 41)).ok  # a new conversation may recall it again
 
 
 async def test_long_conversation_is_capped(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -107,14 +107,14 @@ async def test_long_conversation_is_capped(sessions: async_sessionmaker[AsyncSes
         started=at(3),
         entries=lines,
     )
-    result = await memory(sessions, recall_max_chars=32000).recall(41)
+    result = await memory(sessions, recall_max_chars=32000).recall("diogo", 41)
     assert result.ok
     assert len(result.text) <= 32000
     head, tail = result.text.split(f"\n{OMITTED}\n")
     assert head == '#41 "Long chat", Tue 3 Nov 2026 to Tue 3 Nov 2026\n' + (
         "Summary: A long talk about everything."
     )
-    assert tail.startswith("Owner: line ")  # starts at a line boundary
+    assert tail.startswith("User: line ")  # starts at a line boundary
     assert tail.endswith("line 0499 " + "x" * 90)
     (entry,) = await recall_entries(sessions)
     assert entry.text == result.text
@@ -123,7 +123,7 @@ async def test_long_conversation_is_capped(sessions: async_sessionmaker[AsyncSes
 async def test_cap_from_config(sessions: async_sessionmaker[AsyncSession]) -> None:
     lines = tuple(f"step {i}: " + "y" * 40 for i in range(10))
     await seed(sessions, 41, "Steps", "Ten steps.", started=at(3), entries=lines)
-    result = await memory(sessions, recall_max_chars=300).recall(41)
+    result = await memory(sessions, recall_max_chars=300).recall("diogo", 41)
     assert len(result.text) <= 300
     assert "Summary: Ten steps." in result.text and OMITTED in result.text
     assert result.text.endswith("step 9: " + "y" * 40)
@@ -131,7 +131,7 @@ async def test_cap_from_config(sessions: async_sessionmaker[AsyncSession]) -> No
 
 async def test_tiny_cap_keeps_the_end(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed_41(sessions)
-    result = await memory(sessions, recall_max_chars=100).recall(41)
+    result = await memory(sessions, recall_max_chars=100).recall("diogo", 41)
     assert len(result.text) <= 100
     # No room for the summary: the header, the marker and as much of the end as fits.
     assert result.text.startswith('#41 "Chicken thighs recipe", Tue 3 Nov 2026')
@@ -149,6 +149,41 @@ async def test_recall_inside_recalled_conversation_shows_title_only(
                 conversation_id=50, kind="recall", text="the whole #41", recalled_conversation_id=41
             )
         )
-    result = await memory(sessions).recall(50)
+    result = await memory(sessions).recall("diogo", 50)
     assert '[recalled #41 "Chicken thighs recipe"]' in result.text
     assert "the whole #41" not in result.text
+
+
+# --- Another user's conversation (change add-multiple-users) -------------------------
+
+
+async def test_another_users_conversation_is_refused_as_unknown(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed_41(sessions)  # diogo's
+    await History(sessions).append("ana", "user", "remember conversation 41")
+    result = await memory(sessions).recall("ana", 41)
+    assert not result.ok
+    assert result.text == "Error: there is no conversation #41."
+    assert await recall_entries(sessions) == []
+
+
+async def test_another_users_current_conversation_is_refused_as_unknown(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await History(sessions).append("diogo", "user", "private")
+    diogo = await History(sessions).current_conversation_id("diogo")
+    result = await memory(sessions).recall("ana", diogo)
+    assert result.text == f"Error: there is no conversation #{diogo}."
+    assert await recall_entries(sessions) == []
+
+
+async def test_recall_goes_into_the_users_own_conversation(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed(sessions, 50, "Her trip", "Lisbon to Porto.", started=at(4), user="ana")
+    await History(sessions).append("diogo", "user", "hi")
+    assert (await memory(sessions).recall("ana", 50)).ok
+    (entry,) = await recall_entries(sessions)
+    assert entry.conversation_id == await History(sessions).current_conversation_id("ana")
+    assert [e.kind for e in await History(sessions).recent("diogo", 30)] == ["user"]

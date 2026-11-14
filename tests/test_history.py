@@ -23,13 +23,13 @@ def unstamped(messages: list[dict[str, str]]) -> list[dict[str, str]]:
 async def test_history_survives_restart(
     sessions: async_sessionmaker[AsyncSession], database_url: str
 ) -> None:
-    await History(sessions).append("owner", "add Dune")
-    await History(sessions).append("assistant", "Added.")
+    await History(sessions).append("diogo", "user", "add Dune")
+    await History(sessions).append("diogo", "assistant", "Added.")
 
     # A fresh engine stands in for a restarted process.
     engine = make_engine(database_url)
     try:
-        entries = await History(make_session_factory(engine)).recent(30)
+        entries = await History(make_session_factory(engine)).recent("diogo", 30)
     finally:
         await engine.dispose()
     assert [e.text for e in entries] == ["add Dune", "Added."]
@@ -38,8 +38,8 @@ async def test_history_survives_restart(
 async def test_bounded_context_window(sessions: async_sessionmaker[AsyncSession]) -> None:
     history = History(sessions)
     for i in range(50):
-        await history.append("owner", f"m{i}")
-    entries = await history.recent(30)
+        await history.append("diogo", "user", f"m{i}")
+    entries = await history.recent("diogo", 30)
     assert [e.text for e in entries] == [f"m{i}" for i in range(20, 50)]
 
 
@@ -47,9 +47,9 @@ async def test_notices_are_part_of_the_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    await history.append("notice", "Nightly backup failed: disk full", source="backup")
-    await history.append("owner", "what's eating the space?")
-    messages = unstamped(to_messages(await history.recent(30)))
+    await history.append("diogo", "notice", "Nightly backup failed: disk full", source="backup")
+    await history.append("diogo", "user", "what's eating the space?")
+    messages = unstamped(to_messages(await history.recent("diogo", 30)))
     assert messages == [
         {"role": "user", "content": "[notice:backup] Nightly backup failed: disk full"},
         {"role": "user", "content": "what's eating the space?"},
@@ -58,7 +58,7 @@ async def test_notices_are_part_of_the_conversation(
 
 def test_message_mapping() -> None:
     entries = [
-        HistoryEntry("owner", None, "hi"),
+        HistoryEntry("user", None, "hi"),
         HistoryEntry("assistant", None, "hello"),
         HistoryEntry("ask_prompt", "disk-check", "93% full"),
         HistoryEntry("ask_reply", "disk-check", "Disk is filling up"),
@@ -75,14 +75,14 @@ async def test_archived_conversations_are_kept(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "old topic")
-    old = await history.current_conversation_id()
-    await history.append("assistant", "ok")
-    reset = await history.reset()
+    await history.append("diogo", "user", "old topic")
+    old = await history.current_conversation_id("diogo")
+    await history.append("diogo", "assistant", "ok")
+    reset = await history.reset("diogo")
     assert reset.archived_id == old
     assert reset.new_id != old
 
-    assert await history.recent(30) == []
+    assert await history.recent("diogo", 30) == []
     async with sessions() as session:
         archived = await session.get(Conversation, old)
         assert archived is not None and archived.ended_at is not None
@@ -96,20 +96,20 @@ async def test_notice_after_reset_lands_in_new_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "before")
-    new = (await history.reset()).new_id
-    await history.append("notice", "backup done", source="backup")
-    assert await history.current_conversation_id() == new
-    assert [e.text for e in await history.recent(30)] == ["backup done"]
+    await history.append("diogo", "user", "before")
+    new = (await history.reset("diogo")).new_id
+    await history.append("diogo", "notice", "backup done", source="backup")
+    assert await history.current_conversation_id("diogo") == new
+    assert [e.text for e in await history.recent("diogo", 30)] == ["backup done"]
 
 
 async def test_reset_without_current_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    reset = await history.reset()
+    reset = await history.reset("diogo")
     assert reset.archived_id is None
-    assert await history.current_conversation_id() == reset.new_id
+    assert await history.current_conversation_id("diogo") == reset.new_id
 
 
 # --- recalls in the window -------------------------------------------------------
@@ -118,12 +118,18 @@ async def test_reset_without_current_conversation(
 async def add_archived(sessions: async_sessionmaker[AsyncSession], cid: int, title: str) -> None:
     async with sessions.begin() as session:
         session.add(
-            Conversation(id=cid, ended_at=func.now(), title=title, summary=f"Summary of {title}.")
+            Conversation(
+                id=cid,
+                user_name="diogo",
+                ended_at=func.now(),
+                title=title,
+                summary=f"Summary of {title}.",
+            )
         )
 
 
 async def add_recall(sessions: async_sessionmaker[AsyncSession], cid: int, text_: str) -> None:
-    current = await History(sessions).current_conversation_id()
+    current = await History(sessions).current_conversation_id("diogo")
     async with sessions.begin() as session:
         session.add(
             Entry(
@@ -138,10 +144,10 @@ async def add_recall(sessions: async_sessionmaker[AsyncSession], cid: int, text_
 async def test_recall_in_the_window(sessions: async_sessionmaker[AsyncSession]) -> None:
     await add_archived(sessions, 41, "Chicken thighs recipe")
     history = History(sessions)
-    await history.append("owner", "remember the chicken recipe?")
+    await history.append("diogo", "user", "remember the chicken recipe?")
     await add_recall(sessions, 41, '#41 "Chicken thighs recipe", ...\nOwner: chicken?')
-    await history.append("assistant", "Lemon and garlic, sir.")
-    messages = unstamped(to_messages(await history.recent(30)))
+    await history.append("diogo", "assistant", "Lemon and garlic, sir.")
+    messages = unstamped(to_messages(await history.recent("diogo", 30)))
     assert messages[1] == {
         "role": "user",
         "content": '[recall:#41 "Chicken thighs recipe"] #41 "Chicken thighs recipe", ...\n'
@@ -154,9 +160,9 @@ async def test_only_newest_recall_in_full(sessions: async_sessionmaker[AsyncSess
     await add_archived(sessions, 57, "Disk full")
     history = History(sessions)
     await add_recall(sessions, 41, "full transcript of 41")
-    await history.append("owner", "and the disk one?")
+    await history.append("diogo", "user", "and the disk one?")
     await add_recall(sessions, 57, "full transcript of 57")
-    messages = [m["content"] for m in unstamped(to_messages(await history.recent(30)))]
+    messages = [m["content"] for m in unstamped(to_messages(await history.recent("diogo", 30)))]
     assert messages == [
         '[recall:#41 "Chicken thighs recipe"] Summary: Summary of Chicken thighs recipe.',
         "and the disk one?",
@@ -167,11 +173,11 @@ async def test_only_newest_recall_in_full(sessions: async_sessionmaker[AsyncSess
 async def test_recall_counts_as_one_entry(sessions: async_sessionmaker[AsyncSession]) -> None:
     await add_archived(sessions, 41, "Chicken thighs recipe")
     history = History(sessions)
-    await history.append("owner", "m1")
+    await history.append("diogo", "user", "m1")
     await add_recall(sessions, 41, "line\n" * 1000)
-    await history.append("owner", "m2")
-    entries = await history.recent(2)
-    assert [e.kind for e in entries] == ["recall", "owner"]
+    await history.append("diogo", "user", "m2")
+    entries = await history.recent("diogo", 2)
+    assert [e.kind for e in entries] == ["recall", "user"]
     assert entries[0].recalled_id == 41
     assert entries[0].recalled_title == "Chicken thighs recipe"
     assert entries[0].recalled_summary == "Summary of Chicken thighs recipe."
@@ -189,12 +195,14 @@ DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
 
 
 async def test_reply_to_a_reminder(sessions: async_sessionmaker[AsyncSession]) -> None:
-    reminder_id = await Reminders(sessions).set("call mum", DUE)
+    reminder_id = await Reminders(sessions).set("call mum", DUE, "diogo", ["diogo"])
     history = History(sessions)
-    await history.append("reminder", "call mum", reminder_id=reminder_id)
-    await history.append("reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id)
-    await history.append("owner", "remind me again in an hour")
-    messages = unstamped(to_messages(await history.recent(30), LISBON))
+    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
+    )
+    await history.append("diogo", "user", "remind me again in an hour")
+    messages = unstamped(to_messages(await history.recent("diogo", 30), LISBON))
     assert messages == [
         {
             "role": "user",
@@ -208,10 +216,10 @@ async def test_reply_to_a_reminder(sessions: async_sessionmaker[AsyncSession]) -
 async def test_reminder_due_in_the_owners_timezone(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    reminder_id = await Reminders(sessions).set("call mum", DUE)
+    reminder_id = await Reminders(sessions).set("call mum", DUE, "diogo", ["diogo"])
     history = History(sessions)
-    await history.append("reminder", "call mum", reminder_id=reminder_id)
-    [message] = unstamped(to_messages(await history.recent(30), ZoneInfo("Asia/Tokyo")))
+    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    [message] = unstamped(to_messages(await history.recent("diogo", 30), ZoneInfo("Asia/Tokyo")))
     label = f"[reminder:#{reminder_id} due Tuesday 10 November 2026, 02:00]"
     assert message["content"] == f"{label} call mum"
 
@@ -220,14 +228,16 @@ async def test_reminder_set_in_an_archived_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "remind me at five to call mum")
-    set_in = await history.current_conversation_id()
-    reminder_id = await Reminders(sessions).set("call mum", DUE)
-    reset = await history.reset()
+    await history.append("diogo", "user", "remind me at five to call mum")
+    set_in = await history.current_conversation_id("diogo")
+    reminder_id = await Reminders(sessions).set("call mum", DUE, "diogo", ["diogo"])
+    reset = await history.reset("diogo")
     assert reset.archived_id == set_in
 
-    await history.append("reminder", "call mum", reminder_id=reminder_id)
-    await history.append("reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id)
+    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
+    )
     async with sessions() as session:
         rows = (
             await session.execute(
@@ -246,8 +256,8 @@ async def test_recent_reads_when_each_entry_was_recorded(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     before = datetime.now(UTC)
-    await History(sessions).append("owner", "hi")
-    [entry] = await History(sessions).recent(30)
+    await History(sessions).append("diogo", "user", "hi")
+    [entry] = await History(sessions).recent("diogo", 30)
     assert entry.created_at is not None
     assert (
         before - timedelta(minutes=1) < entry.created_at < datetime.now(UTC) + timedelta(minutes=1)
@@ -256,7 +266,7 @@ async def test_recent_reads_when_each_entry_was_recorded(
 
 def test_user_messages_start_with_their_time() -> None:
     entries = [
-        HistoryEntry("owner", None, "what time is it?", created_at=AT),
+        HistoryEntry("user", None, "what time is it?", created_at=AT),
         HistoryEntry("assistant", None, "It is just past two.", created_at=AT),
         HistoryEntry("notice", "mcparr", "Dune finished", created_at=AT + timedelta(minutes=15)),
         HistoryEntry("ask_prompt", "disk-check", "93% full", created_at=AT),
@@ -280,21 +290,21 @@ def test_user_messages_start_with_their_time() -> None:
 
 
 def test_message_time_in_the_owners_timezone() -> None:
-    entry = HistoryEntry("owner", None, "hi", created_at=AT)
+    entry = HistoryEntry("user", None, "hi", created_at=AT)
     assert to_messages([entry], ZoneInfo("Asia/Tokyo"))[0]["content"] == "[Mon 9 Nov 23:05] hi"
 
 
 def test_message_times_never_change() -> None:
     # The text depends only on the entry and the zone, never on the time now:
     # a day later it is still "Mon 9 Nov", not "yesterday".
-    entry = HistoryEntry("owner", None, "hi", created_at=AT)
+    entry = HistoryEntry("user", None, "hi", created_at=AT)
     assert to_messages([entry], LISBON) == to_messages([entry], LISBON)
     assert to_messages([entry], LISBON)[0]["content"] == "[Mon 9 Nov 14:05] hi"
 
 
 async def test_stored_entries_are_stamped(sessions: async_sessionmaker[AsyncSession]) -> None:
-    await History(sessions).append("owner", "hi")
-    [message] = to_messages(await History(sessions).recent(30), LISBON)
+    await History(sessions).append("diogo", "user", "hi")
+    [message] = to_messages(await History(sessions).recent("diogo", 30), LISBON)
     assert STAMP.match(message["content"])
     assert strip_stamp(message["content"]) == "hi"
 
@@ -314,7 +324,7 @@ INVOICE_P1 = "Invoice 2026-118 from Lisbon Plumbing, total 240.00 EUR"
 async def test_pdf_handle(sessions: async_sessionmaker[AsyncSession]) -> None:
     pdf = pdf_file([INVOICE_P1, *(f"page {n} text" for n in range(2, 13))])
     await owner_with_files(sessions, "file this", [pdf])
-    (entry,) = await History(sessions).recent(30)
+    (entry,) = await History(sessions).recent("diogo", 30)
     (ref,) = entry.attachments
     assert (ref.kind, ref.page_count, ref.first_page) == ("pdf", 12, INVOICE_P1)
     assert unstamped(to_messages([entry])) == [
@@ -329,7 +339,7 @@ async def test_scanned_pdf_handle_without_caption(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     await owner_with_files(sessions, "", [pdf_file(["12"], name=None)])
-    (entry,) = await History(sessions).recent(30)
+    (entry,) = await History(sessions).recent("diogo", 30)
     assert unstamped(to_messages([entry])) == [
         {"role": "user", "content": "[attachment #1: PDF, 1 page, scanned]"}
     ]
@@ -337,14 +347,14 @@ async def test_scanned_pdf_handle_without_caption(
 
 async def test_owner_entry_with_two_images(sessions: async_sessionmaker[AsyncSession]) -> None:
     history = History(sessions)
-    await history.append("owner", "earlier")
+    await history.append("diogo", "user", "earlier")
     await owner_with_files(
         sessions,
         "which is cheapest?",
         [image_file("attachments/a", "shop-a.jpg"), image_file("attachments/b")],
     )
-    await history.append("assistant", "The second.")
-    entries = await history.recent(30)
+    await history.append("diogo", "assistant", "The second.")
+    entries = await history.recent("diogo", 30)
     assert [len(e.attachments) for e in entries] == [0, 2, 0]
     assert [r.object_key for r in entries[1].attachments] == ["attachments/a", "attachments/b"]
     assert unstamped(to_messages(entries)) == [
@@ -360,7 +370,7 @@ async def test_owner_entry_with_two_images(sessions: async_sessionmaker[AsyncSes
 
 async def test_inline_entry_gets_image_parts(sessions: async_sessionmaker[AsyncSession]) -> None:
     _, entry_id = await owner_with_files(sessions, "what's this?", [image_file()])
-    (entry,) = await History(sessions).recent(30)
+    (entry,) = await History(sessions).recent("diogo", 30)
     image = ModelImage(b"jpeg", "image/jpeg")
     (message,) = to_messages(
         [entry], inline={entry_id: Inline(["[attachment #1: image]"], [image])}
@@ -379,3 +389,79 @@ def test_handle_note() -> None:
     assert handle(ref, "this brain can't see images") == (
         '[attachment #7: image "receipt.jpg" (this brain can\'t see images)]'
     )
+
+
+# --- One current conversation per user (change add-multiple-users) -----------------
+
+
+async def test_separate_conversations(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    await history.append("diogo", "user", "that chicken recipe?")
+    await history.append("diogo", "assistant", "Lemon and garlic.")
+    await history.append("ana", "user", "what was that recipe?")
+    assert [e.text for e in await history.recent("ana", 30)] == ["what was that recipe?"]
+    assert [e.text for e in await history.recent("diogo", 30)] == [
+        "that chicken recipe?",
+        "Lemon and garlic.",
+    ]
+    diogo, ana = (
+        await history.current_conversation_id("diogo"),
+        await history.current_conversation_id("ana"),
+    )
+    assert diogo != ana
+    async with sessions() as session:
+        rows = await session.execute(select(Conversation.id, Conversation.user_name))
+        owners = {cid: name for cid, name in rows}
+    assert owners == {diogo: "diogo", ana: "ana"}
+
+
+async def test_first_conversation_created_lazily(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    assert await history.recent("ana", 30) == []
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(Conversation)) == 0
+    first = await history.current_conversation_id("ana")
+    assert await history.current_conversation_id("ana") == first
+
+
+async def test_reset_leaves_the_other_user_untouched(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    await history.append("diogo", "user", "still going")
+    await history.append("ana", "user", "we're done")
+    diogo = await history.current_conversation_id("diogo")
+    ana = await history.current_conversation_id("ana")
+
+    reset = await history.reset("ana")
+    assert reset.archived_id == ana and reset.new_id not in (ana, diogo)
+    assert await history.current_conversation_id("ana") == reset.new_id
+    assert await history.current_conversation_id("diogo") == diogo
+    assert [e.text for e in await history.recent("diogo", 30)] == ["still going"]
+    assert await history.recent("ana", 30) == []
+
+
+async def test_notice_recorded_for_the_target_user(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    await history.append("diogo", "user", "hi")
+    await history.append("ana", "notice", "Dune finished", source="mcparr")
+    assert [(e.kind, e.text) for e in await history.recent("ana", 30)] == [
+        ("notice", "Dune finished")
+    ]
+    assert [e.kind for e in await history.recent("diogo", 30)] == ["user"]
+
+
+async def test_reminder_set_by_someone_else(sessions: async_sessionmaker[AsyncSession]) -> None:
+    reminder_id = await Reminders(sessions).set("buy milk", DUE, "diogo", ["ana", "diogo"])
+    history = History(sessions)
+    for user in ("ana", "diogo"):
+        await history.append(user, "reminder", "buy milk", reminder_id=reminder_id)
+    ana = unstamped(to_messages(await history.recent("ana", 30), LISBON))
+    diogo = unstamped(to_messages(await history.recent("diogo", 30), LISBON))
+    assert ana[0]["content"].startswith(f"[reminder:#{reminder_id} due ")
+    assert ana[0]["content"].endswith(", set by diogo] buy milk")
+    assert "set by" not in diogo[0]["content"]

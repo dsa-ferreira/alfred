@@ -4,8 +4,8 @@ Every non-secret setting lives in the TOML file (path from ``ALFRED_CONFIG``,
 default ``alfred.toml``). Secrets are only read from environment variables:
 ``ALFRED_TELEGRAM_BOT_TOKEN``, ``ALFRED_DATABASE_URL``, the object store key
 (``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``, only with
-``[attachments]``) and the variables named by each service's and MCP server's
-``token_env``.
+``[attachments]``), the variables named by each service's and MCP server's
+``token_env``, and those named in users' ``mcp_tokens``.
 
 Everything is validated once. All problems are collected into one
 :class:`ConfigError` whose messages name keys and variables but never include
@@ -14,11 +14,12 @@ a secret value.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import tomllib
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -37,6 +38,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from alfred.tools.base import AllowList
 
 CONFIG_ENV = "ALFRED_CONFIG"
 DEFAULT_CONFIG_PATH = "alfred.toml"
@@ -106,7 +109,10 @@ class _Section(BaseModel):
 
 
 class TelegramConfig(_Section):
-    owner_user_id: PositiveInt
+    """No settings of its own: who may chat is set by ``[[users]]``.
+
+    Kept so the removed ``owner_user_id`` is reported as an unknown key.
+    """
 
 
 class BrainEntry(_Section):
@@ -132,10 +138,9 @@ class AIConfig(_Section):
     max_requests_per_turn: PositiveInt = 12
     tool_result_max_chars: PositiveInt = 4000
     persona: Annotated[str, Field(min_length=1)] | None = None
-    owner_address: Annotated[str, Field(min_length=1)] = "sir"
-    # The owner's timezone: today's date in the prompt, and search dates.
+    # alfred's timezone: today's date in the prompt, reminders and search dates.
     timezone: TimeZoneName = "Europe/Lisbon"
-    # The brains the owner can switch between: alias -> model tag, or
+    # The brains the admin can switch between: alias -> model tag, or
     # alias -> { model = tag, vision = true }. Both are read as a BrainEntry.
     models: Annotated[dict[Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
 
@@ -221,7 +226,7 @@ class RemindersConfig(_Section):
 
 
 class AttachmentsConfig(_Section):
-    """Images and PDFs from the owner (change add-attachments, design D1 and D10).
+    """Images and PDFs from users (change add-attachments, design D1 and D10).
 
     The section's presence turns attachments on; the object store key comes
     from ``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``.
@@ -231,7 +236,7 @@ class AttachmentsConfig(_Section):
     bucket: Annotated[str, Field(min_length=1)]
     region: Annotated[str, Field(min_length=1)] = "garage"
     max_bytes: Annotated[int, Field(gt=0)] = TELEGRAM_MAX_BYTES
-    # How many of the newest owner messages carry their attachments inline.
+    # How many of the newest user messages carry their attachments inline.
     inline_turns: Annotated[int, Field(ge=0)] = 1
     first_page_chars: PositiveInt = 4000
     read_chars: PositiveInt = 8000
@@ -273,10 +278,28 @@ class McpServerEntry(_Section):
     use_server_instructions: bool = True
 
 
+ALL_TOOLS = "*"
+
+
+class UserEntry(_Section):
+    """A ``[[users]]`` entry (change add-multiple-users, design D1)."""
+
+    name: Name
+    telegram_user_id: PositiveInt
+    # How alfred addresses this user, in replies and fixed notices.
+    address: Annotated[str, Field(min_length=1)] = "sir"
+    admin: bool = False
+    # Model-facing tool names, ``prefix*`` patterns, or ``*``.
+    tools: list[Annotated[str, Field(min_length=1)]] = []
+    # MCP server name -> the variable holding this user's token for it.
+    mcp_tokens: dict[Name, TokenEnv] = {}
+
+
 class FileConfig(_Section):
     """The shape of ``alfred.toml``."""
 
-    telegram: TelegramConfig
+    users: Annotated[list[UserEntry], Field(min_length=1)]
+    telegram: TelegramConfig = TelegramConfig()
     ai: AIConfig = AIConfig()
     history: HistoryConfig = HistoryConfig()
     queue: QueueConfig = QueueConfig()
@@ -310,6 +333,46 @@ class McpServer:
 
 
 @dataclass(frozen=True)
+class User:
+    """Someone alfred serves (change add-multiple-users, design D1)."""
+
+    name: str
+    telegram_user_id: int
+    address: str = "sir"
+    admin: bool = False
+    tools: AllowList = AllowList()
+    # MCP server name -> this user's token, where it isn't the server's own.
+    mcp_tokens: Mapping[str, SecretStr] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Users:
+    """The configured users, in file order. Exactly one is the admin."""
+
+    all: tuple[User, ...]
+
+    def __iter__(self) -> Iterator[User]:
+        return iter(self.all)
+
+    def __len__(self) -> int:
+        return len(self.all)
+
+    @property
+    def names(self) -> list[str]:
+        return [u.name for u in self.all]
+
+    @property
+    def admin(self) -> User:
+        return next(u for u in self.all if u.admin)
+
+    def get(self, name: str) -> User | None:
+        return next((u for u in self.all if u.name == name), None)
+
+    def by_telegram_id(self, telegram_user_id: int) -> User | None:
+        return next((u for u in self.all if u.telegram_user_id == telegram_user_id), None)
+
+
+@dataclass(frozen=True)
 class S3Key:
     access_key_id: SecretStr
     secret_access_key: SecretStr
@@ -319,7 +382,7 @@ class S3Key:
 class Config:
     """The validated configuration with its secrets resolved."""
 
-    telegram: TelegramConfig
+    users: Users
     ai: AIConfig
     history: HistoryConfig
     queue: QueueConfig
@@ -340,6 +403,15 @@ class Config:
     def summary_model(self) -> str:
         """The model that summarises ended conversations: ``[memory]``'s, else ``[ai]``'s."""
         return self.memory.summary_model or self.ai.model
+
+    def servers_for(self, user: User) -> tuple[McpServer, ...]:
+        """The MCP servers with the token to use on ``user``'s turns (design D8)."""
+        return tuple(
+            dataclasses.replace(s, token=user.mcp_tokens[s.name])
+            if s.name in user.mcp_tokens
+            else s
+            for s in self.mcp_servers
+        )
 
 
 # --- loading -------------------------------------------------------------------
@@ -368,8 +440,11 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
 
     services_raw = _entries(data, "services")
     servers_raw = _entries(data, "mcp_servers")
+    users_raw = _entries(data, "users")
     problems += _duplicate_names("services", services_raw)
     problems += _duplicate_names("mcp_servers", servers_raw)
+    server_names = {e["name"] for e in servers_raw if isinstance(e.get("name"), str)}
+    problems += _check_users(users_raw, server_names)
     for entry in servers_raw:
         if entry.get("name") == RESERVED_SERVER_NAME:
             problems.append(
@@ -381,6 +456,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     service_tokens = _resolve_tokens(source, "services", services_raw, problems)
     server_tokens = _resolve_tokens(source, "mcp_servers", servers_raw, problems)
     problems += _duplicate_tokens(service_tokens)
+    # Users may share a token with each other or with the server (design D8).
+    user_tokens = _resolve_user_tokens(source, users_raw, problems)
     s3_key: S3Key | None = None
     if isinstance(data.get("attachments"), Mapping):
         key_id = _require_env(source, S3_ACCESS_KEY_ID_ENV, problems, "[attachments] is set")
@@ -392,7 +469,19 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         raise ConfigError(problems)
 
     return Config(
-        telegram=parsed.telegram,
+        users=Users(
+            tuple(
+                User(
+                    u.name,
+                    u.telegram_user_id,
+                    u.address,
+                    u.admin,
+                    AllowList(tuple(u.tools)),
+                    {s: SecretStr(user_tokens[(u.name, s)]) for s in u.mcp_tokens},
+                )
+                for u in parsed.users
+            )
+        ),
         ai=parsed.ai,
         history=parsed.history,
         queue=parsed.queue,
@@ -503,6 +592,86 @@ def _resolve_tokens(
         name = entry.get("name")
         if isinstance(name, str):
             tokens[name] = value
+    return tokens
+
+
+def _check_users(users: list[dict[str, Any]], server_names: set[str]) -> list[str]:
+    """What the field types can't check: uniqueness, the one admin, server names, tools."""
+    problems = _duplicate_names("users", users)
+    by_id: dict[int, list[str]] = {}
+    for i, user in enumerate(users):
+        user_id = user.get("telegram_user_id")
+        if isinstance(user_id, int):
+            by_id.setdefault(user_id, []).append(_who(user, i))
+    problems += [
+        "users " + ", ".join(names) + " have the same telegram_user_id"
+        for names in by_id.values()
+        if len(names) > 1
+    ]
+    admins = [_who(u, i) for i, u in enumerate(users) if u.get("admin") is True]
+    if users and not admins:
+        problems.append("users: exactly one admin is required; set admin = true on one user")
+    elif len(admins) > 1:
+        problems.append(
+            "users " + ", ".join(admins) + " are all admins; exactly one admin is required"
+        )
+    known_tools: frozenset[str] | None = None
+    for i, user in enumerate(users):
+        label = _label("users", user, i)
+        tokens = user.get("mcp_tokens")
+        if isinstance(tokens, Mapping):
+            for server in tokens:
+                if server not in server_names:
+                    problems.append(
+                        f"{label}: mcp_tokens names {server!r}, "
+                        "which is not a configured MCP server"
+                    )
+        tools = user.get("tools")
+        for entry in tools if isinstance(tools, list) else ():
+            if not isinstance(entry, str) or not entry or entry == ALL_TOOLS:
+                continue  # wrong types are reported by the model validation
+            if entry.startswith("alfred_"):
+                if entry.endswith("*"):
+                    continue
+                if known_tools is None:
+                    from alfred.tools.catalog import alfred_tool_names
+
+                    known_tools = alfred_tool_names()
+                if entry not in known_tools:
+                    problems.append(f"{label}: tools entry {entry!r} is not an alfred tool")
+            elif not any(entry.startswith(f"{server}_") for server in server_names):
+                problems.append(
+                    f"{label}: tools entry {entry!r} must be *, or start with alfred_ or "
+                    "with a configured MCP server's name and _"
+                )
+    return problems
+
+
+def _who(entry: Mapping[str, Any], index: int) -> str:
+    name = entry.get("name")
+    return repr(name) if isinstance(name, str) else f"users[{index}]"
+
+
+def _resolve_user_tokens(
+    source: Mapping[str, str], users: list[dict[str, Any]], problems: list[str]
+) -> dict[tuple[str, str], str]:
+    """Map (user name, server name) -> token for every ``mcp_tokens`` variable that is set."""
+    tokens: dict[tuple[str, str], str] = {}
+    for i, user in enumerate(users):
+        refs = user.get("mcp_tokens")
+        name = user.get("name")
+        if not isinstance(refs, Mapping):
+            continue
+        for server, var in refs.items():
+            if not isinstance(var, str) or not _TOKEN_ENV.fullmatch(var):
+                continue  # reported by the model validation
+            value = source.get(var, "").strip()
+            if not value:
+                problems.append(
+                    f"{var} is not set or empty (mcp_tokens.{server} of {_label('users', user, i)})"
+                )
+            elif isinstance(name, str):
+                tokens[(name, server)] = value
     return tokens
 
 

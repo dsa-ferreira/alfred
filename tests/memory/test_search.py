@@ -31,11 +31,13 @@ async def seed(
     embedding: list[float] | None = None,
     model: str = "nomic-embed-text:v1.5",
     entries: tuple[str, ...] = (),
+    user: str = "diogo",
 ) -> None:
     async with sessions.begin() as session:
         session.add(
             Conversation(
                 id=cid,
+                user_name=user,
                 started_at=started,
                 ended_at=ended if ended is not None else started + timedelta(hours=1),
                 title=title,
@@ -46,15 +48,15 @@ async def seed(
         )
         await session.flush()
         for line in entries:
-            session.add(Entry(conversation_id=cid, kind="owner", text=line))
+            session.add(Entry(conversation_id=cid, kind="user", text=line))
 
 
 async def seed_current(sessions: async_sessionmaker[AsyncSession], *entries: str) -> None:
     async with sessions.begin() as session:
-        session.add(Conversation(id=999, started_at=at(9)))
+        session.add(Conversation(id=999, user_name="diogo", started_at=at(9)))
         await session.flush()
         for line in entries:
-            session.add(Entry(conversation_id=999, kind="owner", text=line))
+            session.add(Entry(conversation_id=999, kind="user", text=line))
 
 
 def memory(
@@ -87,7 +89,7 @@ async def test_search_by_topic(sessions: async_sessionmaker[AsyncSession]) -> No
     )
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
     embedder = FakeEmbedder([CHICKEN])
-    result = await memory(sessions, embedder).search("chicken recipe")
+    result = await memory(sessions, embedder).search("diogo", "chicken recipe")
     assert result.ok
     assert embedder.queries == ["chicken recipe"]
     assert ids(result.text)[0] == 41
@@ -103,7 +105,7 @@ async def test_match_by_meaning_only(sessions: async_sessionmaker[AsyncSession])
     await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(3), embedding=CHICKEN)
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
     # No word of the query appears anywhere; only the vectors match.
-    result = await memory(sessions, FakeEmbedder([CHICKEN_ISH])).search("poultry dinner")
+    result = await memory(sessions, FakeEmbedder([CHICKEN_ISH])).search("diogo", "poultry dinner")
     assert ids(result.text)[0] == 41
 
 
@@ -118,7 +120,7 @@ async def test_keyword_only_in_an_entry(sessions: async_sessionmaker[AsyncSessio
         entries=("should I cook it sous vide?", "Yes, 54°C for two hours."),
     )
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
-    result = await memory(sessions, FakeEmbedder([DISK])).search("sous vide")
+    result = await memory(sessions, FakeEmbedder([DISK])).search("diogo", "sous vide")
     # The vectors prefer #40; the keyword match in an entry still wins overall.
     assert ids(result.text)[0] == 41
 
@@ -127,7 +129,7 @@ async def test_two_equal_matches_are_close(sessions: async_sessionmaker[AsyncSes
     await seed(sessions, 41, "Chicken thighs", "Lemon chicken.", started=at(3), embedding=CHICKEN)
     await seed(sessions, 42, "Chicken wings", "Spicy chicken.", started=at(5), embedding=CHICKEN)
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
-    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("chicken")
+    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("diogo", "chicken")
     assert "(best match)" in result.text and "(close match)" in result.text
     assert '#40 "Disk full" (weak match)' in result.text
 
@@ -135,14 +137,14 @@ async def test_two_equal_matches_are_close(sessions: async_sessionmaker[AsyncSes
 async def test_clear_winner(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed(sessions, 41, "Chicken thighs", "Lemon chicken.", started=at(3), embedding=CHICKEN)
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
-    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("chicken")
+    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("diogo", "chicken")
     assert "(close match)" not in result.text
 
 
 async def test_current_conversation_excluded(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(3), embedding=CHICKEN)
     await seed_current(sessions, "more chicken please")
-    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("chicken")
+    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("diogo", "chicken")
     assert ids(result.text) == [41]
 
 
@@ -154,20 +156,22 @@ async def test_recalled_text_does_not_match(sessions: async_sessionmaker[AsyncSe
             Entry(
                 conversation_id=42,
                 kind="recall",
-                text="#41 ... Owner: chicken thighs tonight?",
+                text="#41 ... User: chicken thighs tonight?",
                 recalled_conversation_id=41,
             )
         )
     # Keyword-only, so the vectors can't decide: #42's recall of #41 must not count.
     embedder = FakeEmbedder([EmbeddingUnreachable("down")])
-    result = await memory(sessions, embedder).search("thighs")
+    result = await memory(sessions, embedder).search("diogo", "thighs")
     assert ids(result.text) == [41]
 
 
 async def test_limit(sessions: async_sessionmaker[AsyncSession]) -> None:
     for i in range(1, 8):
         await seed(sessions, i, f"Chicken {i}", "Chicken again.", started=at(i), embedding=CHICKEN)
-    result = await memory(sessions, FakeEmbedder([CHICKEN]), search_results=5).search("chicken")
+    result = await memory(sessions, FakeEmbedder([CHICKEN]), search_results=5).search(
+        "diogo", "chicken"
+    )
     assert len(ids(result.text)) == 5
     assert result.text.startswith("5 archived conversations, best match first:")
 
@@ -186,7 +190,7 @@ async def test_only_rows_of_the_configured_model(
         model="old-model",
     )
     await seed(sessions, 42, "New", "Embedded now.", started=at(4), embedding=CHICKEN)
-    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("something")
+    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("diogo", "something")
     assert ids(result.text) == [42]
 
 
@@ -196,7 +200,7 @@ async def test_ragman_down_falls_back_to_keywords(
     await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(3), embedding=CHICKEN)
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
     embedder = FakeEmbedder([EmbeddingUnreachable("connection refused")])
-    result = await memory(sessions, embedder).search("chicken recipe")
+    result = await memory(sessions, embedder).search("diogo", "chicken recipe")
     assert result.ok
     assert result.text.startswith(NO_MEANING_NOTE)
     assert ids(result.text) == [41]
@@ -204,7 +208,7 @@ async def test_ragman_down_falls_back_to_keywords(
 
 async def test_no_match(sessions: async_sessionmaker[AsyncSession]) -> None:
     embedder = FakeEmbedder([CHICKEN])
-    result = await memory(sessions, embedder).search("chicken")
+    result = await memory(sessions, embedder).search("diogo", "chicken")
     assert result.ok and result.text == "No archived conversations match."
 
 
@@ -212,7 +216,7 @@ async def test_conversation_without_summary_yet(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     await seed(sessions, 41, None, None, started=at(3), entries=("chicken tonight?",))
-    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("chicken")
+    result = await memory(sessions, FakeEmbedder([CHICKEN])).search("diogo", "chicken")
     assert "#41 (no summary yet) (best match)" in result.text
 
 
@@ -229,7 +233,7 @@ async def chicken_conversations(sessions: async_sessionmaker[AsyncSession]) -> N
 async def test_topic_and_date(sessions: async_sessionmaker[AsyncSession]) -> None:
     await chicken_conversations(sessions)
     result = await memory(sessions, FakeEmbedder([CHICKEN])).search(
-        "chicken recipe", after="2026-11-02", before="2026-11-08"
+        "diogo", "chicken recipe", after="2026-11-02", before="2026-11-08"
     )
     assert sorted(ids(result.text)) == [41, 45, 46]  # #46 only by its (weak) vector
     assert 30 not in ids(result.text)
@@ -239,11 +243,11 @@ async def test_topic_and_date(sessions: async_sessionmaker[AsyncSession]) -> Non
 
 async def test_spanning_the_range_edge(sessions: async_sessionmaker[AsyncSession]) -> None:
     await seed(sessions, 41, "Long chat", "Talked for days.", started=at(1), ended=at(3))
-    result = await memory(sessions, FakeEmbedder()).search(after="2026-11-02")
+    result = await memory(sessions, FakeEmbedder()).search("diogo", after="2026-11-02")
     assert ids(result.text) == [41]
-    result = await memory(sessions, FakeEmbedder()).search(before="2026-11-02")
+    result = await memory(sessions, FakeEmbedder()).search("diogo", before="2026-11-02")
     assert ids(result.text) == [41]
-    result = await memory(sessions, FakeEmbedder()).search(after="2026-11-04")
+    result = await memory(sessions, FakeEmbedder()).search("diogo", after="2026-11-04")
     assert ids(result.text) == []
 
 
@@ -259,8 +263,8 @@ async def test_local_midnight_in_lisbon(sessions: async_sessionmaker[AsyncSessio
         ended=started + timedelta(minutes=20),
     )
     mem = memory(sessions, FakeEmbedder())
-    on_15th = await mem.search(after="2026-07-15", before="2026-07-15")
-    on_16th = await mem.search(after="2026-07-16", before="2026-07-16")
+    on_15th = await mem.search("diogo", after="2026-07-15", before="2026-07-15")
+    on_16th = await mem.search("diogo", after="2026-07-16", before="2026-07-16")
     assert ids(on_15th.text) == []
     assert ids(on_16th.text) == [41]
     assert "Thu 16 Jul 2026 to Thu 16 Jul 2026" in on_16th.text
@@ -272,7 +276,9 @@ async def test_dates_shown_in_configured_timezone(
     await seed(sessions, 41, "Chat", "x", started=datetime(2026, 11, 2, 20, tzinfo=UTC))
     # 20:00 UTC on 2 Nov is 05:00 on 3 Nov in Tokyo.
     cfg = make_config(ai={"timezone": "Asia/Tokyo"})
-    result = await ConversationSearch(cfg, sessions, FakeEmbedder()).search(after="2026-11-03")
+    result = await ConversationSearch(cfg, sessions, FakeEmbedder()).search(
+        "diogo", after="2026-11-03"
+    )
     assert "Tue 3 Nov 2026" in result.text
 
 
@@ -281,7 +287,9 @@ async def test_date_only_newest_first(sessions: async_sessionmaker[AsyncSession]
     await seed(sessions, 42, "Evening", "Dinner.", started=at(3, 19))
     await seed(sessions, 43, "Next day", "Lunch.", started=at(4, 12))
     embedder = FakeEmbedder()
-    result = await memory(sessions, embedder).search(after="2026-11-03", before="2026-11-03")
+    result = await memory(sessions, embedder).search(
+        "diogo", after="2026-11-03", before="2026-11-03"
+    )
     assert result.text.startswith("2 archived conversations in that range, newest first:")
     assert ids(result.text) == [42, 41]
     assert "match)" not in result.text
@@ -289,10 +297,12 @@ async def test_date_only_newest_first(sessions: async_sessionmaker[AsyncSession]
 
 
 async def test_empty_search_is_an_error(sessions: async_sessionmaker[AsyncSession]) -> None:
-    result = await memory(sessions, FakeEmbedder()).search()
+    result = await memory(sessions, FakeEmbedder()).search(
+        "diogo",
+    )
     assert not result.ok
     assert "query" in result.text and "date" in result.text
-    blank = await memory(sessions, FakeEmbedder()).search("  ", "", None)
+    blank = await memory(sessions, FakeEmbedder()).search("diogo", "  ", "", None)
     assert not blank.ok
 
 
@@ -308,11 +318,40 @@ async def test_empty_search_is_an_error(sessions: async_sessionmaker[AsyncSessio
 async def test_unparseable_date_is_an_error(
     sessions: async_sessionmaker[AsyncSession], after: object, before: object, named: str
 ) -> None:
-    result = await memory(sessions, FakeEmbedder()).search("chicken", after, before)
+    result = await memory(sessions, FakeEmbedder()).search("diogo", "chicken", after, before)
     assert not result.ok
     assert result.text.startswith(f"Error: {named} ")
 
 
 async def test_after_later_than_before(sessions: async_sessionmaker[AsyncSession]) -> None:
-    result = await memory(sessions, FakeEmbedder()).search(after="2026-11-08", before="2026-11-02")
+    result = await memory(sessions, FakeEmbedder()).search(
+        "diogo", after="2026-11-08", before="2026-11-02"
+    )
     assert not result.ok and "later than" in result.text
+
+
+# --- Only the user's own conversations (change add-multiple-users) -------------------
+
+
+async def test_another_users_conversations_are_not_found(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(3), embedding=[1.0])
+    await seed(
+        sessions,
+        50,
+        "Chicken soup",
+        "Her mother's soup.",
+        started=at(4),
+        embedding=[1.0],
+        entries=("chicken broth for two",),
+        user="ana",
+    )
+    by_topic = await memory(sessions, FakeEmbedder(default=[1.0])).search("ana", "chicken")
+    assert ids(by_topic.text) == [50]
+    by_keyword = await memory(sessions, FakeEmbedder(default=[1.0])).search("diogo", "broth")
+    assert ids(by_keyword.text) == [41]  # by meaning (the fake matches everything); not #50
+    by_date = await memory(sessions, FakeEmbedder()).search("ana", None, "2026-11-01")
+    assert ids(by_date.text) == [50]
+    nothing = await memory(sessions, FakeEmbedder(default=[1.0])).search("bob", "chicken")
+    assert ids(nothing.text) == []

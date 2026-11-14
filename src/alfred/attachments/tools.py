@@ -1,14 +1,16 @@
 """``alfred_view_attachment`` and ``alfred_read_document`` (change add-attachments, design D8).
 
-Offered on owner turns. ``alfred_read_document`` is offered on every brain;
-``alfred_view_attachment`` only when the brain current at the turn's start
-has vision, and a call checks the current brain again, which covers a
-fallback within the turn.
+Offered on chat turns, subject to the user's allow-list.
+``alfred_read_document`` is offered on every brain; ``alfred_view_attachment``
+only when the brain current at the turn's start has vision, and a call
+checks the current brain again, which covers a fallback within the turn. The
+prompt note describes only the tools the allow-list leaves.
 
-Both reach only attachments sent in the current conversation or in a
-conversation recalled into it. A recall only brings back the handles in its
-transcript, so a conversation recalled inside a recalled one is reachable
-only when it is itself recalled.
+Both reach only the turn user's attachments sent in their current
+conversation or in a conversation recalled into it (change
+add-multiple-users: recall only brings back the user's own). A recall only
+brings back the handles in its transcript, so a conversation recalled inside
+a recalled one is reachable only when it is itself recalled.
 
 ``alfred_read_document`` is not cut to ``[ai] tool_result_max_chars``: it
 sizes its own result with ``[attachments] read_chars``.
@@ -37,7 +39,7 @@ from alfred.tools.base import (
     PromptNote,
     ToolOutcome,
     TurnInput,
-    owner_only,
+    chat_only,
     parse_arguments,
 )
 
@@ -55,7 +57,7 @@ VIEW_ATTACHMENT_TOOL: dict[str, Any] = {
         "name": VIEW_ATTACHMENT,
         "description": (
             "Look at an attachment again: an image, or one page of a PDF rendered as an "
-            "image. Use it when the owner asks about an attachment whose image is not in "
+            "image. Use it when the user asks about an attachment whose image is not in "
             "front of you, such as one from an earlier message, or a PDF page other than "
             "page 1."
         ),
@@ -96,25 +98,41 @@ READ_DOCUMENT_TOOL: dict[str, Any] = {
 }
 
 _HANDLES = (
-    "Attachments: the owner can send photos, images and PDFs. Each one appears in their "
+    "Attachments: the user can send photos, images and PDFs. Each one appears in their "
     'message as a handle with its number, such as [attachment #7: image "receipt.jpg"] or '
     '[attachment #9: PDF "invoice.pdf", 12 pages, text] ("scanned" when page 1 has no '
     "text). Only attachments of this conversation, or of a conversation recalled into it, "
-    "can be opened. Don't mention attachment numbers to the owner unless it helps them "
+    "can be opened. Don't mention attachment numbers to the user unless it helps them "
     "tell files apart."
 )
 
+_SEEN = (
+    " On the message that brings it you also see the attachment: the image, or a PDF's "
+    "page 1 (its text, or the page itself when it is scanned)."
+)
+_GUESS = " Never guess what an attachment shows."
+
 VISION_NOTE = (
-    _HANDLES + " On the message that brings it you also see the attachment: the image, or a PDF's "
-    "page 1 (its text, or the page itself when it is scanned). A handle alone does not show "
+    _HANDLES + _SEEN + " A handle alone does not show "
     "the content: to answer about an attachment again, look at it with "
     "alfred_view_attachment (an image, or a PDF page as an image), or read a PDF's text with "
-    "alfred_read_document. Never guess what an attachment shows."
+    "alfred_read_document." + _GUESS
+)
+
+# A vision brain, with only one of the two tools left by the user's allow-list.
+VIEW_ONLY_NOTE = (
+    _HANDLES + _SEEN + " A handle alone does not show the content: to answer about an "
+    "attachment again, look at it with alfred_view_attachment (an image, or a PDF page as "
+    "an image)." + _GUESS
+)
+READ_ONLY_NOTE = (
+    _HANDLES + _SEEN + " A handle alone does not show the content: to answer about a PDF "
+    "again, read its text with alfred_read_document; an earlier image can't be looked at "
+    "again." + _GUESS
 )
 
 TEXT_ONLY_NOTE = (
-    _HANDLES
-    + " This brain can't see images: when the owner asks about an image or a scanned page, "
+    _HANDLES + " This brain can't see images: when the user asks about an image or a scanned page, "
     "say that you can't see it on this brain. A PDF's page 1 text comes with the message "
     "that brings it; a handle alone does not show the content, so read a PDF's text with "
     "alfred_read_document. Never guess what an attachment shows."
@@ -137,12 +155,19 @@ class AttachmentTools(LocalToolset):
         self._config = config
 
     def offered(self, turn: TurnInput) -> bool:
-        return owner_only(turn)
+        return chat_only(turn)
 
     async def open(self, turn: TurnInput) -> OpenAttachmentTools | None:
         if not self.offered(turn):
             return None
-        return OpenAttachmentTools(self, vision=self._brains.current.vision)
+        vision = self._brains.current.vision
+        # The gate hides what the allow-list doesn't match; the note must not
+        # describe it either.
+        view = vision and turn.user.tools.matches(VIEW_ATTACHMENT)
+        read = turn.user.tools.matches(READ_DOCUMENT)
+        if not (view or read):
+            return None
+        return OpenAttachmentTools(self, vision=vision, view=view, read=read)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         arguments = parse_arguments(raw_arguments)
@@ -151,19 +176,20 @@ class AttachmentTools(LocalToolset):
         attachment_id = _parse_id(arguments.get("id"))
         if attachment_id is None:
             return ToolOutcome(False, "Error: id must be an attachment number, such as 7.")
+        user = attempt.turn.user.name
         if name == VIEW_ATTACHMENT:
-            return await self.view(attachment_id, arguments.get("page"))
-        return await self.read(attachment_id, arguments.get("pages"))
+            return await self.view(user, attachment_id, arguments.get("page"))
+        return await self.read(user, attachment_id, arguments.get("pages"))
 
     # --- view --------------------------------------------------------------------
 
-    async def view(self, attachment_id: int, page_value: Any = None) -> ToolOutcome:
+    async def view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
         if not self._brains.current.vision:
             return ToolOutcome(
                 False,
                 f'Error: the current brain "{self._brains.current.name}" can\'t see images.',
             )
-        ref = await self.find(attachment_id)
+        ref = await self.find(user, attachment_id)
         if ref is None:
             return _no_such(attachment_id)
         page = 1
@@ -181,15 +207,15 @@ class AttachmentTools(LocalToolset):
             return ToolOutcome(
                 False,
                 f"Error: the file of attachment #{ref.id} isn't available right now. "
-                "Tell the owner; it may work again later.",
+                "Tell the user; it may work again later.",
             )
         shown = f"page {page} of {ref.page_count}" if ref.kind == "pdf" else "the image"
         return ToolOutcome(True, f"{handle(ref)}: {shown}, attached.", (image,))
 
     # --- read --------------------------------------------------------------------
 
-    async def read(self, attachment_id: int, pages_value: Any = None) -> ToolOutcome:
-        ref = await self.find(attachment_id)
+    async def read(self, user: str, attachment_id: int, pages_value: Any = None) -> ToolOutcome:
+        ref = await self.find(user, attachment_id)
         if ref is None:
             return _no_such(attachment_id)
         if ref.kind != "pdf":
@@ -244,10 +270,10 @@ class AttachmentTools(LocalToolset):
 
     # --- access ------------------------------------------------------------------
 
-    async def find(self, attachment_id: int) -> AttachmentRef | None:
-        """The attachment, if the current conversation may reach it (design D8)."""
+    async def find(self, user: str, attachment_id: int) -> AttachmentRef | None:
+        """The attachment, if ``user``'s current conversation may reach it (design D8)."""
         async with self._sessions() as session:
-            current = await current_id(session, lock=False)
+            current = await current_id(session, user, lock=False)
             recalled = select(Entry.recalled_conversation_id).where(
                 Entry.conversation_id == current, Entry.kind == "recall"
             )
@@ -257,6 +283,7 @@ class AttachmentTools(LocalToolset):
                     .join(Entry, Entry.id == Attachment.entry_id)
                     .where(
                         Attachment.id == attachment_id,
+                        Attachment.user_name == user,
                         or_(
                             Entry.conversation_id == current,
                             Entry.conversation_id.in_(recalled.scalar_subquery()),
@@ -269,14 +296,27 @@ class AttachmentTools(LocalToolset):
 
 
 class OpenAttachmentTools(LocalToolset):
-    """One turn's attachment tools: the view tool only for a brain with vision."""
+    """One turn's attachment tools: the view tool only for a brain with vision.
 
-    def __init__(self, tools: AttachmentTools, *, vision: bool) -> None:
+    ``view`` and ``read`` say which tools the user's allow-list leaves.
+    """
+
+    def __init__(
+        self, tools: AttachmentTools, *, vision: bool, view: bool = True, read: bool = True
+    ) -> None:
         self._tools = tools
-        self.definitions = (
-            [VIEW_ATTACHMENT_TOOL, READ_DOCUMENT_TOOL] if vision else [READ_DOCUMENT_TOOL]
-        )
-        self.prompt_notes = (PromptNote(VISION_NOTE if vision else TEXT_ONLY_NOTE),)
+        view = view and vision
+        self.definitions = [
+            *([VIEW_ATTACHMENT_TOOL] if view else []),
+            *([READ_DOCUMENT_TOOL] if read else []),
+        ]
+        if not vision:
+            note = TEXT_ONLY_NOTE
+        elif view and read:
+            note = VISION_NOTE
+        else:
+            note = VIEW_ONLY_NOTE if view else READ_ONLY_NOTE
+        self.prompt_notes = (PromptNote(note),)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         return await self._tools.call(name, raw_arguments, attempt)

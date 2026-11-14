@@ -74,7 +74,7 @@ async def test_backfills_conversations_without_summary(
 async def test_current_conversation_left_alone(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    await History(sessions).append("owner", "still talking")
+    await History(sessions).append("diogo", "user", "still talking")
     mem = memory(sessions, FakeModel(), FakeEmbedder())
     assert await mem.sweep_once() == 900  # nothing pending: wait the longest delay
 
@@ -164,18 +164,18 @@ async def test_owner_messages_answered_while_sweeper_fails(
     sent: list[str] = []
 
     class Outbox:
-        async def send(self, text_: str) -> None:
+        async def send(self, user: object, text_: str) -> None:
             sent.append(text_)
 
     agent = make_agent(cfg, FakeModel([text("one"), text("two")]), history, sessions, _no_mcp)
     worker = Worker(
-        queue, agent, history, Outbox(), cfg.queue, owner_address="sir", memory=mem.summaries
+        queue, agent, history, Outbox(), cfg.queue, users=cfg.users, memory=mem.summaries
     )
     tasks = [asyncio.create_task(mem.run_forever()), asyncio.create_task(worker.run_forever())]
     try:
         await until(lambda: _has_failed(summary_model, 3))
-        await queue.enqueue_owner("first")
-        await queue.enqueue_owner("second")
+        await queue.enqueue_user("diogo", "first")
+        await queue.enqueue_user("diogo", "second")
 
         async def answered() -> bool:
             return sent == ["one", "two"]

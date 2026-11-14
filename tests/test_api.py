@@ -13,14 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.prompts import NO_REPLY
 from alfred.agent.turn import TurnResult
 from alfred.api import create_app
-from alfred.config import Service
+from alfred.config import Service, Users
 from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.queue import Queue, Worker
 from alfred.telegram.bot import TelegramOutbox
-from tests.helpers import FakeModel, make_agent, make_config, text
+from tests.helpers import ANA, ANA_ID, DIOGO, FakeModel, make_agent, make_config, text
 from tests.mcp.servers import in_process
-from tests.telegram.fake_bot import OWNER, make_bot
+from tests.telegram.fake_bot import make_bot
 
 SERVICES = (
     Service("backup", SecretStr("tok-backup")),
@@ -28,6 +28,7 @@ SERVICES = (
 )
 BACKUP = {"Authorization": "Bearer tok-backup"}
 DISK = {"Authorization": "Bearer tok-disk"}
+USERS = Users((DIOGO, ANA))
 
 
 class Env:
@@ -36,8 +37,8 @@ class Env:
         self.bot, self.telegram = make_bot()
         self.queue = Queue(sessions)
         self.history = History(sessions)
-        self.outbox = TelegramOutbox(self.bot, OWNER)
-        self.app = create_app(SERVICES, self.queue, self.history, self.outbox)
+        self.outbox = TelegramOutbox(self.bot)
+        self.app = create_app(SERVICES, USERS, self.queue, self.history, self.outbox)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://alfred"
         )
@@ -82,7 +83,7 @@ async def test_rejected_tokens(env: Env, headers: dict[str, str], path: str) -> 
     assert response.headers["www-authenticate"] == "Bearer"
     assert env.telegram.requests == []
     assert await env.items() == []
-    assert await env.history.recent(30) == []
+    assert await env.history.recent("diogo", 30) == []
 
 
 async def test_bad_token_with_bad_body_is_401(env: Env) -> None:
@@ -109,7 +110,7 @@ async def test_notify_recorded_as_notice(env: Env) -> None:
     assert response.status_code == 200
     (sent,) = env.telegram.sent()
     assert sent.text == "[backup] Nightly backup failed"
-    (entry,) = await env.history.recent(30)
+    (entry,) = await env.history.recent("diogo", 30)
     assert (entry.kind, entry.source, entry.text) == ("notice", "backup", "Nightly backup failed")
 
 
@@ -130,9 +131,9 @@ async def test_notify_while_ai_busy(env: Env) -> None:
             return TurnResult("done", False, False)
 
     worker = Worker(
-        env.queue, BusyAgent(), env.history, env.outbox, make_config().queue, owner_address="sir"
+        env.queue, BusyAgent(), env.history, env.outbox, make_config().queue, users=USERS
     )
-    await env.queue.enqueue_owner("long job")
+    await env.queue.enqueue_user("diogo", "long job")
     task = asyncio.create_task(worker.step())
     await asyncio.wait_for(started.wait(), 5)
 
@@ -155,7 +156,7 @@ async def test_telegram_unreachable(env: Env) -> None:
     env.telegram.on_request = fail
     response = await env.client.post("/notify", json={"text": "hi"}, headers=BACKUP)
     assert response.status_code == 502
-    assert await env.history.recent(30) == []
+    assert await env.history.recent("diogo", 30) == []
 
 
 # --- Ask the AI ----------------------------------------------------------------
@@ -185,9 +186,7 @@ async def test_ask_empty_prompt(env: Env, body: dict) -> None:
 async def run_ask(env: Env, answer: str) -> None:
     cfg = make_config()
     agent = make_agent(cfg, FakeModel([text(answer)]), env.history, env.sessions, in_process({}))
-    worker = Worker(
-        env.queue, agent, env.history, env.outbox, cfg.queue, owner_address=cfg.ai.owner_address
-    )
+    worker = Worker(env.queue, agent, env.history, env.outbox, cfg.queue, users=USERS)
     await env.client.post("/ask", json={"prompt": "usage report"}, headers=DISK)
     while await worker.step():
         pass
@@ -204,3 +203,50 @@ async def test_worth_reporting(env: Env) -> None:
     assert sent.text == (
         "[disk-check] Disk usage jumped 13% overnight, mostly in /mnt/data/downloads"
     )
+
+
+# --- Target user (change add-multiple-users) ------------------------------------------
+
+
+async def test_notify_a_named_user(env: Env) -> None:
+    response = await env.client.post(
+        "/notify", json={"text": "Dune finished downloading", "user": "ana"}, headers=BACKUP
+    )
+    assert response.status_code == 200
+    (sent,) = env.telegram.sent()
+    assert sent.chat_id == ANA_ID and sent.text == "[backup] Dune finished downloading"
+    assert [e.text for e in await env.history.recent("ana", 10)] == ["Dune finished downloading"]
+    assert await env.history.recent("diogo", 10) == []
+
+
+async def test_notify_without_a_user_goes_to_the_admin(env: Env) -> None:
+    await env.client.post("/notify", json={"text": "backup done"}, headers=BACKUP)
+    (sent,) = env.telegram.sent()
+    assert sent.chat_id == DIOGO.telegram_user_id
+    assert [e.text for e in await env.history.recent("diogo", 10)] == ["backup done"]
+
+
+@pytest.mark.parametrize("path", ["/notify", "/ask"])
+async def test_unknown_user_is_rejected(env: Env, path: str) -> None:
+    body = {"text": "x", "prompt": "x", "user": "anna"}
+    response = await env.client.post(path, json=body, headers=BACKUP)
+    assert response.status_code == 422
+    assert "unknown user 'anna'" in response.text
+    assert env.telegram.requests == []
+    assert await env.items() == []
+    assert await env.history.recent("diogo", 10) == []
+
+
+async def test_ask_for_a_named_user(env: Env) -> None:
+    response = await env.client.post(
+        "/ask", json={"prompt": "Dune finished", "user": "ana"}, headers=DISK
+    )
+    assert response.status_code == 202
+    (item,) = await env.items()
+    assert (item.kind, item.user_name, item.source) == ("ask", "ana", "disk-check")
+
+
+async def test_ask_without_a_user_is_for_the_admin(env: Env) -> None:
+    await env.client.post("/ask", json={"prompt": "93%"}, headers=DISK)
+    (item,) = await env.items()
+    assert item.user_name == "diogo"

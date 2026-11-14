@@ -6,28 +6,31 @@ from typing import Any
 
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS, MemoryTools
 from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
+from tests.helpers import DIOGO
 
-OWNER = TurnInput("owner", "remember the chicken?", 1)
+OWNER = TurnInput("chat", "remember the chicken?", 1, user=DIOGO)
 
 
 class FakeSearch:
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ...]] = []
 
-    async def search(self, query: Any = None, after: Any = None, before: Any = None) -> ToolOutcome:
-        self.calls.append(("search", query, after, before))
+    async def search(
+        self, user: str, query: Any = None, after: Any = None, before: Any = None
+    ) -> ToolOutcome:
+        self.calls.append(("search", user, query, after, before))
         return ToolOutcome(True, "found")
 
-    async def recall(self, conversation_id: Any) -> ToolOutcome:
-        self.calls.append(("recall", conversation_id))
+    async def recall(self, user: str, conversation_id: Any) -> ToolOutcome:
+        self.calls.append(("recall", user, conversation_id))
         return ToolOutcome(True, "recalled")
 
 
 async def test_offered_on_owner_turns_only() -> None:
     tools = MemoryTools(FakeSearch())
     assert await tools.open(OWNER) is tools
-    assert await tools.open(TurnInput("ask", "x", 2, "svc")) is None
-    assert await tools.open(TurnInput("reminder", "x", 3)) is None
+    assert await tools.open(TurnInput("ask", "x", 2, "svc", user=DIOGO)) is None
+    assert await tools.open(TurnInput("reminder", "x", 3, user=DIOGO)) is None
     assert [d["function"]["name"] for d in tools.definitions] == [
         SEARCH_CONVERSATIONS,
         RECALL_CONVERSATION,
@@ -40,7 +43,10 @@ async def test_arguments_passed_on() -> None:
     ctx = AttemptContext(OWNER)
     await tools.call(SEARCH_CONVERSATIONS, '{"query": "chicken", "after": "2026-11-01"}', ctx)
     await tools.call(RECALL_CONVERSATION, {"id": 41}, ctx)
-    assert search.calls == [("search", "chicken", "2026-11-01", None), ("recall", 41)]
+    assert search.calls == [
+        ("search", "diogo", "chicken", "2026-11-01", None),
+        ("recall", "diogo", 41),
+    ]
 
 
 async def test_invalid_json() -> None:

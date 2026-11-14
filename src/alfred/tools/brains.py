@@ -1,8 +1,9 @@
-"""``alfred_set_model``: the owner switches the brain (model) that answers them.
+"""``alfred_set_model``: the admin switches the brain (model) that answers everyone.
 
-Offered on owner turns when there is more than one brain. The brains and the
-current one live in ``alfred.agent.brains``; a switch applies from the next
-turn.
+Offered on the admin's chat turns when there is more than one brain, whatever
+other users' allow-lists say (change add-multiple-users, design D3). The
+brains and the current one live in ``alfred.agent.brains``; a switch applies
+alfred-wide from the next turn.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from alfred.tools.base import (
     LocalToolset,
     ToolOutcome,
     TurnInput,
-    owner_only,
+    chat_only,
     parse_arguments,
 )
 
@@ -31,10 +32,10 @@ def set_model_tool(names: list[str]) -> dict[str, Any]:
         "function": {
             "name": SET_MODEL,
             "description": (
-                "Switch the model that answers the owner, from their next message on. The "
-                "owner may call it your model or your brain (for example 'change brains to "
+                "Switch the model that answers, for every user, from the next message on. The "
+                "user may call it your model or your brain (for example 'change brains to "
                 "gemma', 'set your brain to bonsai', 'use the bonsai model'). Call this ONLY "
-                "when the owner asks to switch. The system prompt says which brain you are "
+                "when the user asks to switch. The system prompt says which brain you are "
                 "running on. After calling it, reply with a short confirmation."
             ),
             "parameters": {
@@ -53,14 +54,14 @@ def set_model_tool(names: list[str]) -> dict[str, Any]:
 
 
 class BrainTools(LocalToolset):
-    """``alfred_set_model``: offered on owner turns when there is a brain to switch to."""
+    """``alfred_set_model``: on the admin's chat turns, when there is a brain to switch to."""
 
     def __init__(self, brains: Brains) -> None:
         self._brains = brains
         self.definitions = [set_model_tool(brains.names)]
 
     def offered(self, turn: TurnInput) -> bool:
-        return owner_only(turn) and len(self._brains.brains) > 1
+        return chat_only(turn) and turn.user.admin and len(self._brains.brains) > 1
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         arguments = parse_arguments(raw_arguments)
@@ -83,5 +84,5 @@ class BrainTools(LocalToolset):
         return ToolOutcome(
             True,
             f'Switched to the brain "{brain}" ({self._brains.tag}). It answers from the '
-            "owner's next message on. Reply with a short confirmation.",
+            "next message on. Reply with a short confirmation.",
         )

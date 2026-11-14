@@ -36,8 +36,8 @@ async def test_context_size_line(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "my private earlier message")
-    await history.append("assistant", "a private reply")
+    await history.append("diogo", "user", "my private earlier message")
+    await history.append("diogo", "assistant", "a private reply")
     model = FakeModel([text("ok")])
     turn = await owner_turn(sessions, "hi")
     with caplog.at_level(logging.INFO):

@@ -21,6 +21,7 @@ from alfred.web.tools import (
     WebTools,
     chunk_end,
 )
+from tests.helpers import DIOGO
 from tests.web.test_fetch import Resolver
 from tests.web.test_search import SEARXNG, reply
 
@@ -390,7 +391,7 @@ async def test_missing_url(http: httpx.AsyncClient) -> None:
 @respx.mock
 async def test_each_attempt_gets_a_fresh_allowlist(http: httpx.AsyncClient) -> None:
     respx.get("https://example.com/a").respond(200, headers=PLAIN, text="a")
-    owner = TurnInput("owner", "read https://example.com/a", 1)
+    owner = TurnInput("chat", "read https://example.com/a", 1, user=DIOGO)
     opened = await tools(http).open(owner)
     assert opened.handles(WEB_FETCH) and opened.handles(WEB_SEARCH)
     assert not opened.handles("alfred_set_model")
@@ -408,7 +409,7 @@ async def test_each_attempt_gets_a_fresh_allowlist(http: httpx.AsyncClient) -> N
 @respx.mock
 async def test_ask_prompt_seeds_the_allowlist(http: httpx.AsyncClient) -> None:
     respx.get("https://example.com/a").respond(200, headers=PLAIN, text="a")
-    ask = TurnInput("ask", "check https://example.com/a", 1, "svc")
+    ask = TurnInput("ask", "check https://example.com/a", 1, "svc", user=DIOGO)
     opened = await tools(http).open(ask)
     ctx = AttemptContext(ask)
     opened.new_attempt(ctx)

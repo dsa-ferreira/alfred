@@ -11,7 +11,7 @@ from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import agent, contents, memory, owner_turn, tool_rows
-from tests.helpers import FakeEmbedder, FakeModel, add_queue_item, calls, text
+from tests.helpers import DIOGO, FakeEmbedder, FakeModel, add_queue_item, calls, text
 from tests.memory.test_search import CHICKEN, at, seed
 
 # --- memory tools ------------------------------------------------------------------
@@ -30,8 +30,8 @@ async def test_memory_tools_offered_on_owner_turns(
     )
     assert set(search["parameters"]["properties"]) == {"query", "after", "before"}
     assert "required" not in search["parameters"]
-    assert "ask the owner which one they meant" in search["description"]
-    assert "recall it and tell the owner which conversation you picked" in search["description"]
+    assert "ask the user which one they meant" in search["description"]
+    assert "recall it and tell the user which conversation you picked" in search["description"]
 
 
 async def test_memory_tools_not_offered_on_ask_turns(
@@ -41,7 +41,7 @@ async def test_memory_tools_not_offered_on_ask_turns(
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
     model = FakeModel([calls((RECALL_CONVERSATION, '{"id": 41}')), text(NO_REPLY)])
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
-        TurnInput("ask", "x", item, "disk-check")
+        TurnInput("ask", "x", item, "disk-check", user=DIOGO)
     )
     assert not {SEARCH_CONVERSATIONS, RECALL_CONVERSATION} & model.tool_names()
     assert "unknown tool" in model.requests[1][0][-1]["content"]
@@ -88,14 +88,16 @@ async def test_search_then_recall_then_follow_up(
     ]
 
     # The recall stays in the conversation: the next turn still sees it.
-    await History(sessions).append("assistant", result.reply, queue_item_id=turn.queue_item_id)
+    await History(sessions).append(
+        "diogo", "assistant", result.reply, queue_item_id=turn.queue_item_id
+    )
     await agent(sessions, model, memory=mem).run(
         await owner_turn(sessions, "and how long in the oven?")
     )
     texts = contents(model.requests[3][0][1:])
     assert texts[0] == "remember the chicken recipe?"
     assert texts[1].startswith('[recall:#41 "Chicken thighs recipe"] #41 ')
-    assert "Owner: 40 minutes at 200°C" in texts[1]
+    assert "User: 40 minutes at 200°C" in texts[1]
     assert texts[-1] == "and how long in the oven?"
 
 

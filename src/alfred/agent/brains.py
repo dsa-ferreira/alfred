@@ -1,4 +1,4 @@
-"""The brains (models) the owner can switch between, and the current one (design D1).
+"""The brains (models) the admin can switch between, alfred-wide, and the current one (design D1).
 
 The brains are the ``[ai.models]`` aliases plus the ``[ai] model`` tag, which
 is listed under its own tag when no alias names it. The startup brain is the
@@ -7,7 +7,7 @@ one whose tag is ``[ai] model``. Each brain says whether it can see images
 for the startup brain when no alias names it. The current brain lives only in memory: a
 restart goes back to the startup brain.
 
-The owner switches brains with ``alfred_set_model`` (``alfred.tools.brains``).
+The admin switches brains with ``alfred_set_model`` (``alfred.tools.brains``).
 """
 
 from __future__ import annotations

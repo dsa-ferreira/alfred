@@ -1,11 +1,11 @@
 # AGENTS.md
 
-alfred is the owner's two-way channel to the local AI and the homelab services.
-It is a Telegram bot (long polling, owner only) and a small HTTP API for
-services (`/notify`, `/ask`), with its own agent loop: it calls an
-OpenAI-compatible chat completions endpoint (Ollama on `ai.lan` by default),
-offers the model the tools of the configured MCP servers, and runs the tool
-calls itself. Planning lives in `openspec/`; read the active change
+alfred is its users' two-way channel to the local AI and the homelab services.
+It is a Telegram bot (long polling, configured `[[users]]` only, one of them
+the admin) and a small HTTP API for services (`/notify`, `/ask`), with its
+own agent loop: it calls an OpenAI-compatible chat completions endpoint
+(Ollama on `ai.lan` by default), offers the model the tools of the
+configured MCP servers, and runs the tool calls itself. Planning lives in `openspec/`; read the active change
 (`openspec/changes/*/`) before implementing.
 
 ## Rules
@@ -37,9 +37,18 @@ Everything the model can call is a toolset. The contract lives in
 - Subclass `LocalToolset` in the feature's own package, or in `alfred/tools/`
   if it belongs to no feature (like `conversation.py` and `brains.py`). Set
   `definitions`, implement `call(name, raw_arguments, attempt)`, and
-  override `offered` if it is not for every turn (`owner_only` for owner
-  turns). Override `open` / `new_attempt` only for per-turn or per-attempt
-  state (see `web/tools.py`).
+  override `offered` if it is not for every turn (`chat_only` for turns
+  started by a user's chat message). Override `open` / `new_attempt` only
+  for per-turn or per-attempt state (see `web/tools.py`).
+- Don't check the user's tool allow-list yourself: `turn.py` wraps every
+  opened toolset in `Gated` (`alfred.tools.base`), which hides and refuses
+  the names the turn user's `AllowList` doesn't match. Only prompt notes
+  about tools the list hides need care (see `attachments/tools.py`).
+- Whose turn it is is `turn.user` (`attempt.turn.user` in `call`). Data a
+  tool reads or writes belongs to that user; filter by `user.name` in the
+  query, never in the prompt.
+- Add the tool's name to `alfred/tools/catalog.py`, so exact
+  `alfred_*` allow-list entries naming it pass the startup check.
 - Add it to `build_toolsets` in `app.py`. The list order is the order the
   tools are offered in; alfred's own tools come before `McpTools`.
 - Exceptions from `call` become error results for the model (`safe_call`).

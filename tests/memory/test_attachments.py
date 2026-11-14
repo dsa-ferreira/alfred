@@ -16,19 +16,19 @@ SECRET_PAGE = "Account IBAN PT50 0002 0123 1234 5678 9015 4"
 async def archive_with_invoice(sessions: async_sessionmaker[AsyncSession]) -> int:
     history = History(sessions)
     await owner_with_files(sessions, "file this", [pdf_file([SECRET_PAGE, "page two"])])
-    await history.append("assistant", "Filed, sir.")
-    reset = await history.reset()
+    await history.append("diogo", "assistant", "Filed, sir.")
+    reset = await history.reset("diogo")
     assert reset.archived_id is not None
     return reset.archived_id
 
 
 async def test_recall_shows_handles(sessions: async_sessionmaker[AsyncSession]) -> None:
     cid = await archive_with_invoice(sessions)
-    result = await memory(sessions).recall(cid)
+    result = await memory(sessions).recall("diogo", cid)
     assert result.ok
     lines = result.text.splitlines()
     assert lines[1:] == [
-        'Owner: file this [attachment #1: PDF "invoice.pdf", 2 pages, text]',
+        'User: file this [attachment #1: PDF "invoice.pdf", 2 pages, text]',
         "alfred: Filed, sir.",
     ]
     assert SECRET_PAGE not in result.text
@@ -42,7 +42,7 @@ async def test_summary_transcript_has_no_pdf_text(
     summaries = Summaries(make_config(), sessions, model, FakeEmbedder(default=[1.0]))
     assert await summaries.summarise(cid) == "Invoice filed"
     transcript = model.requests[0][0][1]["content"]
-    assert 'Owner: file this [attachment #1: PDF "invoice.pdf", 2 pages, text]' in transcript
+    assert 'User: file this [attachment #1: PDF "invoice.pdf", 2 pages, text]' in transcript
     assert SECRET_PAGE not in transcript and "page two" not in transcript
 
 
@@ -50,6 +50,6 @@ def test_owner_line_without_caption() -> None:
     from alfred.attachments.handles import AttachmentRef
 
     photo = AttachmentRef(3, "image", "image/jpeg", "attachments/x")
-    assert render([TranscriptEntry("owner", None, "", attachments=(photo,))]) == (
-        "Owner: [attachment #3: image]"
+    assert render([TranscriptEntry("user", None, "", attachments=(photo,))]) == (
+        "User: [attachment #3: image]"
     )

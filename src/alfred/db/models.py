@@ -1,23 +1,30 @@
 """SQLAlchemy models (design D7).
 
-- ``conversations``: at most one has ``ended_at IS NULL`` (the current one).
+Rows that belong to a user name them in ``user_name`` (``created_by`` for
+reminders): a configured ``[[users]]`` name (change add-multiple-users,
+design D1). There is no users table; entries belong to a user through their
+conversation.
+
+- ``conversations``: at most one per user has ``ended_at IS NULL`` (their
+  current one).
   Archived ones get a title, a summary and an embedding of both (memory
   design D1); ``search_tsv`` is generated from title and summary.
 - ``entries``: what was said in a conversation, in order. Entries written by
   a turn carry its ``queue_item_id``, so a retried turn records them once.
   A ``recall`` entry brings an archived conversation into the current one
   (memory design D8).
-- ``queue_items``: AI-bound work (owner messages, ``/ask`` prompts and due
-  reminders).
-- ``reminders``: timed reminders the owner set (change add-reminders, design
-  D3). ``fired`` means handed to the queue. A reminder queue item and its
+- ``queue_items``: AI-bound work (users' messages, ``/ask`` prompts and due
+  reminders), each for one user.
+- ``reminders``: timed reminders a user set (change add-reminders, design
+  D3), for the users in ``reminder_recipients``. ``fired`` means handed to
+  the queue, one item per recipient. A reminder queue item and its
   ``reminder``/``reminder_reply`` entries point at the row through
   ``reminder_id``, never copying its text or due time.
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
-- ``attachments``: the owner's photos, image files and PDFs (change
+- ``attachments``: users' photos, image files and PDFs (change
   add-attachments, design D1). The bytes are in the object store under
   ``object_key``; the row is written with its queue item and linked to the
-  owner entry (``entry_id``) when the turn records it. ``attachment_pages``
+  user entry (``entry_id``) when the turn records it. ``attachment_pages``
   holds each PDF page's text.
 """
 
@@ -54,8 +61,9 @@ NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
+# ``user``: written by the conversation's user (change add-multiple-users, D1).
 ENTRY_KINDS = (
-    "owner",
+    "user",
     "assistant",
     "notice",
     "ask_prompt",
@@ -67,7 +75,7 @@ ENTRY_KINDS = (
 # What the summary's full-text column is generated from; also used by search.
 SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
 ENTRY_TSV = "to_tsvector('english', text)"
-QUEUE_KINDS = ("owner", "ask", "reminder")
+QUEUE_KINDS = ("user", "ask", "reminder")
 REMINDER_STATUSES = ("pending", "fired", "cancelled")
 QUEUE_STATUSES = ("pending", "done", "failed")
 ATTACHMENT_KINDS = ("image", "pdf")
@@ -84,10 +92,10 @@ class Base(DeclarativeBase):
 class Conversation(Base):
     __tablename__ = "conversations"
     __table_args__ = (
-        # Only one row may be current: every current row indexes the same key.
+        # Only one row per user may be current.
         Index(
-            "uq_conversations_one_current",
-            text("(ended_at IS NULL)"),
+            "uq_conversations_one_current_per_user",
+            "user_name",
             unique=True,
             postgresql_where=text("ended_at IS NULL"),
         ),
@@ -95,6 +103,7 @@ class Conversation(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_name: Mapped[str] = mapped_column(Text, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     title: Mapped[str | None] = mapped_column(Text)
@@ -114,7 +123,7 @@ class Entry(Base):
     __table_args__ = (
         CheckConstraint(_in("kind", ENTRY_KINDS), name="kind"),
         Index("ix_entries_conversation_id_id", "conversation_id", "id"),
-        # A retried turn must not record its owner message (or reply) twice.
+        # A retried turn must not record its user message (or reply) twice.
         Index("uq_entries_queue_item_id_kind", "queue_item_id", "kind", unique=True),
         Index("ix_entries_text_tsv", text(ENTRY_TSV), postgresql_using="gin"),
         # A conversation is recalled at most once into the same conversation.
@@ -155,6 +164,8 @@ class QueueItem(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Whose turn it is: the sender, the /ask target or the reminder's recipient.
+    user_name: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str | None] = mapped_column(String(64))
     text: Mapped[str] = mapped_column(Text, nullable=False)
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -185,9 +196,21 @@ class Reminder(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReminderRecipient(Base):
+    """Who a reminder is for (change add-multiple-users, design D7)."""
+
+    __tablename__ = "reminder_recipients"
+
+    reminder_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("reminders.id"), primary_key=True
+    )
+    user_name: Mapped[str] = mapped_column(Text, primary_key=True)
 
 
 class TurnToolCall(Base):
@@ -219,7 +242,9 @@ class Attachment(Base):
     queue_item_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("queue_items.id"), nullable=False
     )
-    # The owner entry of the message, once its turn has recorded it.
+    # Who sent it.
+    user_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # The user entry of the message, once its turn has recorded it.
     entry_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("entries.id"))
     # Order within the message (an album).
     position: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -240,6 +265,6 @@ class AttachmentPage(Base):
     attachment_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("attachments.id"), primary_key=True
     )
-    # 1-based, as the model and the owner count them.
+    # 1-based, as the model and users count them.
     page: Mapped[int] = mapped_column(Integer, primary_key=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)

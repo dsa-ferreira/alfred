@@ -31,6 +31,7 @@ from tests.agent.turn_helpers import (
 )
 from tests.attachments.files import image_bytes
 from tests.helpers import (
+    DIOGO,
     FakeEmbedder,
     FakeModel,
     FakeStore,
@@ -65,7 +66,7 @@ async def test_tool_order_with_attachments(
         store=FakeStore(),
         attachments=ATTACHMENTS,
     )
-    await a.run(TurnInput("owner", "hi", item))
+    await a.run(TurnInput("chat", "hi", item, user=DIOGO))
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         WEB_SEARCH,
         WEB_FETCH,
@@ -90,7 +91,7 @@ async def test_no_attachment_tools_without_the_section(
     model = FakeModel([text("ok")])
     item, _ = await owner_with_files(sessions, "hi", [])
     await agent(sessions, model, brains=vision_brains(), store=FakeStore()).run(
-        TurnInput("owner", "hi", item)
+        TurnInput("chat", "hi", item, user=DIOGO)
     )
     names = {t["function"]["name"] for t in model.requests[0][1]}
     assert not names & {VIEW_ATTACHMENT, READ_DOCUMENT}
@@ -104,11 +105,11 @@ async def test_owner_turn_views_an_earlier_photo(
     await owner_with_files(
         sessions, "what's the total?", [image_file(name="receipt.jpg")], store, [image_bytes()]
     )
-    await History(sessions).append("assistant", "12.40 EUR, sir.")
+    await History(sessions).append("diogo", "assistant", "12.40 EUR, sir.")
     item, _ = await owner_with_files(sessions, "and the date on it?", [])
     model = FakeModel([calls((VIEW_ATTACHMENT, json.dumps({"id": 1}))), text("9 November, sir.")])
     a = agent(sessions, model, brains=vision_brains(), store=store, attachments=ATTACHMENTS)
-    result = await a.run(TurnInput("owner", "and the date on it?", item))
+    result = await a.run(TurnInput("chat", "and the date on it?", item, user=DIOGO))
 
     assert result.reply == "9 November, sir."
     system = model.requests[0][0][0]["content"]
@@ -130,7 +131,7 @@ async def test_text_only_brain_explains_no_view_tool(
     a = agent(
         sessions, model, brains=vision_brains(False), store=FakeStore(), attachments=ATTACHMENTS
     )
-    await a.run(TurnInput("owner", "hi", item))
+    await a.run(TurnInput("chat", "hi", item, user=DIOGO))
     system = model.requests[0][0][0]["content"]
     assert TEXT_ONLY_NOTE in system and VIEW_ATTACHMENT not in system
     names = {t["function"]["name"] for t in model.requests[0][1]}

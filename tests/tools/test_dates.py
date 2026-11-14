@@ -10,10 +10,11 @@ import pytest
 
 from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
 from alfred.tools.dates import DATE, DATE_TOOL, DateTools
+from tests.helpers import DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
 NOW = datetime(2026, 11, 9, 14, 5, tzinfo=UTC)  # Monday, 14:05 in Lisbon (WET)
-OWNER = TurnInput("owner", "how many days until Christmas?", 1)
+OWNER = TurnInput("chat", "how many days until Christmas?", 1, user=DIOGO)
 
 
 async def call(arguments: dict[str, object], now: datetime = NOW) -> ToolOutcome:
@@ -39,7 +40,11 @@ async def error(**arguments: object) -> str:
 
 @pytest.mark.parametrize(
     "turn",
-    [OWNER, TurnInput("ask", "x", 2, "disk-check"), TurnInput("reminder", "x", 3)],
+    [
+        OWNER,
+        TurnInput("ask", "x", 2, "disk-check", user=DIOGO),
+        TurnInput("reminder", "x", 3, user=DIOGO),
+    ],
 )
 async def test_offered_on_every_turn(turn: TurnInput) -> None:
     tools = DateTools(LISBON)
@@ -198,31 +203,31 @@ async def test_weekday_needs_a_date() -> None:
 
 async def test_time_in_tokyo() -> None:
     assert await result(op="now_in", zone="Asia/Tokyo") == (
-        "It is 23:05 on Monday 9 November 2026 in Asia/Tokyo, 9 hours ahead of the owner."
+        "It is 23:05 on Monday 9 November 2026 in Asia/Tokyo, 9 hours ahead of the user."
     )
 
 
 async def test_half_hour_offset() -> None:
     assert await result(op="now_in", zone="Asia/Kolkata") == (
         "It is 19:35 on Monday 9 November 2026 in Asia/Kolkata, "
-        "5 hours 30 minutes ahead of the owner."
+        "5 hours 30 minutes ahead of the user."
     )
 
 
 async def test_behind_the_owner() -> None:
     assert await result(op="now_in", zone="America/New_York") == (
-        "It is 09:05 on Monday 9 November 2026 in America/New_York, 5 hours behind the owner."
+        "It is 09:05 on Monday 9 November 2026 in America/New_York, 5 hours behind the user."
     )
 
 
 async def test_same_offset() -> None:
     assert await result(op="now_in", zone="Europe/London") == (
-        "It is 14:05 on Monday 9 November 2026 in Europe/London, the same time as the owner."
+        "It is 14:05 on Monday 9 November 2026 in Europe/London, the same time as the user."
     )
 
 
 async def test_owners_own_time() -> None:
-    assert await result(op="now_in") == "It is 14:05 on Monday 9 November 2026 (the owner's time)."
+    assert await result(op="now_in") == "It is 14:05 on Monday 9 November 2026 (the user's time)."
 
 
 @pytest.mark.parametrize("zone", ["Tokyo", "../etc/passwd", 9])

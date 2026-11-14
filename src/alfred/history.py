@@ -1,9 +1,10 @@
-"""Conversation history: one current conversation, its entries, and resets.
+"""Conversation history: each user's current conversation, its entries, and resets.
 
-The current conversation is the one row of ``conversations`` with
-``ended_at IS NULL``. Each write reads it inside its own transaction, so an
-entry written around a reset lands in whichever conversation is current when
-it commits.
+A user's current conversation is their one row of ``conversations`` with
+``ended_at IS NULL`` (change add-multiple-users, design D5); the first is
+created when it is first needed. Each write reads it inside its own
+transaction, so an entry written around a reset lands in whichever
+conversation is current when it commits.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from alfred.reminders.when import format_when
 from alfred.tools.base import ModelImage
 
 EntryKind = Literal[
-    "owner", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
+    "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
 ]
 UTC_ZONE = ZoneInfo("UTC")
 
@@ -48,13 +49,15 @@ class HistoryEntry:
     # When the entry was recorded; stamped on user messages (change add-utility-tools, D1).
     created_at: datetime | None = None
     entry_id: int | None = None
-    # An owner entry's files, in message order (change add-attachments, design D4).
+    # A user entry's files, in message order (change add-attachments, design D4).
     attachments: tuple[AttachmentRef, ...] = ()
+    # For reminder entries: who set it, when not the conversation's user.
+    reminder_set_by: str | None = None
 
 
 @dataclass(frozen=True)
 class Inline:
-    """How an owner entry in the inline window is sent (change add-attachments, design D4).
+    """How a user entry in the inline window is sent (change add-attachments, design D4).
 
     ``handles`` replace the plain handles (a PDF's with its page 1 text, a
     note when an image can't be shown); ``images`` follow the text as image
@@ -77,27 +80,28 @@ class History:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def current_conversation_id(self) -> int:
+    async def current_conversation_id(self, user: str) -> int:
         async with self._sessions.begin() as session:
-            return await current_id(session, lock=False)
+            return await current_id(session, user, lock=False)
 
     async def append(
         self,
+        user: str,
         kind: EntryKind,
         text_: str,
         source: str | None = None,
         queue_item_id: int | None = None,
         reminder_id: int | None = None,
     ) -> int:
-        """Add an entry to the current conversation. Returns the entry's ID.
+        """Add an entry to ``user``'s current conversation. Returns the entry's ID.
 
         With ``queue_item_id``, an entry of the same kind for that item that
         already exists is kept and nothing is added (a retried turn); its ID
-        is returned. An owner entry takes the attachments queued with its
+        is returned. A user entry takes the attachments queued with its
         item, in the same transaction (change add-attachments, design D2).
         """
         async with self._sessions.begin() as session:
-            conversation_id = await current_id(session, lock=True)
+            conversation_id = await current_id(session, user, lock=True)
             entry_id = await session.scalar(
                 insert(Entry)
                 .values(
@@ -116,7 +120,7 @@ class History:
                     select(Entry.id).where(Entry.queue_item_id == queue_item_id, Entry.kind == kind)
                 )
                 assert entry_id is not None
-            if kind == "owner" and queue_item_id is not None:
+            if kind == "user" and queue_item_id is not None:
                 await session.execute(
                     update(Attachment)
                     .where(Attachment.queue_item_id == queue_item_id, Attachment.entry_id.is_(None))
@@ -124,8 +128,8 @@ class History:
                 )
             return entry_id
 
-    async def recent(self, limit: int) -> list[HistoryEntry]:
-        """The newest ``limit`` entries of the current conversation, oldest first.
+    async def recent(self, user: str, limit: int) -> list[HistoryEntry]:
+        """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
 
         A recall counts as one entry, however long its transcript.
         """
@@ -142,7 +146,7 @@ class History:
                     Entry.created_at,
                 )
                 .join(Conversation, Conversation.id == Entry.conversation_id)
-                .where(Conversation.ended_at.is_(None))
+                .where(Conversation.ended_at.is_(None), Conversation.user_name == user)
                 .order_by(Entry.id.desc())
                 .limit(limit)
                 .subquery()
@@ -159,36 +163,46 @@ class History:
                     Reminder.due_at,
                     newest.c.created_at,
                     newest.c.id,
+                    Reminder.created_by,
                 )
                 .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
                 .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
                 .order_by(newest.c.id)
             )
-            entries = [HistoryEntry(*row) for row in rows]
-            owner_ids = [e.entry_id for e in entries if e.kind == "owner" and e.entry_id]
-            refs = await refs_by_entry(session, owner_ids)
+            entries = [
+                HistoryEntry(
+                    *row[:-1],
+                    reminder_set_by=row[-1] if row[-1] not in (None, user) else None,
+                )
+                for row in rows
+            ]
+            user_ids = [e.entry_id for e in entries if e.kind == "user" and e.entry_id]
+            refs = await refs_by_entry(session, user_ids)
         return [
             dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
             for e in entries
         ]
 
-    async def reset(self) -> Reset:
-        """Archive the current conversation and start a new one."""
+    async def reset(self, user: str) -> Reset:
+        """Archive ``user``'s current conversation and start a new one for them."""
         async with self._sessions.begin() as session:
             archived_id = await session.scalar(
                 update(Conversation)
-                .where(Conversation.ended_at.is_(None))
+                .where(Conversation.ended_at.is_(None), Conversation.user_name == user)
                 .values(ended_at=func.now())
                 .returning(Conversation.id)
             )
-            new = Conversation()
+            new = Conversation(user_name=user)
             session.add(new)
             await session.flush()
             return Reset(archived_id, new.id)
 
 
-async def current_id(session: AsyncSession, *, lock: bool) -> int:
-    query = select(Conversation.id).where(Conversation.ended_at.is_(None))
+async def current_id(session: AsyncSession, user: str, *, lock: bool) -> int:
+    """``user``'s current conversation, created if they have none yet."""
+    query = select(Conversation.id).where(
+        Conversation.ended_at.is_(None), Conversation.user_name == user
+    )
     if lock:
         # A reset's UPDATE waits for this transaction, so the entry can't land
         # in a conversation that was archived before it committed.
@@ -198,10 +212,8 @@ async def current_id(session: AsyncSession, *, lock: bool) -> int:
         return found
     await session.execute(
         insert(Conversation)
-        .values()
-        .on_conflict_do_nothing(
-            index_elements=[text("(ended_at IS NULL)")], index_where=text("ended_at IS NULL")
-        )
+        .values(user_name=user)
+        .on_conflict_do_nothing(index_elements=["user_name"], index_where=text("ended_at IS NULL"))
     )
     found = await session.scalar(query)
     assert found is not None
@@ -237,8 +249,8 @@ def strip_stamp(text_: str) -> str:
     return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
 
 
-def owner_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
-    """What the owner wrote, then the handles of what they sent with it."""
+def user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
+    """What the user wrote, then the handles of what they sent with it."""
     handles = inline.handles if inline else [handle(a) for a in entry.attachments]
     return with_handles(entry.text, handles)
 
@@ -250,19 +262,20 @@ def to_messages(
 ) -> list[dict[str, Any]]:
     """Map entries to chat-completions messages.
 
-    Owner messages and ask prompts are ``user`` turns (ask prompts prefixed
+    User messages and ask prompts are ``user`` turns (ask prompts prefixed
     ``[ask:<service>]``), replies are ``assistant`` turns, and notices are
     ``user`` turns prefixed ``[notice:<service>]``. Delivered reminders are
-    ``user`` turns prefixed ``[reminder:#<id> due <time in zone>]``, followed
-    by what the owner was told. Recalls are ``user`` turns
+    ``user`` turns prefixed ``[reminder:#<id> due <time in zone>]`` (with
+    ``, set by <name>`` when someone else set it), followed by what the user
+    was told. Recalls are ``user`` turns
     prefixed ``[recall:#<id> "<title>"]``: the newest with its transcript,
     older ones with only the recalled conversation's summary (memory design D9).
 
     Every ``user`` turn starts with the time its entry was recorded, before
     its label (``[Mon 9 Nov 14:05] [notice:backup] ...``); replies have none.
 
-    An owner message ends with the handles of its attachments
-    (``[attachment #7: image "receipt.jpg"]``). The owner entries in
+    A user message ends with the handles of its attachments
+    (``[attachment #7: image "receipt.jpg"]``). The user entries in
     ``inline`` (by entry ID) are sent as it says; with images, their content
     is a list: the text part, then one ``image_url`` part per image.
     """
@@ -277,9 +290,9 @@ def to_messages(
                     content = f"{label} {e.text}"
                 else:
                     content = f"{label} Summary: {e.recalled_summary or '(no summary yet)'}"
-            case "owner":
+            case "user":
                 extra = (inline or {}).get(e.entry_id) if e.entry_id is not None else None
-                content = owner_text(e, extra)
+                content = user_text(e, extra)
                 if extra is not None and extra.images:
                     text_part = {"type": "text", "text": stamped(content, e.created_at, zone)}
                     parts = [text_part, *(image.part() for image in extra.images)]
@@ -291,7 +304,8 @@ def to_messages(
                 content = f"[notice:{e.source}] {e.text}"
             case "reminder":
                 due = f" due {format_when(e.reminder_due_at, zone)}" if e.reminder_due_at else ""
-                content = f"[reminder:#{e.reminder_id}{due}] {e.text}"
+                set_by = f", set by {e.reminder_set_by}" if e.reminder_set_by else ""
+                content = f"[reminder:#{e.reminder_id}{due}{set_by}] {e.text}"
             case "assistant" | "ask_reply" | "reminder_reply":
                 messages.append({"role": "assistant", "content": e.text})
         if content is not None:

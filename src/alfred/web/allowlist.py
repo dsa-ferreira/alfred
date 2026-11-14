@@ -1,6 +1,6 @@
 """Which URLs a turn may fetch (change add-web-search, design D3).
 
-A URL is allowed when it appeared in an owner message in the turn's context,
+A URL is allowed when it appeared in a message from the turn's user in the turn's context,
 in the ``/ask`` prompt, or in a search result earlier in the same turn.
 URLs are compared in a normal form: ``http``/``https`` only, host in lower
 case, default port and fragment removed, path and query kept as written.

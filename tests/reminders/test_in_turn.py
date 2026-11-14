@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.model import ModelUnreachable
 from alfred.agent.prompts import ASK_RULE, NO_REPLY, REMINDER_RULE
 from alfred.agent.turn import TurnFailed
+from alfred.config import Users
 from alfred.history import History
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
@@ -20,6 +21,7 @@ from alfred.tools.conversation import END_CONVERSATION
 from alfred.tools.dates import DATE
 from tests.agent.turn_helpers import (
     DUE,
+    LISBON,
     Clock,
     agent,
     contents,
@@ -28,7 +30,7 @@ from tests.agent.turn_helpers import (
     reminder_turn,
     tool_rows,
 )
-from tests.helpers import FakeModel, add_queue_item, calls, text
+from tests.helpers import ANA, DIOGO, FakeModel, add_queue_item, calls, text
 
 # --- reminders -----------------------------------------------------------------
 
@@ -51,13 +53,13 @@ async def test_reminder_tools_not_offered_in_ask_turns(
     model.script.append(text("done"))
     a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
-    await a.run(TurnInput("ask", "93%", item, "disk-check"))
+    await a.run(TurnInput("ask", "93%", item, "disk-check", user=DIOGO))
     assert not REMINDER_TOOLS & model.tool_names(0)
     # Called anyway (from a reminder turn): refused, nothing stored.
     await a.run(await reminder_turn(sessions))
     assert not REMINDER_TOOLS & model.tool_names(1)
     assert "unknown tool" in model.requests[2][0][-1]["content"].lower()
-    assert await Reminders(sessions).pending() == []
+    assert await Reminders(sessions).pending("diogo") == []
 
 
 async def test_owner_sets_a_reminder(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -80,8 +82,8 @@ async def test_owner_sets_a_reminder(sessions: async_sessionmaker[AsyncSession])
 
 async def test_reminder_turn_on_time(sessions: async_sessionmaker[AsyncSession]) -> None:
     history = History(sessions)
-    await history.append("owner", "earlier")
-    await history.append("assistant", "earlier reply")
+    await history.append("diogo", "user", "earlier")
+    await history.append("diogo", "assistant", "earlier reply")
     model = FakeModel([text("Your call to mum is due, sir.")])
     a = agent(sessions, model, now=DUE)
     result = await a.run(await reminder_turn(sessions))
@@ -113,7 +115,7 @@ async def test_reminder_turn_gets_the_ask_tool_set(
     )
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await agent(sessions, ask_model, reminders=tools, now=clock).run(
-        TurnInput("ask", "93%", item, "disk-check")
+        TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
     )
     assert reminder_model.tool_names() == ask_model.tool_names()
     assert END_CONVERSATION not in reminder_model.tool_names()
@@ -156,7 +158,7 @@ async def test_reminder_tool_failure_reaches_the_model(
 ) -> None:
     class Broken(ReminderTools):
         def __init__(self) -> None:
-            pass
+            super().__init__(Reminders(sessions), LISBON, "09:00", Users((DIOGO,)))
 
         async def call(self, name: str, raw_arguments: object, attempt: object = None) -> object:
             raise OSError("database down")
@@ -174,3 +176,19 @@ async def test_reminder_turn_offers_calculator_and_date_before_mcp(
     await agent(sessions, model, now=DUE).run(await reminder_turn(sessions))
     names = [t["function"]["name"] for t in model.requests[0][1]]
     assert names.index(CALCULATE) < names.index(DATE) < names.index("mcparr_get_downloads")
+
+
+# --- Set by someone else (change add-multiple-users) ----------------------------------
+
+
+async def test_reminder_set_by_someone_else(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([text("Diogo asks you to buy milk, madam.")])
+    a = agent(sessions, model, now=DUE, users=[DIOGO, ANA])
+    await a.run(await reminder_turn(sessions, 14, "buy milk", user=ANA, set_by="diogo"))
+    messages = model.requests[0][0]
+    assert contents(messages[1:]) == [
+        "[reminder:#14 due Monday 9 November 2026, 17:00; now 17:00; set by diogo] buy milk"
+    ]
+    system = messages[0]["content"]
+    assert "You are chatting over Telegram with ana, the user." in system
+    assert 'Address the user as "madam"' in system

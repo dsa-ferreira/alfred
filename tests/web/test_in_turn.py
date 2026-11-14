@@ -22,7 +22,7 @@ from tests.agent.turn_helpers import (
     tool_rows,
     web_tools,
 )
-from tests.helpers import FakeModel, add_queue_item, make_config, text
+from tests.helpers import DIOGO, FakeModel, add_queue_item, make_config, text
 from tests.web.test_search import SEARXNG
 from tests.web.test_search import reply as search_reply
 
@@ -46,7 +46,7 @@ async def test_web_tools_offered_in_ask_turns(
     item = await add_queue_item(sessions, "ask", "anything new?", "backup")
     model = FakeModel([text(NO_REPLY)])
     await agent(sessions, model, web=web_tools(web_http)).run(
-        TurnInput("ask", "anything new?", item, "backup")
+        TurnInput("ask", "anything new?", item, "backup", user=DIOGO)
     )
     assert {WEB_SEARCH, WEB_FETCH} <= model.tool_names()
     assert END_CONVERSATION not in model.tool_names()
@@ -82,8 +82,8 @@ async def test_url_the_owner_pasted_in_an_earlier_message(
     sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "have a look at https://example.com/pricing-page.")
-    await history.append("assistant", "It is a product page.")
+    await history.append("diogo", "user", "have a look at https://example.com/pricing-page.")
+    await history.append("diogo", "assistant", "It is a product page.")
     respx.get("https://example.com/pricing-page").respond(
         200, headers={"content-type": "text/plain"}, text="Pro plan: 10 euros."
     )
@@ -98,8 +98,8 @@ async def test_owner_url_outside_the_window_refused(
     sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "see https://example.com/old")
-    await history.append("assistant", "Seen.")
+    await history.append("diogo", "user", "see https://example.com/old")
+    await history.append("diogo", "assistant", "Seen.")
     route = respx.get("https://example.com/old").respond(200, text="x")
     model = FakeModel([fetch_call("https://example.com/old"), text("Can't.")])
     turn = await owner_turn(sessions, "open it again")
@@ -119,7 +119,7 @@ async def test_url_in_the_ask_prompt(
     item = await add_queue_item(sessions, "ask", prompt, "updates")
     model = FakeModel([fetch_call("https://example.com/release"), text(NO_REPLY)])
     await agent(sessions, model, web=web_tools(web_http)).run(
-        TurnInput("ask", prompt, item, "updates")
+        TurnInput("ask", prompt, item, "updates", user=DIOGO)
     )
     assert "Version 2 is out." in last_tool_result(model)
 
@@ -137,7 +137,7 @@ async def test_search_result_from_an_earlier_turn(
     first = FakeModel([search_call("lisbon weather"), text("Sunny, per BBC.")])
     await agent(sessions, first, web=web).run(await owner_turn(sessions, "lisbon weather?"))
     assert listed in last_tool_result(first)
-    await History(sessions).append("assistant", "Sunny, per BBC.")
+    await History(sessions).append("diogo", "assistant", "Sunny, per BBC.")
 
     second = FakeModel([fetch_call(listed), text("Can't open it.")])
     await agent(sessions, second, web=web).run(await owner_turn(sessions, "open the BBC page"))
@@ -150,8 +150,8 @@ async def test_url_from_alfreds_own_reply(
     sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
 ) -> None:
     history = History(sessions)
-    await history.append("owner", "where are the docs?")
-    await history.append("assistant", "At https://example.com/docs, I believe.")
+    await history.append("diogo", "user", "where are the docs?")
+    await history.append("diogo", "assistant", "At https://example.com/docs, I believe.")
     route = respx.get("https://example.com/docs").respond(200, text="x")
     model = FakeModel([fetch_call("https://example.com/docs"), text("Searching instead.")])
     await agent(sessions, model, web=web_tools(web_http)).run(
@@ -166,10 +166,12 @@ async def test_url_in_a_notice_or_recall(
     sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
 ) -> None:
     history = History(sessions)
-    await history.append("notice", "Report at https://example.com/notice-report", source="backup")
-    current = await history.current_conversation_id()
+    await history.append(
+        "diogo", "notice", "Report at https://example.com/notice-report", source="backup"
+    )
+    current = await history.current_conversation_id("diogo")
     async with sessions.begin() as session:
-        old = Conversation(ended_at=NOW, title="Old chat", summary="Links.")
+        old = Conversation(user_name="diogo", ended_at=NOW, title="Old chat", summary="Links.")
         session.add(old)
         await session.flush()
         session.add(

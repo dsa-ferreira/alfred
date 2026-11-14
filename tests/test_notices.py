@@ -28,7 +28,7 @@ NOTICES: dict[str, Callable[[str], str]] = {
 }
 
 
-@pytest.mark.parametrize("address", ["sir", "Mr. Ferreira"])
+@pytest.mark.parametrize("address", ["sir", "Mr. Ferreira", "madam"])
 @pytest.mark.parametrize("name", list(NOTICES))
 def test_notice_ends_with_address_once(name: str, address: str) -> None:
     text = NOTICES[name](address)
@@ -60,7 +60,7 @@ def test_fallback_names_both_brains() -> None:
     assert "bonsai" in text and "gemma" in text
 
 
-@pytest.mark.parametrize("address", ["sir", "Mr. Ferreira"])
+@pytest.mark.parametrize("address", ["sir", "Mr. Ferreira", "madam"])
 def test_reminder_notice(address: str) -> None:
     text = notices.reminder(address, "call mum", DUE, TODAY)
     assert text == (

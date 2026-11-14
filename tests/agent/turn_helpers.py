@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelReply
-from alfred.agent.prompts import OPERATING_RULES
+from alfred.agent.prompts import CALCULATE, DATE, operating_rules
 from alfred.agent.turn import Agent
+from alfred.config import User, Users
 from alfred.db.models import TurnToolCall
 from alfred.history import History, strip_stamp
 from alfred.mcp.registry import ServerInstructions
@@ -29,6 +30,7 @@ from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
 from alfred.web.tools import WEB_FETCH, WEB_SEARCH, WebTools
 from tests.helpers import (
+    DIOGO,
     FakeEmbedder,
     FakeModel,
     FakeStore,
@@ -54,11 +56,20 @@ COOKBOOK_SECTION = server_instructions(ServerInstructions("cookbook", COOKBOOK_I
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
 
 
-RULES = (
-    OPERATING_RULES
-    + "\n\nToday is Monday, 2 November 2026."
-    + "\n\nYou are running on the model gemma4:26b-a4b-it-qat."
-)
+def rules(*tools: str, user: str = "diogo", others: tuple[str, ...] = ()) -> str:
+    """The operating rules, date and brain line of a turn of the default test agent.
+
+    It offers the calculator and dates on every turn; ``tools`` are the other
+    alfred tools offered.
+    """
+    return (
+        operating_rules(user, {CALCULATE, DATE, *tools}, others)
+        + "\n\nToday is Monday, 2 November 2026."
+        + "\n\nYou are running on the model gemma4:26b-a4b-it-qat."
+    )
+
+
+RULES = rules()
 
 
 def agent(
@@ -96,10 +107,13 @@ def memory(
     return ConversationSearch(make_config(), sessions, embedder)
 
 
-async def owner_turn(sessions: async_sessionmaker[AsyncSession], message: str) -> TurnInput:
-    item = await add_queue_item(sessions, "owner", message)
-    await History(sessions).append("owner", message, queue_item_id=item)
-    return TurnInput("owner", message, item)
+async def owner_turn(
+    sessions: async_sessionmaker[AsyncSession], message: str, user: User = DIOGO
+) -> TurnInput:
+    """``user``'s chat message, queued and recorded as the worker does."""
+    item = await add_queue_item(sessions, "user", message, user=user.name)
+    await History(sessions).append(user.name, "user", message, queue_item_id=item)
+    return TurnInput("chat", message, item, user=user)
 
 
 async def tool_rows(sessions: async_sessionmaker[AsyncSession]) -> list[TurnToolCall]:
@@ -167,12 +181,20 @@ class Clock:
         return self.now
 
 
-def reminder_tools(sessions: async_sessionmaker[AsyncSession], clock: Clock) -> ReminderTools:
-    return ReminderTools(Reminders(sessions), LISBON, "09:00", now=clock)
+def reminder_tools(
+    sessions: async_sessionmaker[AsyncSession], clock: Clock, users: Sequence[User] = (DIOGO,)
+) -> ReminderTools:
+    return ReminderTools(Reminders(sessions), LISBON, "09:00", Users(tuple(users)), now=clock)
 
 
 async def reminder_turn(
-    sessions: async_sessionmaker[AsyncSession], reminder_id: int = 12, text_: str = "call mum"
+    sessions: async_sessionmaker[AsyncSession],
+    reminder_id: int = 12,
+    text_: str = "call mum",
+    user: User = DIOGO,
+    set_by: str | None = None,
 ) -> TurnInput:
-    item = await add_queue_item(sessions, "reminder", text_)
-    return TurnInput("reminder", text_, item, reminder_id=reminder_id, due_at=DUE)
+    item = await add_queue_item(sessions, "reminder", text_, user=user.name)
+    return TurnInput(
+        "reminder", text_, item, reminder_id=reminder_id, due_at=DUE, set_by=set_by, user=user
+    )

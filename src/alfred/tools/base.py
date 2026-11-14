@@ -7,18 +7,26 @@ depend on it rather than on each other.
 A :class:`Toolset` is one source of tools: alfred's own (web, reminders,
 memory, ...) or the configured MCP servers. The agent opens each toolset once
 per turn; ``open`` returns ``None`` when the toolset isn't offered on that
-turn (most local tools are for owner turns only). An open toolset holds what
+turn (most local tools are for chat turns only). An open toolset holds what
 it needs for that turn, is told when a new attempt starts (after a brain
 fallback), and handles the calls to its tools.
 
 ```
-turn:     opened = [t.open(turn) for t in toolsets], minus the Nones
+turn:     opened = [Gated(t.open(turn), turn.user.tools) for t in toolsets], minus the Nones
 attempt:  ctx = AttemptContext(...); o.new_attempt(ctx) for each opened
 call:     dispatch(opened, name, args, ctx)  # first that handles the name
 ```
 
+Every opened toolset is wrapped in :class:`Gated` with the turn user's
+:class:`AllowList` (change add-multiple-users, design D3): a tool the list
+doesn't match is neither offered nor callable. No toolset checks the list
+itself, except to leave out prompt notes about tools the list hides.
+
 The order of the toolsets is the order their definitions are offered in, and
 the first one that handles a name wins a clash.
+
+At runtime this module imports nothing else from alfred; ``User`` is only a
+type here.
 """
 
 from __future__ import annotations
@@ -29,7 +37,10 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from alfred.config import User
 
 log = logging.getLogger(__name__)
 
@@ -37,16 +48,54 @@ LOCAL_GROUP = "alfred"  # how alfred's own tools are grouped in the context-size
 
 
 @dataclass(frozen=True)
-class TurnInput:
-    """What a turn answers: an owner message, an ``/ask`` prompt or a due reminder."""
+class AllowList:
+    """A user's tool allow-list: exact names, ``prefix*`` patterns, or ``*`` for all."""
 
-    kind: Literal["owner", "ask", "reminder"]
+    entries: tuple[str, ...] = ()
+
+    @classmethod
+    def of(cls, *entries: str) -> AllowList:
+        return cls(tuple(entries))
+
+    def matches(self, name: str) -> bool:
+        for entry in self.entries:
+            if entry.endswith("*"):
+                if name.startswith(entry[:-1]):
+                    return True
+            elif entry == name:
+                return True
+        return False
+
+    def may_match_prefix(self, prefix: str) -> bool:
+        """Whether any name starting with ``prefix`` (such as ``cookbook_``) can match."""
+        return any(
+            entry.startswith(prefix) or (entry.endswith("*") and prefix.startswith(entry[:-1]))
+            for entry in self.entries
+        )
+
+    def exact(self, prefix: str = "") -> list[str]:
+        """The entries that are exact names starting with ``prefix``."""
+        return [e for e in self.entries if not e.endswith("*") and e.startswith(prefix)]
+
+
+@dataclass(frozen=True)
+class TurnInput:
+    """What a turn answers: a user's chat message, an ``/ask`` prompt or a due reminder.
+
+    ``user`` is whose turn it is: the sender, the target of the ``/ask``, or
+    the reminder's recipient.
+    """
+
+    kind: Literal["chat", "ask", "reminder"]
     text: str
     queue_item_id: int
     source: str | None = None  # the service, for ask turns
     # For reminder turns: the reminder's number and when it was due.
     reminder_id: int | None = None
     due_at: datetime | None = None
+    # For reminder turns: who set it, when not the recipient.
+    set_by: str | None = None
+    user: User = field(kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -105,8 +154,8 @@ class AttemptContext:
     """One attempt of a turn, as the toolsets see it."""
 
     turn: TurnInput
-    # What the owner wrote in this attempt's context window, oldest first.
-    owner_texts: list[str] = field(default_factory=list)
+    # What the turn's user wrote in this attempt's context window, oldest first.
+    user_texts: list[str] = field(default_factory=list)
     reset: bool = False
 
     def request_reset(self) -> None:
@@ -170,8 +219,40 @@ class LocalToolset:
         raise NotImplementedError
 
 
-def owner_only(turn: TurnInput) -> bool:
-    return turn.kind == "owner"
+def chat_only(turn: TurnInput) -> bool:
+    return turn.kind == "chat"
+
+
+class Gated:
+    """An open toolset seen through an :class:`AllowList` (design D3).
+
+    Definitions the list doesn't match are left out, and their names are not
+    handled, so a call to one is an unknown tool. Everything else passes through.
+    """
+
+    def __init__(self, inner: OpenToolset, allow: AllowList) -> None:
+        self.inner = inner
+        self._allow = allow
+
+    @property
+    def definitions(self) -> list[dict[str, Any]]:
+        return [d for d in self.inner.definitions if self._allow.matches(d["function"]["name"])]
+
+    @property
+    def prompt_notes(self) -> Sequence[PromptNote]:
+        return self.inner.prompt_notes
+
+    def group_of(self, name: str) -> str:
+        return self.inner.group_of(name)
+
+    def new_attempt(self, attempt: AttemptContext) -> None:
+        self.inner.new_attempt(attempt)
+
+    def handles(self, name: str) -> bool:
+        return self._allow.matches(name) and self.inner.handles(name)
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        return await self.inner.call(name, raw_arguments, attempt)
 
 
 def find(opened: Sequence[OpenToolset], name: str) -> OpenToolset | None:

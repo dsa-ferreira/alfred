@@ -31,7 +31,8 @@ from alfred.config import (
     S3Key,
     ServerConfig,
     Service,
-    TelegramConfig,
+    User,
+    Users,
     WebConfig,
 )
 from alfred.db.models import QueueItem
@@ -40,9 +41,20 @@ from alfred.mcp.client import Connector
 from alfred.memory.search import Searcher
 from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
+from alfred.tools.base import AllowList
 from alfred.web.tools import WebTools
 
-OWNER = 42
+OWNER = 42  # diogo's Telegram user ID
+ANA_ID = 222
+# The admin, offered every tool.
+DIOGO = User("diogo", OWNER, "sir", admin=True, tools=AllowList.of("*"))
+# A second user with a partial allow-list (the users spec's example).
+ANA = User(
+    "ana",
+    ANA_ID,
+    "madam",
+    tools=AllowList.of("alfred_*", "cookbook_*", "mcparr_find_media", "mcparr_add_media"),
+)
 
 
 def make_config(
@@ -56,9 +68,10 @@ def make_config(
     attachments: dict[str, Any] | None = None,
     mcp_servers: Sequence[McpServer] = (),
     services: Sequence[Service] = (),
+    users: Sequence[User] = (DIOGO,),
 ) -> Config:
     return Config(
-        telegram=TelegramConfig(owner_user_id=OWNER),
+        users=Users(tuple(users)),
         ai=AIConfig(**(ai or {})),
         history=HistoryConfig(**(history or {})),
         queue=QueueConfig(**(queue or {})),
@@ -117,12 +130,13 @@ class FakeModel:
 
 async def add_queue_item(
     sessions: async_sessionmaker[AsyncSession],
-    kind: str = "owner",
+    kind: str = "user",
     text_: str = "hi",
     source: str | None = None,
+    user: str = "diogo",
 ) -> int:
     async with sessions.begin() as session:
-        item = QueueItem(kind=kind, text=text_, source=source)
+        item = QueueItem(kind=kind, user_name=user, text=text_, source=source)
         session.add(item)
         await session.flush()
         return item.id
@@ -263,8 +277,9 @@ async def owner_with_files(
     files: Sequence[NewAttachment],
     store: FakeStore | None = None,
     data: Sequence[bytes] = (),
+    user: str = "diogo",
 ) -> tuple[int, int]:
-    """Queue an owner message with files and record its entry, as a turn would.
+    """Queue ``user``'s message with files and record its entry, as a turn would.
 
     With ``store``, each file's bytes (``data``, in order) are put there.
     Returns the queue item's and the entry's IDs.
@@ -272,6 +287,6 @@ async def owner_with_files(
     for file, body in zip(files, data, strict=False):
         assert store is not None
         await store.put(file.object_key, body, file.mime)
-    item = await Queue(sessions).enqueue_owner(text_, None, files)
-    entry = await History(sessions).append("owner", text_, queue_item_id=item)
+    item = await Queue(sessions).enqueue_user(user, text_, None, files)
+    entry = await History(sessions).append(user, "user", text_, queue_item_id=item)
     return item, entry

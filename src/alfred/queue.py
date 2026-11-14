@@ -1,13 +1,19 @@
 """The AI-bound queue and its single worker (design D8).
 
-Owner messages, ``/ask`` prompts and due reminders are rows in
-``queue_items``. One worker
+Users' messages, ``/ask`` prompts and due reminders are rows in
+``queue_items``, each for one user. One worker, for all users,
 takes the oldest ``pending`` row and runs its turn; nothing behind it starts
 until it is done or failed. While the AI is unreachable (and no tool has run
 in the turn) the head item is retried with backoff and keeps its place.
 Pending rows simply resume after a restart.
 
-A reminder always reaches the owner (change add-reminders, design D6): a
+The worker resolves the item's user from the config (change
+add-multiple-users, design D2); an item for a user who is no longer
+configured is marked failed instead of blocking the queue. Replies and fixed
+notices go to that user, in their form of address; a brain fallback is also
+told to the admin (design D11).
+
+A reminder always reaches its recipient (change add-reminders, design D6): a
 blank or ``NO_REPLY`` answer, or a turn that fails for good, is replaced by
 the fixed reminder notice.
 """
@@ -28,10 +34,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.prompts import is_no_reply
-from alfred.agent.turn import TurnFailed, TurnResult
+from alfred.agent.turn import Fallback, TurnFailed, TurnResult
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
-from alfred.config import QueueConfig
+from alfred.config import QueueConfig, User, Users
 from alfred.db.models import Attachment, AttachmentPage, QueueItem
 from alfred.history import History
 from alfred.reminders.store import ReminderRow
@@ -41,9 +47,9 @@ log = logging.getLogger(__name__)
 
 
 class Outbox(Protocol):
-    """Sends text to the owner. Raises if the message couldn't be delivered."""
+    """Sends text to a user's chat. Raises if the message couldn't be delivered."""
 
-    async def send(self, text: str) -> None: ...
+    async def send(self, user: User, text: str) -> None: ...
 
 
 class TurnRunner(Protocol):
@@ -61,7 +67,7 @@ class Summariser(Protocol):
 
 
 def reset_marker(archived_id: int | None, title: str | None, new_id: int) -> str:
-    """The one message that tells the owner a conversation ended (memory design D3)."""
+    """The one message that tells the user a conversation ended (memory design D3)."""
     lines: list[str] = []
     if archived_id is not None:
         lines.append(f'— #{archived_id} "{title}" —' if title else f"— #{archived_id} archived —")
@@ -74,24 +80,29 @@ class Queue:
         self._sessions = sessions
         self.signal = asyncio.Event()
 
-    async def enqueue_owner(
+    async def enqueue_user(
         self,
+        user: str,
         text: str,
         telegram_message_id: int | None = None,
         attachments: Sequence[NewAttachment] = (),
     ) -> int:
-        """Queue an owner message, with its attachments, in one transaction.
+        """Queue ``user``'s message, with its attachments, in one transaction.
 
         The files must already be in the object store: the commit is what
-        makes the message exist (change add-attachments, design D2).
+        makes the message exist (change add-attachments, design D2). They
+        belong to ``user``.
         """
         async with self._sessions.begin() as session:
-            item = QueueItem(kind="owner", text=text, telegram_message_id=telegram_message_id)
+            item = QueueItem(
+                kind="user", user_name=user, text=text, telegram_message_id=telegram_message_id
+            )
             session.add(item)
             await session.flush()
             for position, new in enumerate(attachments):
                 row = Attachment(
                     queue_item_id=item.id,
+                    user_name=user,
                     position=position,
                     kind=new.kind,
                     mime=new.mime,
@@ -112,8 +123,9 @@ class Queue:
         self.signal.set()
         return item_id
 
-    async def enqueue_ask(self, source: str, prompt: str) -> int:
-        return await self._insert(QueueItem(kind="ask", source=source, text=prompt))
+    async def enqueue_ask(self, source: str, prompt: str, user: str) -> int:
+        """Queue ``source``'s ``/ask`` prompt as a turn for ``user``."""
+        return await self._insert(QueueItem(kind="ask", user_name=user, source=source, text=prompt))
 
     async def _insert(self, item: QueueItem) -> int:
         async with self._sessions.begin() as session:
@@ -159,22 +171,22 @@ class Worker:
         outbox: Outbox,
         config: QueueConfig,
         *,
-        owner_address: str,
+        users: Users,
         memory: Summariser | None = None,
-        typing: Callable[[], AbstractAsyncContextManager[None]] | None = None,
+        typing: Callable[[User], AbstractAsyncContextManager[None]] | None = None,
         reminders: ReminderLookup | None = None,
         zone: ZoneInfo | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._queue = queue
-        # Shown to the owner while their own turn runs (typing design D1).
+        # Shown in a user's chat while their own chat turn runs (typing design D1).
         self._typing = typing
         self._memory = memory
         self._agent = agent
         self._history = history
         self._outbox = outbox
         self._config = config
-        self._owner_address = owner_address
+        self._users = users
         self._reminders = reminders
         self._zone = zone or ZoneInfo("UTC")
         self._now = now
@@ -200,17 +212,25 @@ class Worker:
         return True
 
     async def _process(self, item: QueueItem) -> None:
-        if item.kind == "owner":
+        user = self._users.get(item.user_name)
+        if user is None:
+            # Not retried: the config, not the AI, has to change (design D9).
+            reason = f"user {item.user_name!r} is not configured"
+            log.error("queue item %s (%s): %s; marked failed", item.id, item.kind, reason)
+            await self._queue.finish(item.id, "failed", reason)
+            return
+        if item.kind == "user":
             # Recorded when the turn starts (once, even if retried), so it is
             # the newest entry of its own context and after earlier replies.
-            await self._history.append("owner", item.text, queue_item_id=item.id)
+            await self._history.append(user.name, "user", item.text, queue_item_id=item.id)
         if item.kind == "reminder":
-            turn = await self._reminder_turn(item)
+            turn = await self._reminder_turn(item, user)
         else:
-            turn = TurnInput(item.kind, item.text, item.id, item.source)  # type: ignore[arg-type]
+            kind = "chat" if item.kind == "user" else item.kind
+            turn = TurnInput(kind, item.text, item.id, item.source, user=user)  # type: ignore[arg-type]
         indicator = (
-            self._typing()
-            if self._typing is not None and item.kind == "owner"
+            self._typing(user)
+            if self._typing is not None and item.kind == "user"
             else contextlib.nullcontext()
         )
         try:
@@ -226,7 +246,7 @@ class Worker:
                 turn,
                 TurnFailed(
                     f"internal error: {type(exc).__name__}",
-                    notices.failed(self._owner_address),
+                    notices.failed(user.address),
                     retryable=False,
                     side_effects_possible=True,
                 ),
@@ -234,38 +254,65 @@ class Worker:
             return
         await self._complete(item, turn, result)
 
-    async def _reminder_turn(self, item: QueueItem) -> TurnInput:
-        """The reminder's text and due time, read through ``reminder_id``."""
+    async def _reminder_turn(self, item: QueueItem, user: User) -> TurnInput:
+        """The reminder's text, due time and creator, read through ``reminder_id``."""
         reminder = None
         if self._reminders is not None and item.reminder_id is not None:
             reminder = await self._reminders.get(item.reminder_id)
         if reminder is None:
             log.error("queue item %s: reminder #%s not found", item.id, item.reminder_id)
             return TurnInput(
-                "reminder", item.text, item.id, reminder_id=item.reminder_id, due_at=item.created_at
+                "reminder",
+                item.text,
+                item.id,
+                reminder_id=item.reminder_id,
+                due_at=item.created_at,
+                user=user,
             )
         return TurnInput(
-            "reminder", reminder.text, item.id, reminder_id=reminder.id, due_at=reminder.due_at
+            "reminder",
+            reminder.text,
+            item.id,
+            reminder_id=reminder.id,
+            due_at=reminder.due_at,
+            set_by=reminder.created_by if reminder.created_by != user.name else None,
+            user=user,
         )
 
     def _reminder_notice(self, turn: TurnInput) -> str:
         due = (turn.due_at or self._now()).astimezone(self._zone)
         today = self._now().astimezone(self._zone).date()
-        return notices.reminder(self._owner_address, turn.text, due, today)
+        return notices.reminder(turn.user.address, turn.text, due, today)
 
     async def _deliver_reminder(self, item: QueueItem, turn: TurnInput, message: str) -> None:
-        """Record the reminder and what the owner was told, then send it."""
+        """Record the reminder and what the recipient was told, then send it."""
+        user = turn.user
         await self._history.append(
-            "reminder", turn.text, queue_item_id=item.id, reminder_id=turn.reminder_id
+            user.name, "reminder", turn.text, queue_item_id=item.id, reminder_id=turn.reminder_id
         )
         await self._history.append(
-            "reminder_reply", message, queue_item_id=item.id, reminder_id=turn.reminder_id
+            user.name,
+            "reminder_reply",
+            message,
+            queue_item_id=item.id,
+            reminder_id=turn.reminder_id,
         )
-        await self._send(item, message)
+        await self._send(item, user, message)
+
+    async def _tell_fallback(self, item: QueueItem, user: User, fallback: Fallback | None) -> None:
+        """The brain is alfred-wide: the turn's user and the admin hear of a fallback (D11).
+
+        Not recorded: the next prompt names the brain.
+        """
+        if fallback is None:
+            return
+        admin = self._users.admin
+        for recipient in (user,) if admin.name == user.name else (user, admin):
+            notice = notices.fell_back(recipient.address, fallback.failed, fallback.default)
+            await self._send(item, recipient, notice)
 
     async def _turn_failed(self, item: QueueItem, turn: TurnInput, failure: TurnFailed) -> None:
-        if failure.fallback_notice is not None:
-            await self._send(item, failure.fallback_notice)
+        await self._tell_fallback(item, turn.user, failure.fallback)
         if failure.retryable:
             attempts = item.attempts + 1
             delay = backoff_s(attempts, self._config)
@@ -281,17 +328,16 @@ class Worker:
             # Before finishing, so a crash in between can't lose the reminder.
             await self._deliver_reminder(item, turn, self._reminder_notice(turn))
         await self._queue.finish(item.id, "failed", failure.reason)
-        if item.kind == "owner":
-            await self._send(item, failure.notice)
+        if item.kind == "user":
+            await self._send(item, turn.user, failure.notice)
 
     async def _complete(self, item: QueueItem, turn: TurnInput, result: TurnResult) -> None:
-        # The owner's brain choice changed, so they hear of it even when an
-        # /ask ends in NO_REPLY. Not recorded: the next prompt names the brain.
-        if result.fallback_notice is not None:
-            await self._send(item, result.fallback_notice)
-        if item.kind == "owner":
-            await self._history.append("assistant", result.reply, queue_item_id=item.id)
-            await self._send(item, result.reply)
+        # The brain choice changed, so it is told even when an /ask ends in NO_REPLY.
+        await self._tell_fallback(item, turn.user, result.fallback)
+        user = turn.user
+        if item.kind == "user":
+            await self._history.append(user.name, "assistant", result.reply, queue_item_id=item.id)
+            await self._send(item, user, result.reply)
         elif item.kind == "reminder":
             reply = result.reply
             if not reply.strip() or is_no_reply(reply):
@@ -299,38 +345,39 @@ class Worker:
                 reply = self._reminder_notice(turn)
             await self._deliver_reminder(item, turn, reply)
         elif is_no_reply(result.reply):
-            log.info("ask %s from %s: NO_REPLY, owner not notified", item.id, item.source)
+            log.info("ask %s from %s: NO_REPLY, %s not notified", item.id, item.source, user.name)
         else:
             await self._history.append(
-                "ask_prompt", item.text, source=item.source, queue_item_id=item.id
+                user.name, "ask_prompt", item.text, source=item.source, queue_item_id=item.id
             )
             await self._history.append(
-                "ask_reply", result.reply, source=item.source, queue_item_id=item.id
+                user.name, "ask_reply", result.reply, source=item.source, queue_item_id=item.id
             )
-            await self._send(item, f"[{item.source}] {result.reply}")
+            await self._send(item, user, f"[{item.source}] {result.reply}")
         await self._queue.finish(item.id, "done")
 
         if result.reset_requested:
-            await self._reset(item)
+            await self._reset(item, user)
 
-    async def _reset(self, item: QueueItem) -> None:
+    async def _reset(self, item: QueueItem, user: User) -> None:
         # Archive first: anything recorded while the summary is made (a
         # /notify notice) already lands in the new conversation.
-        reset = await self._history.reset()
+        reset = await self._history.reset(user.name)
         log.info(
-            "queue item %s: conversation %s archived, %s started",
+            "queue item %s: %s's conversation %s archived, %s started",
             item.id,
+            user.name,
             reset.archived_id,
             reset.new_id,
         )
         title = None
         if self._memory is not None and reset.archived_id is not None:
             title = await self._memory.summarise(reset.archived_id)
-        await self._send(item, reset_marker(reset.archived_id, title, reset.new_id))
+        await self._send(item, user, reset_marker(reset.archived_id, title, reset.new_id))
 
-    async def _send(self, item: QueueItem, text: str) -> None:
+    async def _send(self, item: QueueItem, user: User, text: str) -> None:
         try:
-            await self._outbox.send(text)
+            await self._outbox.send(user, text)
         except Exception:
             # The turn already ran; re-running it would repeat tool actions.
-            log.exception("queue item %s: could not deliver a message to the owner", item.id)
+            log.exception("queue item %s: could not deliver a message to %s", item.id, user.name)

@@ -1,10 +1,11 @@
 """One AI turn (design D5).
 
 ```
-open    = each toolset opened for the turn (those not offered on it drop out)
+open    = each toolset opened for the turn (those not offered on it drop out),
+          gated by the turn user's allow-list
 tools   = the open toolsets' definitions, in toolset order
-msgs    = [system prompt (+ today's date, the brain, the toolsets' notes)]
-          + last N history entries (+ the ask or reminder input)
+msgs    = [system prompt for the user (+ today's date, the brain, the toolsets' notes)]
+          + last N entries of the user's conversation (+ the ask or reminder input)
 loop up to ai.max_requests_per_turn:
     reply = model(msgs, tools)          # on the brain current at the turn's start
     no tool calls -> done
@@ -15,18 +16,21 @@ fail "stopped after too many steps"
 
 The agent names no tool: what is offered on which turn, and what a call
 does, is up to the toolsets (``alfred.tools.base``) that ``app.py``
-passes in.
+passes in, seen through the turn user's allow-list (change
+add-multiple-users, design D3). The names left are what the system prompt
+describes (design D4).
 
 A non-retryable model error on a brain other than the startup one makes the
 startup brain current (change add-brain-switching, design D5). If no tool
-had run, the turn runs again from the start on it; either way the owner gets
-the fallback notice. Each attempt reads the history again and tells every
-open toolset it started (``new_attempt``), so per-attempt state such as the
-web fetch allowlist starts fresh.
+had run, the turn runs again from the start on it; either way the result
+carries the :class:`Fallback`, and the worker tells the user and the
+admin. Each attempt reads the history again and tells every open toolset it
+started (``new_attempt``), so per-attempt state such as the web fetch
+allowlist starts fresh.
 
-An owner message is already in the history when its turn runs (the worker
-records it at turn start), so it reaches the model as the newest entry. An
-``/ask`` prompt is only recorded if the answer reaches the owner, so it is
+A user's chat message is already in the history when its turn runs (the
+worker records it at turn start), so it reaches the model as the newest
+entry. An ``/ask`` prompt is only recorded if the answer reaches the user, so it is
 added to the messages here, after the time now like the history's
 messages (change add-utility-tools, design D1). So is a due reminder (change add-reminders,
 design D5), labelled with its due time and the time of this attempt, so a
@@ -58,6 +62,7 @@ from alfred.history import History, stamped, strip_stamp, to_messages
 from alfred.reminders.when import format_now, format_when
 from alfred.tools.base import (
     AttemptContext,
+    Gated,
     OpenToolset,
     ToolOutcome,
     Toolset,
@@ -82,21 +87,29 @@ class Model(Protocol):
 
 
 @dataclass(frozen=True)
+class Fallback:
+    """The chosen brain failed and alfred went back to the startup brain (design D5)."""
+
+    failed: str
+    default: str
+
+
+@dataclass(frozen=True)
 class TurnResult:
     reply: str
     reset_requested: bool
     side_effects_possible: bool
-    # Sent to the owner before the reply: the chosen brain failed (design D5).
-    fallback_notice: str | None = None
+    # Told to the user (and the admin) before the reply: the brain fell back.
+    fallback: Fallback | None = None
 
 
 class TurnFailed(Exception):
     """The turn produced no answer.
 
     ``reason`` is for logs and the queue row; ``notice`` is the short text
-    the owner may be shown. ``retryable`` is true only when the AI was
-    unreachable and no tool had run yet. ``fallback_notice``, when set, is
-    sent to the owner in any case: the chosen brain failed in this turn.
+    the turn's user may be shown. ``retryable`` is true only when the AI was
+    unreachable and no tool had run yet. ``fallback``, when set, is told in
+    any case: the chosen brain failed in this turn.
     """
 
     def __init__(
@@ -106,14 +119,14 @@ class TurnFailed(Exception):
         *,
         retryable: bool,
         side_effects_possible: bool,
-        fallback_notice: str | None = None,
+        fallback: Fallback | None = None,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.notice = notice
         self.retryable = retryable
         self.side_effects_possible = side_effects_possible
-        self.fallback_notice = fallback_notice
+        self.fallback = fallback
 
 
 class _BrainFailed(Exception):
@@ -143,6 +156,8 @@ class _Turn:
     opened: list[OpenToolset]
     definitions: list[dict[str, Any]]
     notes: list[str]
+    # The names in ``definitions``: what the system prompt describes.
+    offered: frozenset[str]
     # The turn's attachment images, kept across attempts (change add-attachments).
     images: ImageCache | None = None
 
@@ -171,27 +186,28 @@ class Agent:
         self._zone = ZoneInfo(config.ai.timezone)
 
     async def run(self, turn: TurnInput) -> TurnResult:
-        cfg = self._config
         opened: list[OpenToolset] = []
         for toolset in self._toolsets:
             open_toolset = await toolset.open(turn)
             if open_toolset is not None:
-                opened.append(open_toolset)
+                opened.append(Gated(open_toolset, turn.user.tools))
+        definitions = [d for t in opened for d in t.definitions]
         this = _Turn(
             turn,
             opened,
-            [d for t in opened for d in t.definitions],
+            definitions,
             [n.text for t in opened for n in t.prompt_notes],
+            frozenset(d["function"]["name"] for d in definitions),
             self._attachments.new_cache() if self._attachments is not None else None,
         )
 
-        fallback_notice: str | None = None
+        fallback: Fallback | None = None
         while True:
             # The brain is read once per attempt: a switch made during the
             # turn applies from the next turn (design D3).
             brain = self._brains.current
             try:
-                result = await self._attempt(this, brain, can_fall_back=fallback_notice is None)
+                result = await self._attempt(this, brain, can_fall_back=fallback is None)
             except _BrainFailed as failure:
                 default = self._brains.default
                 self._brains.current = default
@@ -202,48 +218,52 @@ class Agent:
                     failure.reason,
                     default.name,
                 )
-                fallback_notice = notices.fell_back(cfg.ai.owner_address, brain.name, default.name)
+                fallback = Fallback(brain.name, default.name)
                 if not failure.side_effects:
                     continue
                 raise TurnFailed(
                     f"{failure.reason} (on brain {brain.name}; after a tool ran, not run again)",
-                    notices.failed(cfg.ai.owner_address, True),
+                    notices.failed(turn.user.address, True),
                     retryable=False,
                     side_effects_possible=True,
-                    fallback_notice=fallback_notice,
+                    fallback=fallback,
                 ) from None
             except TurnFailed as failure:
-                failure.fallback_notice = failure.fallback_notice or fallback_notice
+                failure.fallback = failure.fallback or fallback
                 raise
-            return dataclasses.replace(result, fallback_notice=fallback_notice)
+            return dataclasses.replace(result, fallback=fallback)
 
     async def _attempt(self, this: _Turn, brain: Brain, *, can_fall_back: bool) -> TurnResult:
         cfg = self._config
         turn = this.input
+        user = turn.user
         others = [b.name for b in self._brains.brains if b != brain]
         now = self._now()
-        entries = await self._history.recent(cfg.history.max_entries)
+        entries = await self._history.recent(user.name, cfg.history.max_entries)
         state = _State(
             brain,
             can_fall_back and brain != self._brains.default,
-            AttemptContext(turn, [e.text for e in entries if e.kind == "owner"]),
+            AttemptContext(turn, [e.text for e in entries if e.kind == "user"]),
         )
         state.messages.append(
             {
                 "role": "system",
                 "content": system_prompt(
                     cfg.ai.persona,
-                    owner_address=cfg.ai.owner_address,
+                    name=user.name,
+                    address=user.address,
                     ask=turn.kind == "ask",
                     reminder=turn.kind == "reminder",
                     today=now.astimezone(self._zone).date(),
+                    tools=this.offered,
+                    others=[u.name for u in cfg.users if u.name != user.name],
                     notes=this.notes,
-                    brain=brain_line(brain.name, brain.tag, others),
+                    brain=brain_line(brain.name, brain.tag, others, this.offered),
                 ),
             }
         )
         inline = {}
-        if self._attachments is not None and this.images is not None and turn.kind == "owner":
+        if self._attachments is not None and this.images is not None and turn.kind == "chat":
             inline = await self._attachments.build(entries, vision=brain.vision, cache=this.images)
         state.messages += to_messages(entries, self._zone, inline)
         if turn.kind == "ask":
@@ -281,33 +301,38 @@ class Agent:
 
         raise TurnFailed(
             f"stopped after {cfg.ai.max_requests_per_turn} model requests",
-            notices.too_many_steps(cfg.ai.owner_address, state.side_effects),
+            notices.too_many_steps(turn.user.address, state.side_effects),
             retryable=False,
             side_effects_possible=state.side_effects,
         )
 
     def _reminder_input(self, turn: TurnInput, now: datetime) -> str:
-        """``[reminder:#12 due Monday 9 November 2026, 17:00; now 17:12] call mum``."""
+        """``[reminder:#12 due Monday 9 November 2026, 17:00; now 17:12] call mum``.
+
+        ``; set by diogo`` before the ``]`` when someone else set it.
+        """
         due = turn.due_at or now
+        set_by = f"; set by {turn.set_by}" if turn.set_by else ""
         return (
             f"[reminder:#{turn.reminder_id} due {format_when(due, self._zone)}; "
-            f"now {format_now(now, due, self._zone)}] {turn.text}"
+            f"now {format_now(now, due, self._zone)}{set_by}] {turn.text}"
         )
 
     async def _ask_model(self, state: _State, definitions: list[dict[str, Any]]) -> ModelReply:
+        address = state.context.turn.user.address
         try:
             return await self._model.complete(state.messages, definitions, model=state.brain.tag)
         except ModelUnreachable as exc:
             if not state.side_effects:
                 raise TurnFailed(
                     str(exc),
-                    notices.unreachable(self._config.ai.owner_address),
+                    notices.unreachable(address),
                     retryable=True,
                     side_effects_possible=False,
                 ) from None
             raise TurnFailed(
                 f"{exc} (after a tool ran; not retried)",
-                notices.unreachable_mid(self._config.ai.owner_address),
+                notices.unreachable_mid(address),
                 retryable=False,
                 side_effects_possible=True,
             ) from None
@@ -319,7 +344,7 @@ class Agent:
     def _failed(self, state: _State, reason: str) -> TurnFailed:
         return TurnFailed(
             reason,
-            notices.failed(self._config.ai.owner_address, state.side_effects),
+            notices.failed(state.context.turn.user.address, state.side_effects),
             retryable=False,
             side_effects_possible=state.side_effects,
         )

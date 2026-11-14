@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
+
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
+
+
+@contextlib.contextmanager
+def _admin(name: str | None) -> Iterator[None]:
+    """``ALFRED_MIGRATE_ADMIN`` set to ``name`` (unset for ``None``) inside the block."""
+    with pytest.MonkeyPatch.context() as mp:
+        if name is None:
+            mp.delenv("ALFRED_MIGRATE_ADMIN", raising=False)
+        else:
+            mp.setenv("ALFRED_MIGRATE_ADMIN", name)
+        yield
 
 
 def test_migrate_creates_schema(database_url: str) -> None:
@@ -14,18 +28,21 @@ def test_migrate_creates_schema(database_url: str) -> None:
     assert {"conversations", "entries", "queue_items", "turn_tool_calls"} <= tables
 
 
-def test_only_one_current_conversation(database_url: str) -> None:
+def test_one_current_conversation_per_user(database_url: str) -> None:
     engine = create_engine(database_url)
     try:
         with engine.connect() as conn:
             outer = conn.begin()
             conn.execute(text("TRUNCATE entries, conversations CASCADE"))
-            conn.execute(text("INSERT INTO conversations DEFAULT VALUES"))
-            # An archived one is fine...
-            conn.execute(text("INSERT INTO conversations (ended_at) VALUES (now())"))
-            # ...a second current one is not.
+            conn.execute(text("INSERT INTO conversations (user_name) VALUES ('diogo')"))
+            # An archived one is fine, and so is another user's current one...
+            conn.execute(
+                text("INSERT INTO conversations (user_name, ended_at) VALUES ('diogo', now())")
+            )
+            conn.execute(text("INSERT INTO conversations (user_name) VALUES ('ana')"))
+            # ...a second current one for the same user is not.
             with pytest.raises(IntegrityError):
-                conn.execute(text("INSERT INTO conversations DEFAULT VALUES"))
+                conn.execute(text("INSERT INTO conversations (user_name) VALUES ('diogo')"))
             outer.rollback()
     finally:
         engine.dispose()
@@ -87,8 +104,9 @@ def test_search_tsv_is_generated(database_url: str) -> None:
             conn.execute(text("TRUNCATE entries, conversations CASCADE"))
             conn.execute(
                 text(
-                    "INSERT INTO conversations (ended_at, title, summary) "
-                    "VALUES (now(), 'Chicken thighs recipe', 'Lemon and garlic, 40 minutes.')"
+                    "INSERT INTO conversations (user_name, ended_at, title, summary) "
+                    "VALUES ('diogo', now(), 'Chicken thighs recipe', "
+                    "'Lemon and garlic, 40 minutes.')"
                 )
             )
             found = conn.scalar(
@@ -109,8 +127,10 @@ def test_recall_not_twice_into_one_conversation(database_url: str) -> None:
         with engine.connect() as conn:
             outer = conn.begin()
             conn.execute(text("TRUNCATE entries, conversations CASCADE"))
-            conn.execute(text("INSERT INTO conversations (id, ended_at) VALUES (41, now())"))
-            conn.execute(text("INSERT INTO conversations (id) VALUES (42)"))
+            conn.execute(
+                text("INSERT INTO conversations (id, user_name, ended_at) VALUES (41, 'd', now())")
+            )
+            conn.execute(text("INSERT INTO conversations (id, user_name) VALUES (42, 'd')"))
             insert = text(
                 "INSERT INTO entries (conversation_id, kind, text, recalled_conversation_id) "
                 "VALUES (42, 'recall', 'x', 41)"
@@ -150,10 +170,12 @@ def test_upgrade_downgrade_upgrade(postgres_url: str) -> None:
     engine = create_engine(sa_url)
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO conversations (id, ended_at) VALUES (41, now())"))
-            conn.execute(text("INSERT INTO conversations (id) VALUES (42)"))
             conn.execute(
-                text("INSERT INTO entries (conversation_id, kind, text) VALUES (41, 'owner', 'hi')")
+                text("INSERT INTO conversations (id, user_name, ended_at) VALUES (41, 'd', now())")
+            )
+            conn.execute(text("INSERT INTO conversations (id, user_name) VALUES (42, 'd')"))
+            conn.execute(
+                text("INSERT INTO entries (conversation_id, kind, text) VALUES (41, 'user', 'hi')")
             )
             conn.execute(
                 text(
@@ -168,7 +190,8 @@ def test_upgrade_downgrade_upgrade(postgres_url: str) -> None:
             kinds = [k for (k,) in conn.execute(text("SELECT kind FROM entries"))]
         assert kinds == ["owner"]  # the recall entry is gone, the rest is kept
 
-        command.upgrade(cfg, "head")
+        with _admin("diogo"):
+            command.upgrade(cfg, "head")
         command.check(cfg)
     finally:
         engine.dispose()
@@ -192,6 +215,7 @@ def test_reminder_schema(database_url: str) -> None:
         "text",
         "due_at",
         "status",
+        "created_by",
         "created_at",
         "fired_at",
         "cancelled_at",
@@ -208,7 +232,10 @@ def test_reminder_status_is_checked(database_url: str) -> None:
             outer = conn.begin()
             with pytest.raises(IntegrityError):
                 conn.execute(
-                    text("INSERT INTO reminders (text, due_at, status) VALUES ('x', now(), 'done')")
+                    text(
+                        "INSERT INTO reminders (text, due_at, status, created_by) "
+                        "VALUES ('x', now(), 'done', 'diogo')"
+                    )
                 )
             outer.rollback()
     finally:
@@ -228,11 +255,16 @@ def test_downgrade_to_0002(postgres_url: str) -> None:
     engine = create_engine(sa_url)
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO conversations (id) VALUES (42)"))
+            conn.execute(text("INSERT INTO conversations (id, user_name) VALUES (42, 'd')"))
             conn.execute(
-                text("INSERT INTO entries (conversation_id, kind, text) VALUES (42, 'owner', 'hi')")
+                text("INSERT INTO entries (conversation_id, kind, text) VALUES (42, 'user', 'hi')")
             )
-            conn.execute(text("INSERT INTO reminders (text, due_at) VALUES ('call mum', now())"))
+            conn.execute(
+                text(
+                    "INSERT INTO reminders (text, due_at, created_by) "
+                    "VALUES ('call mum', now(), 'd')"
+                )
+            )
         command.downgrade(cfg, "0002")
         inspector = inspect(engine)
         assert "reminders" not in inspector.get_table_names()
@@ -246,7 +278,8 @@ def test_downgrade_to_0002(postgres_url: str) -> None:
             kinds = [k for (k,) in conn.execute(text("SELECT kind FROM entries"))]
         assert kinds == ["owner"]
 
-        command.upgrade(cfg, "head")
+        with _admin("diogo"):
+            command.upgrade(cfg, "head")
         command.check(cfg)
     finally:
         engine.dispose()
@@ -266,6 +299,7 @@ def test_attachment_schema(database_url: str) -> None:
     assert {
         "id",
         "queue_item_id",
+        "user_name",
         "entry_id",
         "position",
         "kind",
@@ -284,14 +318,18 @@ def test_attachment_schema(database_url: str) -> None:
 def test_attachment_kind_and_key_are_checked(database_url: str) -> None:
     engine = create_engine(database_url)
     insert = (
-        "INSERT INTO attachments (queue_item_id, position, kind, mime, size_bytes, object_key) "
-        "VALUES (:item, 0, :kind, 'image/jpeg', 1, :key)"
+        "INSERT INTO attachments "
+        "(queue_item_id, user_name, position, kind, mime, size_bytes, object_key) "
+        "VALUES (:item, 'd', 0, :kind, 'image/jpeg', 1, :key)"
     )
     try:
         with engine.connect() as conn:
             outer = conn.begin()
             item = conn.scalar(
-                text("INSERT INTO queue_items (kind, text) VALUES ('owner', '') RETURNING id")
+                text(
+                    "INSERT INTO queue_items (kind, user_name, text) "
+                    "VALUES ('user', 'd', '') RETURNING id"
+                )
             )
             conn.execute(text(insert), {"item": item, "kind": "image", "key": "attachments/a"})
             with pytest.raises(IntegrityError), conn.begin_nested():
@@ -317,13 +355,16 @@ def test_downgrade_to_0003(postgres_url: str) -> None:
     try:
         with engine.begin() as conn:
             item = conn.scalar(
-                text("INSERT INTO queue_items (kind, text) VALUES ('owner', 'hi') RETURNING id")
+                text(
+                    "INSERT INTO queue_items (kind, user_name, text) "
+                    "VALUES ('user', 'd', 'hi') RETURNING id"
+                )
             )
             attachment = conn.scalar(
                 text(
-                    "INSERT INTO attachments "
-                    "(queue_item_id, position, kind, mime, size_bytes, object_key, page_count) "
-                    "VALUES (:item, 0, 'pdf', 'application/pdf', 10, 'attachments/x', 1) "
+                    "INSERT INTO attachments (queue_item_id, user_name, position, kind, mime, "
+                    "size_bytes, object_key, page_count) "
+                    "VALUES (:item, 'd', 0, 'pdf', 'application/pdf', 10, 'attachments/x', 1) "
                     "RETURNING id"
                 ),
                 {"item": item},
@@ -340,7 +381,147 @@ def test_downgrade_to_0003(postgres_url: str) -> None:
         with engine.connect() as conn:
             assert conn.scalar(text("SELECT text FROM queue_items")) == "hi"
 
+        with _admin("diogo"):
+            command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()
+
+
+# --- users (migration 0005) -------------------------------------------------------
+
+
+def _legacy_database(postgres_url: str, name: str) -> tuple[str, object]:
+    """A database at 0004 holding one of everything a user owns. Returns its URL and config."""
+    from alembic import command
+
+    from alfred.db.migrate import alembic_config
+
+    url = _new_database(postgres_url, name, vector=True)
+    sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    cfg = alembic_config(sa_url)
+    command.upgrade(cfg, "0004")
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO conversations (id, ended_at) VALUES (41, now())"))
+            conn.execute(text("INSERT INTO conversations (id) VALUES (42)"))
+            conn.execute(
+                text("INSERT INTO entries (conversation_id, kind, text) VALUES (42, 'owner', 'hi')")
+            )
+            conn.execute(text("INSERT INTO reminders (id, text, due_at) VALUES (12, 'x', now())"))
+            conn.execute(text("INSERT INTO queue_items (id, kind, text) VALUES (7, 'owner', 'hi')"))
+            conn.execute(
+                text(
+                    "INSERT INTO attachments "
+                    "(queue_item_id, position, kind, mime, size_bytes, object_key) "
+                    "VALUES (7, 0, 'image', 'image/jpeg', 1, 'attachments/a')"
+                )
+            )
+    finally:
+        engine.dispose()
+    return sa_url, cfg
+
+
+def test_users_migration_assigns_legacy_rows_to_the_admin(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "users_legacy")
+    with _admin("diogo"):
         command.upgrade(cfg, "head")
+    engine = create_engine(sa_url)
+    try:
+        with engine.connect() as conn:
+            for table in ("conversations", "queue_items", "attachments"):
+                names = {n for (n,) in conn.execute(text(f"SELECT user_name FROM {table}"))}
+                assert names == {"diogo"}, table
+            assert conn.scalar(text("SELECT created_by FROM reminders")) == "diogo"
+            assert list(conn.execute(text("SELECT * FROM reminder_recipients"))) == [(12, "diogo")]
+            assert conn.scalar(text("SELECT kind FROM entries")) == "user"
+            assert conn.scalar(text("SELECT kind FROM queue_items")) == "user"
+            # Another user can now have a current conversation of their own.
+            conn.execute(text("INSERT INTO conversations (user_name) VALUES ('ana')"))
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text("INSERT INTO conversations (user_name) VALUES ('diogo')"))
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text("INSERT INTO queue_items (kind, text) VALUES ('ask', 'x')"))
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(
+                    text(
+                        "INSERT INTO queue_items (kind, user_name, text) VALUES ('owner', 'd', 'x')"
+                    )
+                )
+            conn.rollback()
+        command.check(cfg)
+    finally:
+        engine.dispose()
+
+
+def test_users_migration_of_an_empty_database_needs_no_admin(postgres_url: str) -> None:
+    from alembic import command
+
+    from alfred.db.migrate import alembic_config
+
+    url = _new_database(postgres_url, "users_empty", vector=True)
+    cfg = alembic_config(url.replace("postgresql://", "postgresql+psycopg://", 1))
+    with _admin(None):
+        command.upgrade(cfg, "head")
+    command.check(cfg)
+
+
+@pytest.mark.parametrize("value", [None, "", "  ", "Diogo", "diogo ferreira"])
+def test_users_migration_refuses_rows_without_a_valid_admin(
+    postgres_url: str,
+    value: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from alfred.cli import main
+
+    sa_url, _ = _legacy_database(postgres_url, "users_no_admin")
+    monkeypatch.setenv("ALFRED_DATABASE_URL", sa_url.replace("+psycopg", ""))
+    with _admin(value):
+        assert main(["migrate"]) == 1
+    err = capsys.readouterr().err
+    assert "ALFRED_MIGRATE_ADMIN" in err and "[[users]] name" in err
+    engine = create_engine(sa_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0004"
+            assert conn.scalar(text("SELECT kind FROM entries")) == "owner"
+        tables = set(inspect(engine).get_table_names())
+        assert "reminder_recipients" not in tables
+        assert "user_name" not in {c["name"] for c in inspect(engine).get_columns("conversations")}
+    finally:
+        engine.dispose()
+
+
+def test_users_downgrade_restores_0004(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "users_round_trip")
+    with _admin("diogo"):
+        command.upgrade(cfg, "head")
+    command.downgrade(cfg, "0004")
+    engine = create_engine(sa_url)
+    try:
+        inspector = inspect(engine)
+        assert "reminder_recipients" not in inspector.get_table_names()
+        for table in ("conversations", "queue_items", "attachments"):
+            assert "user_name" not in {c["name"] for c in inspector.get_columns(table)}, table
+        assert "created_by" not in {c["name"] for c in inspector.get_columns("reminders")}
+        assert "uq_conversations_one_current" in {
+            i["name"] for i in inspector.get_indexes("conversations")
+        }
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT kind FROM entries")) == "owner"
+            assert conn.scalar(text("SELECT kind FROM queue_items")) == "owner"
+            with pytest.raises(IntegrityError):
+                conn.execute(text("INSERT INTO conversations DEFAULT VALUES"))
+            conn.rollback()
+
+        with _admin("diogo"):
+            command.upgrade(cfg, "head")
         command.check(cfg)
     finally:
         engine.dispose()

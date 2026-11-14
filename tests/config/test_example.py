@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alfred.config import FileConfig, McpServerEntry, ServiceEntry, load_config
+from alfred.config import FileConfig, McpServerEntry, ServiceEntry, UserEntry, load_config
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "alfred.toml.example"
@@ -25,9 +25,16 @@ def test_example_loads() -> None:
         "ALFRED_SERVICE_TOKEN_BACKUP": "a",
         "ALFRED_MCP_TOKEN_MCPARR": "b",
         "ALFRED_MCP_TOKEN_COOKBOOK": "c",
+        "ALFRED_MCP_TOKEN_MCPARR_ANA": "d",
     }
     config = load_config(env)
     assert [s.name for s in config.mcp_servers] == ["mcparr", "cookbook"]
+    assert config.users.names == ["diogo", "ana"]
+    assert config.users.admin.name == "diogo"
+    ana = config.users.get("ana")
+    assert ana is not None and ana.tools.matches("cookbook_get_recipe")
+    assert not ana.tools.matches("mcparr_search_missing")
+    assert [s.token.get_secret_value() for s in config.servers_for(ana)] == ["d", "c"]
 
 
 def test_example_brain_tables_load(tmp_path: Path) -> None:
@@ -47,6 +54,7 @@ def test_example_brain_tables_load(tmp_path: Path) -> None:
         "ALFRED_SERVICE_TOKEN_BACKUP": "a",
         "ALFRED_MCP_TOKEN_MCPARR": "b",
         "ALFRED_MCP_TOKEN_COOKBOOK": "c",
+        "ALFRED_MCP_TOKEN_MCPARR_ANA": "d",
     }
     config = load_config(env)
     assert config.ai.models["gemma"].vision and not config.ai.models["qwen"].vision
@@ -112,7 +120,8 @@ def test_every_field_in_readme() -> None:
             expected |= {f"{section}.{key}" for key in annotation.model_fields}
     expected |= {f"services.{key}" for key in ServiceEntry.model_fields}
     expected |= {f"mcp_servers.{key}" for key in McpServerEntry.model_fields}
-    expected |= {"[[services]]", "[[mcp_servers]]"}
+    expected |= {f"users.{key}" for key in UserEntry.model_fields}
+    expected |= {"[[services]]", "[[mcp_servers]]", "[[users]]"}
     assert expected <= documented, expected - documented
 
 

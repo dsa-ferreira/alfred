@@ -34,10 +34,10 @@ def memory(
 
 async def archived(sessions: async_sessionmaker[AsyncSession], *lines: str) -> int:
     history = History(sessions)
-    await history.current_conversation_id()  # exists even with no entries
+    await history.current_conversation_id("diogo")  # exists even with no entries
     for i, line in enumerate(lines):
-        await history.append("owner" if i % 2 == 0 else "assistant", line)
-    reset = await history.reset()
+        await history.append("diogo", "user" if i % 2 == 0 else "assistant", line)
+    reset = await history.reset("diogo")
     assert reset.archived_id is not None
     return reset.archived_id
 
@@ -60,9 +60,7 @@ async def test_summary_and_embedding_stored(sessions: async_sessionmaker[AsyncSe
     messages, tools = model.requests[0]
     assert tools == []
     assert messages[0] == {"role": "system", "content": SUMMARY_PROMPT}
-    assert (
-        messages[1]["content"] == "Owner: chicken thighs tonight?\nalfred: Lemon and garlic, sir."
-    )
+    assert messages[1]["content"] == "User: chicken thighs tonight?\nalfred: Lemon and garlic, sir."
     assert embedder.documents == [
         "Chicken thighs recipe. A lemon-garlic recipe, saved as recipe 12."
     ]
@@ -150,15 +148,15 @@ async def test_long_transcript_is_shortened(sessions: async_sessionmaker[AsyncSe
     assert await mem.summarise(cid) == "Chicken thighs recipe"
     sent = model.requests[0][0][1]["content"]
     assert len(sent) <= 1000
-    assert sent.startswith("Owner: start") and sent.endswith(" end")
+    assert sent.startswith("User: start") and sent.endswith(" end")
     assert "characters omitted" in sent
 
 
 async def test_current_conversation_is_not_summarised(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    await History(sessions).append("owner", "still talking")
-    cid = await History(sessions).current_conversation_id()
+    await History(sessions).append("diogo", "user", "still talking")
+    cid = await History(sessions).current_conversation_id("diogo")
     model = FakeModel()
     assert await memory(sessions, model, FakeEmbedder()).summarise(cid) is None
     assert model.requests == []
@@ -213,15 +211,17 @@ async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSess
     from alfred.memory.transcript import render
     from alfred.reminders.store import Reminders
 
-    reminder_id = await Reminders(sessions).set("call mum", NOW)
+    reminder_id = await Reminders(sessions).set("call mum", NOW, "diogo", ["diogo"])
     history = History(sessions)
-    await history.append("reminder", "call mum", reminder_id=reminder_id)
-    await history.append("reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id)
-    await history.append("owner", "done")
-    reset = await history.reset()
+    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
+    )
+    await history.append("diogo", "user", "done")
+    reset = await history.reset("diogo")
     assert reset.archived_id is not None
     m = memory(sessions, FakeModel(), FakeEmbedder())
     entries = await m.transcript_entries(reset.archived_id)
     assert render(entries) == (
-        f"[reminder:#{reminder_id}] call mum\nalfred: Your call to mum, sir.\nOwner: done"
+        f"[reminder:#{reminder_id}] call mum\nalfred: Your call to mum, sir.\nUser: done"
     )

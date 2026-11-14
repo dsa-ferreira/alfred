@@ -1,7 +1,10 @@
 """The HTTP API for homelab services: ``/notify``, ``/ask`` and ``/healthz``.
 
 Services authenticate with a bearer token from ``[[services]]``; the matching
-service's name identifies the sender.
+service's name identifies the sender. ``/notify`` and ``/ask`` take an
+optional ``user``, the configured user they are for; without it they are for
+the admin, and an unknown name is refused with 422 (change
+add-multiple-users, design D10).
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from alfred.config import Service
+from alfred.config import Service, User, Users
 from alfred.history import History
 from alfred.queue import Outbox, Queue
 
@@ -26,11 +29,13 @@ NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)
 class NotifyRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     text: NonEmpty
+    user: str | None = None
 
 
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     prompt: NonEmpty
+    user: str | None = None
 
 
 class AskAccepted(BaseModel):
@@ -46,10 +51,23 @@ def _unauthorized() -> HTTPException:
 
 
 def create_app(
-    services: tuple[Service, ...], queue: Queue, history: History, outbox: Outbox
+    services: tuple[Service, ...],
+    users: Users,
+    queue: Queue,
+    history: History,
+    outbox: Outbox,
 ) -> FastAPI:
     app = FastAPI(title="alfred", docs_url=None, redoc_url=None, openapi_url=None)
     known = [(s.name, s.token.get_secret_value().encode()) for s in services]
+
+    def target(name: str | None) -> User:
+        """The user a call is for: the one named, or the admin."""
+        if name is None:
+            return users.admin
+        user = users.get(name)
+        if user is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"unknown user {name!r}")
+        return user
 
     def service_name(request: Request) -> str:
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
@@ -77,23 +95,27 @@ def create_app(
 
     @app.post("/notify")
     async def notify(body: NotifyRequest, service: str = caller) -> JSONResponse:
+        user = target(body.user)
         # Sent directly, never through the AI queue.
         try:
-            await outbox.send(f"[{service}] {body.text}")
+            await outbox.send(user, f"[{service}] {body.text}")
         except Exception as exc:
-            log.warning("notify from %s not delivered: %s", service, type(exc).__name__)
+            log.warning(
+                "notify from %s to %s not delivered: %s", service, user.name, type(exc).__name__
+            )
             return JSONResponse(
                 {"detail": "Telegram did not accept the message; retry later"},
                 status_code=status.HTTP_502_BAD_GATEWAY,
             )
-        await history.append("notice", body.text, source=service)
-        log.info("notify from %s delivered", service)
+        await history.append(user.name, "notice", body.text, source=service)
+        log.info("notify from %s to %s delivered", service, user.name)
         return JSONResponse({"status": "sent"})
 
     @app.post("/ask", status_code=status.HTTP_202_ACCEPTED)
     async def ask(body: AskRequest, service: str = caller) -> AskAccepted:
-        item_id = await queue.enqueue_ask(service, body.prompt)
-        log.info("ask from %s queued as item %s", service, item_id)
+        user = target(body.user)
+        item_id = await queue.enqueue_ask(service, body.prompt, user.name)
+        log.info("ask from %s for %s queued as item %s", service, user.name, item_id)
         return AskAccepted(id=item_id)
 
     return app

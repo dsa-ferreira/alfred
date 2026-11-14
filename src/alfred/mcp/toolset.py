@@ -1,22 +1,29 @@
 """The configured MCP servers as one toolset.
 
-Opening it for a turn lists every server (``build_turn_tools``). The servers'
-instructions, and the names of servers that couldn't be listed, reach the
+Opening it for a turn lists the servers the turn's user may use
+(``build_turn_tools``), each with that user's token (change
+add-multiple-users, design D8). A server none of the user's allow-list
+entries can match is not contacted at all (design D3). The servers'
+instructions, kept only when one of the server's tools passes the
+allow-list, and the names of servers that couldn't be listed, reach the
 system prompt as prompt notes. Calls go through the turn's routing map;
 results are cut to ``[ai] tool_result_max_chars``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from alfred.mcp.client import Connector
 from alfred.mcp.registry import ServerInstructions, TurnTools, build_turn_tools, call_tool
-from alfred.tools.base import AttemptContext, PromptNote, ToolOutcome, TurnInput
+from alfred.tools.base import AllowList, AttemptContext, PromptNote, ToolOutcome, TurnInput
 
 if TYPE_CHECKING:
-    from alfred.config import Config, McpServer
+    from alfred.config import Config, McpServer, User
+
+log = logging.getLogger(__name__)
 
 
 def server_instructions(item: ServerInstructions) -> str:
@@ -32,7 +39,7 @@ def unavailable_note(servers: Sequence[str]) -> str:
     names = ", ".join(servers)
     return (
         f"These tool servers are unavailable right now, so their tools are missing: {names}. "
-        "If the request needs them, tell the owner."
+        "If the request needs them, tell the user."
     )
 
 
@@ -44,10 +51,29 @@ def prompt_notes(tools: TurnTools) -> list[PromptNote]:
     return notes
 
 
+def keep_allowed(tools: TurnTools, allow: AllowList, user: str) -> None:
+    """Drop instructions of servers with no allowed tool; warn about unknown exact names.
+
+    The tools themselves are left for the gate (``alfred.tools.base.Gated``).
+    """
+    allowed = {route.server.name for name, route in tools.routes.items() if allow.matches(name)}
+    tools.instructions = [i for i in tools.instructions if i.server in allowed]
+    listed = {route.server.name for route in tools.routes.values()}
+    for server in sorted(listed):
+        for entry in allow.exact(f"{server}_"):
+            if entry not in tools.routes:
+                log.warning(
+                    "user %s's tools list %r, which MCP server %s doesn't offer",
+                    user,
+                    entry,
+                    server,
+                )
+
+
 class McpTools:
     def __init__(
         self,
-        servers: Sequence[McpServer],
+        servers_for: Callable[[User], Sequence[McpServer]],
         connect: Connector,
         *,
         list_timeout_s: float,
@@ -55,7 +81,7 @@ class McpTools:
         instructions_max_chars: int,
         max_chars: int,
     ) -> None:
-        self._servers = servers
+        self._servers_for = servers_for
         self._connect = connect
         self._list_timeout_s = list_timeout_s
         self._call_timeout_s = call_timeout_s
@@ -65,7 +91,7 @@ class McpTools:
     @classmethod
     def from_config(cls, config: Config, connect: Connector) -> McpTools:
         return cls(
-            config.mcp_servers,
+            config.servers_for,
             connect,
             list_timeout_s=config.mcp.list_timeout_s,
             call_timeout_s=config.mcp.call_timeout_s,
@@ -74,12 +100,15 @@ class McpTools:
         )
 
     async def open(self, turn: TurnInput) -> OpenMcpTools:
+        allow = turn.user.tools
+        servers = [s for s in self._servers_for(turn.user) if allow.may_match_prefix(f"{s.name}_")]
         tools = await build_turn_tools(
-            self._servers,
+            servers,
             self._connect,
             self._list_timeout_s,
             instructions_max_chars=self._instructions_max_chars,
         )
+        keep_allowed(tools, allow, turn.user.name)
         return OpenMcpTools(self, tools)
 
     async def _call(self, tools: TurnTools, name: str, raw_arguments: Any) -> ToolOutcome:

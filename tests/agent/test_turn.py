@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona, is_no_reply
-from alfred.agent.turn import Agent, TurnFailed
+from alfred.agent.turn import Agent, Fallback, TurnFailed
 from alfred.history import STAMP, History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.tools.base import AttemptContext, LocalToolset, ModelImage, ToolOutcome, TurnInput
@@ -40,6 +41,7 @@ from tests.agent.turn_helpers import (
     web_tools,
 )
 from tests.helpers import (
+    DIOGO,
     FakeEmbedder,
     FakeModel,
     add_queue_item,
@@ -50,13 +52,15 @@ from tests.helpers import (
 )
 from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook
 
+MR_FERREIRA = dataclasses.replace(DIOGO, address="Mr. Ferreira")
+
 # --- prompt and context --------------------------------------------------------
 
 
 async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSession]) -> None:
     history = History(sessions)
-    await history.append("owner", "earlier")
-    await history.append("assistant", "earlier reply")
+    await history.append("diogo", "user", "earlier")
+    await history.append("diogo", "assistant", "earlier reply")
     model = FakeModel([text("Hello!")])
     result = await agent(sessions, model).run(await owner_turn(sessions, "hi"))
     assert result.reply == "Hello!" and not result.reset_requested
@@ -78,8 +82,8 @@ async def test_custom_persona(sessions: async_sessionmaker[AsyncSession]) -> Non
 
 async def test_custom_address(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel([text("ok")])
-    await agent(sessions, model, ai={"owner_address": "Mr. Ferreira"}).run(
-        await owner_turn(sessions, "hi")
+    await agent(sessions, model, users=[MR_FERREIRA]).run(
+        await owner_turn(sessions, "hi", MR_FERREIRA)
     )
     assert model.requests[0][0][0]["content"].startswith(butler_persona("Mr. Ferreira"))
 
@@ -87,18 +91,18 @@ async def test_custom_address(sessions: async_sessionmaker[AsyncSession]) -> Non
 async def test_context_window_limit(sessions: async_sessionmaker[AsyncSession]) -> None:
     history = History(sessions)
     for i in range(10):
-        await history.append("owner", f"m{i}")
+        await history.append("diogo", "user", f"m{i}")
     model = FakeModel([text("ok")])
     await agent(sessions, model, history={"max_entries": 3}).run(await owner_turn(sessions, "last"))
     assert contents(model.requests[0][0][1:]) == ["m8", "m9", "last"]
 
 
 async def test_ask_turn_context(sessions: async_sessionmaker[AsyncSession]) -> None:
-    await History(sessions).append("owner", "earlier")
+    await History(sessions).append("diogo", "user", "earlier")
     item = await add_queue_item(sessions, "ask", "is this worth telling?", "disk-check")
     model = FakeModel([text(NO_REPLY)])
     result = await agent(sessions, model).run(
-        TurnInput("ask", "is this worth telling?", item, "disk-check")
+        TurnInput("ask", "is this worth telling?", item, "disk-check", user=DIOGO)
     )
     assert result.reply == NO_REPLY
     messages = model.requests[0][0]
@@ -254,8 +258,8 @@ async def test_failure_notice_uses_configured_address(
 ) -> None:
     model = FakeModel([ModelFailed("HTTP 400")])
     with pytest.raises(TurnFailed) as exc:
-        await agent(sessions, model, ai={"owner_address": "Mr. Ferreira"}).run(
-            await owner_turn(sessions, "hi")
+        await agent(sessions, model, users=[MR_FERREIRA]).run(
+            await owner_turn(sessions, "hi", MR_FERREIRA)
         )
     assert exc.value.notice.endswith(", Mr. Ferreira.")
 
@@ -283,7 +287,7 @@ async def test_date_in_ask_turn(sessions: async_sessionmaker[AsyncSession]) -> N
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
     model = FakeModel([text(NO_REPLY)])
     await agent(sessions, model, now=JUST_AFTER_MIDNIGHT).run(
-        TurnInput("ask", "x", item, "disk-check")
+        TurnInput("ask", "x", item, "disk-check", user=DIOGO)
     )
     assert "Today is Tuesday, 3 November 2026." in model.requests[0][0][0]["content"]
 
@@ -301,7 +305,7 @@ async def test_date_follows_the_configured_timezone(
 # --- fallback --------------------------------------------------------------------
 
 
-FELL_BACK = notices.fell_back("sir", "bonsai", "gemma")
+FELL_BACK = Fallback("bonsai", "gemma")
 
 
 async def test_fallback_before_any_tool_runs_the_turn_again(
@@ -311,11 +315,11 @@ async def test_fallback_before_any_tool_runs_the_turn_again(
     model = FakeModel([BAD_MODEL, text("gemma's answer")])
     with caplog.at_level(logging.WARNING):
         result = await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "hi"))
-    assert result.reply == "gemma's answer" and result.fallback_notice == FELL_BACK
+    assert result.reply == "gemma's answer" and result.fallback == FELL_BACK
     assert model.models == ["bonsai:8b", GEMMA]
     assert brains.current.name == "gemma"
     retry = model.requests[1][0]
-    assert brain_line("gemma", GEMMA, ["bonsai"]) in retry[0]["content"]
+    assert brain_line("gemma", GEMMA, ["bonsai"], {SET_MODEL}) in retry[0]["content"]
     assert contents(retry[1:]) == ["hi"]
     [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert "bonsai" in warning and "gemma" in warning and "does not support tools" in warning
@@ -327,7 +331,7 @@ async def test_fallback_after_a_tool_ran(sessions: async_sessionmaker[AsyncSessi
     with pytest.raises(TurnFailed) as exc:
         await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "downloads?"))
     assert exc.value.notice == notices.failed("sir", True)
-    assert exc.value.fallback_notice == FELL_BACK
+    assert exc.value.fallback == FELL_BACK
     assert not exc.value.retryable and exc.value.side_effects_possible
     assert model.models == ["bonsai:8b", "bonsai:8b"]
     assert brains.current.name == "gemma"
@@ -342,7 +346,7 @@ async def test_startup_brain_fails_after_a_fallback(
             await owner_turn(sessions, "hi")
         )
     assert exc.value.notice == notices.failed("sir")
-    assert exc.value.fallback_notice == FELL_BACK
+    assert exc.value.fallback == FELL_BACK
     assert model.models == ["bonsai:8b", GEMMA]
 
 
@@ -352,7 +356,7 @@ async def test_startup_brain_failure_has_no_fallback(
     model = FakeModel([BAD_MODEL])
     with pytest.raises(TurnFailed) as exc:
         await agent(sessions, model, brains=two_brains()).run(await owner_turn(sessions, "hi"))
-    assert exc.value.fallback_notice is None and model.models == [GEMMA]
+    assert exc.value.fallback is None and model.models == [GEMMA]
 
 
 async def test_unreachable_server_does_not_fall_back(
@@ -362,7 +366,7 @@ async def test_unreachable_server_does_not_fall_back(
     model = FakeModel([ModelUnreachable("can't reach the model server (ConnectError)")])
     with pytest.raises(TurnFailed) as exc:
         await agent(sessions, model, brains=brains).run(await owner_turn(sessions, "hi"))
-    assert exc.value.retryable and exc.value.fallback_notice is None
+    assert exc.value.retryable and exc.value.fallback is None
     assert brains.current.name == "bonsai"
 
 
@@ -371,9 +375,9 @@ async def test_ask_turn_falls_back(sessions: async_sessionmaker[AsyncSession]) -
     item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
     model = FakeModel([BAD_MODEL, text(NO_REPLY)])
     result = await agent(sessions, model, brains=brains).run(
-        TurnInput("ask", "anything?", item, "disk-check")
+        TurnInput("ask", "anything?", item, "disk-check", user=DIOGO)
     )
-    assert result.reply == NO_REPLY and result.fallback_notice == FELL_BACK
+    assert result.reply == NO_REPLY and result.fallback == FELL_BACK
     assert brains.current.name == "gemma"
 
 
@@ -431,7 +435,7 @@ async def test_tool_order_on_ask_turns(
     model = FakeModel([text(NO_REPLY)])
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await all_toolsets_agent(sessions, model, web_http).run(
-        TurnInput("ask", "93%", item, "disk-check")
+        TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
     )
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         WEB_SEARCH,
@@ -465,7 +469,7 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
     assert recorder.opened == 1  # the MCP servers are listed once per turn
     assert len(recorder.attempts) == 2
     assert recorder.attempts[0] is not recorder.attempts[1]
-    assert [ctx.owner_texts for ctx in recorder.attempts] == [["hi"], ["hi"]]
+    assert [ctx.user_texts for ctx in recorder.attempts] == [["hi"], ["hi"]]
 
 
 # --- message times (change add-utility-tools) --------------------------------------
@@ -475,7 +479,9 @@ async def test_ask_input_carries_the_time_now(sessions: async_sessionmaker[Async
     item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
     model = FakeModel([text(NO_REPLY)])
     at_three = datetime(2026, 11, 10, 3, 0, tzinfo=UTC)  # 03:00 in Lisbon (WET)
-    await agent(sessions, model, now=at_three).run(TurnInput("ask", "93% full", item, "disk-check"))
+    await agent(sessions, model, now=at_three).run(
+        TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
+    )
     assert model.requests[0][0][-1]["content"] == "[Tue 10 Nov 03:00] [ask:disk-check] 93% full"
 
 
@@ -497,7 +503,9 @@ async def test_echoed_stamp_is_removed(sessions: async_sessionmaker[AsyncSession
 async def test_echoed_stamp_before_no_reply(sessions: async_sessionmaker[AsyncSession]) -> None:
     item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
     model = FakeModel([text(f"[Mon 2 Nov 14:05] {NO_REPLY}")])
-    result = await agent(sessions, model).run(TurnInput("ask", "93% full", item, "disk-check"))
+    result = await agent(sessions, model).run(
+        TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
+    )
     assert is_no_reply(result.reply)
 
 

@@ -19,6 +19,7 @@ from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.helpers import (
+    DIOGO,
     FakeModel,
     FakeStore,
     image_file,
@@ -88,7 +89,7 @@ async def test_photo_question(sessions: async_sessionmaker[AsyncSession]) -> Non
         sessions, "what's the total?", [image_file(name="receipt.jpg")], store, [RECEIPT]
     )
     model = FakeModel([text("12.40 EUR, sir.")])
-    await make(sessions, model, store).run(TurnInput("owner", "what's the total?", item))
+    await make(sessions, model, store).run(TurnInput("chat", "what's the total?", item, user=DIOGO))
     text_part, image_part = last_user(model)["content"]
     assert strip_stamp(text_part["text"]) == (
         'what\'s the total? [attachment #1: image "receipt.jpg"]'
@@ -103,7 +104,7 @@ async def test_text_pdf(sessions: async_sessionmaker[AsyncSession]) -> None:
     pages = [INVOICE_P1, *(f"page {n} body text here" for n in range(2, 13))]
     item, _ = await owner_with_files(sessions, "", [pdf_file(pages)], store, [text_pdf(pages)])
     model = FakeModel([text("Filed.")])
-    await make(sessions, model, store).run(TurnInput("owner", "", item))
+    await make(sessions, model, store).run(TurnInput("chat", "", item, user=DIOGO))
     content = last_user(model)["content"]
     assert isinstance(content, str)  # no image part
     assert strip_stamp(content) == (
@@ -117,7 +118,9 @@ async def test_long_first_page_is_cut(sessions: async_sessionmaker[AsyncSession]
     long = "word " * 100
     item, _ = await owner_with_files(sessions, "", [pdf_file([long])], store, [b"%PDF"])
     model = FakeModel([text("ok")])
-    await make(sessions, model, store, first_page_chars=50).run(TurnInput("owner", "", item))
+    await make(sessions, model, store, first_page_chars=50).run(
+        TurnInput("chat", "", item, user=DIOGO)
+    )
     content = strip_stamp(last_user(model)["content"])
     assert content.endswith(
         "--- page 1 ---\n" + long.strip()[:50]
@@ -131,7 +134,7 @@ async def test_scanned_pdf(sessions: async_sessionmaker[AsyncSession]) -> None:
         sessions, "", [pdf_file(["3"], name="letter.pdf")], store, [scanned_pdf(1, (600, 800))]
     )
     model = FakeModel([text("A letter.")])
-    await make(sessions, model, store).run(TurnInput("owner", "", item))
+    await make(sessions, model, store).run(TurnInput("chat", "", item, user=DIOGO))
     text_part, image_part = last_user(model)["content"]
     assert strip_stamp(text_part["text"]) == '[attachment #1: PDF "letter.pdf", 1 page, scanned]'
     assert image_size(image_part) == (1152, 1536)
@@ -141,10 +144,12 @@ async def test_follow_up_question(sessions: async_sessionmaker[AsyncSession]) ->
     store = FakeStore()
     history = History(sessions)
     await owner_with_files(sessions, "what's the total?", [image_file()], store, [RECEIPT])
-    await history.append("assistant", "12.40 EUR, sir.")
+    await history.append("diogo", "assistant", "12.40 EUR, sir.")
     item, _ = await owner_with_files(sessions, "and the date on it?", [])
     model = FakeModel([text("9 November.")])
-    await make(sessions, model, store).run(TurnInput("owner", "and the date on it?", item))
+    await make(sessions, model, store).run(
+        TurnInput("chat", "and the date on it?", item, user=DIOGO)
+    )
     users = [strip_stamp(m["content"]) for m in model.requests[0][0] if m["role"] == "user"]
     assert users == ["what's the total? [attachment #1: image]", "and the date on it?"]
     assert images_in(model) == 0
@@ -158,7 +163,9 @@ async def test_inline_window_of_two(sessions: async_sessionmaker[AsyncSession]) 
         sessions, "and this?", [image_file("attachments/b")], store, [RECEIPT]
     )
     model = FakeModel([text("ok")])
-    await make(sessions, model, store, inline_turns=2).run(TurnInput("owner", "and this?", item))
+    await make(sessions, model, store, inline_turns=2).run(
+        TurnInput("chat", "and this?", item, user=DIOGO)
+    )
     assert images_in(model) == 2
 
 
@@ -166,7 +173,9 @@ async def test_photo_on_a_text_only_brain(sessions: async_sessionmaker[AsyncSess
     store = FakeStore()
     item, _ = await owner_with_files(sessions, "what is this?", [image_file()], store, [RECEIPT])
     model = FakeModel([text("I can't see it, sir.")])
-    await make(sessions, model, store, vision=False).run(TurnInput("owner", "what is this?", item))
+    await make(sessions, model, store, vision=False).run(
+        TurnInput("chat", "what is this?", item, user=DIOGO)
+    )
     assert strip_stamp(last_user(model)["content"]) == (
         "what is this? [attachment #1: image (this brain can't see images)]"
     )
@@ -177,7 +186,7 @@ async def test_pdf_on_a_text_only_brain(sessions: async_sessionmaker[AsyncSessio
     store = FakeStore()
     item, _ = await owner_with_files(sessions, "", [pdf_file([INVOICE_P1])], store, [b"%PDF"])
     model = FakeModel([text("ok")])
-    await make(sessions, model, store, vision=False).run(TurnInput("owner", "", item))
+    await make(sessions, model, store, vision=False).run(TurnInput("chat", "", item, user=DIOGO))
     assert strip_stamp(last_user(model)["content"]) == (
         '[attachment #1: PDF "invoice.pdf", 1 page, text]\n--- page 1 ---\n' + INVOICE_P1
     )
@@ -191,7 +200,9 @@ async def test_store_failure_keeps_the_turn_going(
     store.failing = True
     model = FakeModel([text("I can't see it right now, sir.")])
     with caplog.at_level(logging.WARNING):
-        result = await make(sessions, model, store).run(TurnInput("owner", "total?", item))
+        result = await make(sessions, model, store).run(
+            TurnInput("chat", "total?", item, user=DIOGO)
+        )
     assert result.reply == "I can't see it right now, sir."
     assert strip_stamp(last_user(model)["content"]) == (
         "total? [attachment #1: image (not available right now)]"
@@ -208,7 +219,7 @@ async def test_fallback_attempt_reuses_the_images(
     the_brains.set("bonsai")
     model = FakeModel([BAD_MODEL, text("12.40 EUR.")])
     await make(sessions, model, store, the_brains=the_brains).run(
-        TurnInput("owner", "total?", item)
+        TurnInput("chat", "total?", item, user=DIOGO)
     )
     assert [images_in(model, n) for n in (0, 1)] == [1, 1]
     assert store.gets == ["attachments/photo"]  # fetched once for both attempts
@@ -223,7 +234,7 @@ async def test_fallback_to_a_text_only_brain_sends_no_images(
     the_brains.set("bonsai")
     model = FakeModel([BAD_MODEL, text("I can't see it.")])
     await make(sessions, model, store, the_brains=the_brains).run(
-        TurnInput("owner", "total?", item)
+        TurnInput("chat", "total?", item, user=DIOGO)
     )
     assert [images_in(model, n) for n in (0, 1)] == [1, 0]
     assert "(this brain can't see images)" in last_user(model, 1)["content"]
@@ -236,5 +247,7 @@ async def test_no_images_on_ask_turns(sessions: async_sessionmaker[AsyncSession]
     await owner_with_files(sessions, "total?", [image_file()], store, [RECEIPT])
     item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
     model = FakeModel([text("NO_REPLY")])
-    await make(sessions, model, store).run(TurnInput("ask", "93% full", item, "disk-check"))
+    await make(sessions, model, store).run(
+        TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
+    )
     assert images_in(model) == 0

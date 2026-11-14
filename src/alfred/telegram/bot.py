@@ -1,7 +1,12 @@
-"""The aiogram bot: owner-only private chat, text and files in, replies out.
+"""The aiogram bot: configured users' private chats, text and files in, replies out.
 
-alfred defines no bot commands. Every owner text message, including one that
-starts with ``/``, is queued for the AI exactly as written.
+Only users in ``[[users]]`` are answered, each in their private chat with the
+bot (change add-multiple-users, design D6); a private chat's ID is the user's
+ID, so replies go to ``telegram_user_id``. Anyone else, and every group
+chat, is ignored without a reply.
+
+alfred defines no bot commands. Every text message from a user, including
+one that starts with ``/``, is queued for the AI as theirs exactly as written.
 
 With attachments configured (change add-attachments), photos, ``image/*``
 files and PDF files go to the intake with their caption; anything else gets
@@ -25,6 +30,7 @@ from aiogram.types import Message
 
 from alfred import notices
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
+from alfred.config import User, Users
 from alfred.queue import Queue
 from alfred.telegram.formatting import split_for_telegram
 
@@ -59,7 +65,7 @@ def incoming_file(message: Message) -> IncomingFile | None:
 
 
 class TelegramDownloader:
-    """Downloads a file the owner sent, into memory."""
+    """Downloads a file a user sent, into memory."""
 
     def __init__(self, bot: Bot, timeout_s: int = DOWNLOAD_TIMEOUT_S) -> None:
         self._bot = bot
@@ -112,18 +118,25 @@ class AlbumCollector:
 
 
 def make_dispatcher(
-    owner_user_id: int,
+    users: Users,
     queue: Queue,
-    owner_address: str,
     *,
     intake: Intake | None = None,
     album_wait_s: float = 2,
 ) -> Dispatcher:
     dispatcher = Dispatcher()
 
+    def sender(message: Message) -> User | None:
+        """The configured user who sent ``message`` in their private chat, if any."""
+        if message.from_user is None or message.chat.type != ChatType.PRIVATE:
+            return None
+        return users.by_telegram_id(message.from_user.id)
+
     async def receive(parts: list[Message]) -> None:
         """One message or one album: the usable files with the caption, notices for the rest."""
         assert intake is not None
+        user = sender(parts[0])
+        assert user is not None  # only a user's messages get here
         files: list[IncomingFile] = []
         refused = 0
         for part in parts:
@@ -133,9 +146,9 @@ def make_dispatcher(
             else:
                 files.append(file)
         caption = next((p.caption for p in parts if p.caption), "")
-        texts = [notices.unsupported(owner_address)] * refused
+        texts = [notices.unsupported(user.address)] * refused
         if files:
-            received = await intake.receive(caption, files, parts[0].message_id)
+            received = await intake.receive(user, caption, files, parts[0].message_id)
             texts += received.notices
         for text in texts:
             await parts[0].answer(text, parse_mode=None)
@@ -145,21 +158,21 @@ def make_dispatcher(
 
     @dispatcher.message()
     async def on_message(message: Message) -> None:
-        user = message.from_user
-        if user is None or user.id != owner_user_id or message.chat.type != ChatType.PRIVATE:
+        user = sender(message)
+        if user is None:
             # Only the sender's ID is logged, never the message.
             log.info(
                 "ignored a message from user %s in a %s chat",
-                user.id if user else "unknown",
+                message.from_user.id if message.from_user else "unknown",
                 message.chat.type,
             )
             return
         if message.text is not None:
-            item_id = await queue.enqueue_owner(message.text, message.message_id)
-            log.info("queued owner message %s as item %s", message.message_id, item_id)
+            item_id = await queue.enqueue_user(user.name, message.text, message.message_id)
+            log.info("queued %s's message %s as item %s", user.name, message.message_id, item_id)
             return
         if intake is None:
-            await message.answer(notices.text_only(owner_address), parse_mode=None)
+            await message.answer(notices.text_only(user.address), parse_mode=None)
             return
         if message.media_group_id is not None:
             albums.add(message)
@@ -170,34 +183,34 @@ def make_dispatcher(
 
 
 class TelegramOutbox:
-    """Sends text to the owner's chat, formatted and split for Telegram.
+    """Sends text to a user's chat, formatted and split for Telegram.
 
     Raises when Telegram doesn't accept a message, so callers can react
     (``/notify`` answers 502).
     """
 
-    def __init__(self, bot: Bot, chat_id: int) -> None:
+    def __init__(self, bot: Bot) -> None:
         self._bot = bot
-        self._chat_id = chat_id
 
-    async def send(self, text: str) -> None:
+    async def send(self, user: User, text: str) -> None:
+        chat_id = user.telegram_user_id  # a private chat's ID is the user's
         for markdown, html in split_for_telegram(text):
             try:
-                await self._bot.send_message(self._chat_id, html, parse_mode="HTML")
+                await self._bot.send_message(chat_id, html, parse_mode="HTML")
             except TelegramBadRequest as exc:
                 if "can't parse entities" not in str(exc).lower():
                     raise
                 log.warning("Telegram rejected the formatting; resending as plain text")
-                await self._bot.send_message(self._chat_id, markdown, parse_mode=None)
+                await self._bot.send_message(chat_id, markdown, parse_mode=None)
 
     @contextlib.asynccontextmanager
-    async def typing(self) -> AsyncIterator[None]:
-        """Show "typing..." in the owner's chat until the block exits.
+    async def typing(self, user: User) -> AsyncIterator[None]:
+        """Show "typing..." in ``user``'s chat until the block exits.
 
         Failures to send the action are logged and never raised, so they
         can't affect the turn the block wraps (design D3).
         """
-        task = asyncio.create_task(self._keep_typing())
+        task = asyncio.create_task(self._keep_typing(user.telegram_user_id))
         try:
             yield
         finally:
@@ -206,11 +219,11 @@ class TelegramOutbox:
             # cancellation of the caller still propagates.
             await asyncio.wait([task])
 
-    async def _keep_typing(self) -> None:
+    async def _keep_typing(self, chat_id: int) -> None:
         failed = False
         while True:
             try:
-                await self._bot.send_chat_action(self._chat_id, ChatAction.TYPING)
+                await self._bot.send_chat_action(chat_id, ChatAction.TYPING)
             except Exception as exc:
                 level = logging.DEBUG if failed else logging.WARNING
                 log.log(

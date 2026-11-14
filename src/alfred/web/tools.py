@@ -1,8 +1,9 @@
 """``alfred_web_search`` and ``alfred_web_fetch`` (change add-web-search, D2, D3, D7).
 
-Offered on every turn. Opened for a turn, the toolset starts one
-:class:`WebTurn` per attempt, seeded with the text the owner wrote in the
-attempt's context window (and the ``/ask`` prompt). Search
+Offered on every turn, subject to the user's allow-list. Opened for a
+turn, the toolset starts one :class:`WebTurn` per attempt, seeded with the
+text the turn's user wrote in the attempt's context window (and the
+``/ask`` prompt). Search
 adds the URLs it lists to the turn's allowlist; fetch opens only allowed
 URLs. Fetched text is cached per turn and handed out in chunks of
 ``[web] fetch_page_chars``, header first, inside untrusted-content markers.
@@ -43,7 +44,7 @@ BREAK_WINDOW = 0.2
 
 NOT_ALLOWED = (
     "Error: {url} was not in a web search result in this turn or in a message from the "
-    "owner, so it can't be fetched. Search for it first with alfred_web_search, then "
+    "user, so it can't be fetched. Search for it first with alfred_web_search, then "
     "fetch a URL from the results."
 )
 
@@ -83,7 +84,7 @@ WEB_FETCH_TOOL: dict[str, Any] = {
         "name": WEB_FETCH,
         "description": (
             "Read a web page's main text. Only URLs from an alfred_web_search result in this "
-            "turn, or that the owner wrote, can be fetched; search for anything else first. "
+            "turn, or that the user wrote, can be fetched; search for anything else first. "
             "Long pages come in parts: the first line of the result says which characters "
             "you got and the start value for the next part. Read further only when the "
             "answer is not in the part you have."
@@ -244,9 +245,9 @@ class OpenWebTools:
         return LOCAL_GROUP
 
     def new_attempt(self, attempt: AttemptContext) -> None:
-        # Only text the owner (or the asking service) wrote can open a page
+        # Only text the user (or the asking service) wrote can open a page
         # without a search; replies, notices and recalls can't.
-        seeds = list(attempt.owner_texts)
+        seeds = list(attempt.user_texts)
         if attempt.turn.kind == "ask":
             seeds.append(attempt.turn.text)
         self._turn = self._tools.new_turn(seeds)

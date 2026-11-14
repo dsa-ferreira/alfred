@@ -1,11 +1,11 @@
 """Transcripts of archived conversations, and the summary prompt (memory design D5).
 
-A transcript is one line per entry: ``Owner:``, ``alfred:``,
+A transcript is one line per entry: ``User:``, ``alfred:``,
 ``[notice:<service>]``, ``[ask:<service>]``, ``[reminder:#<id>]`` and, for a recall, only
 ``[recalled #<id> "<title>"]``, so a recalled conversation is never summarised
 or recalled again as part of the conversation it was brought into.
 
-An owner line ends with the handles of its attachments (change add-attachments,
+A user line ends with the handles of its attachments (change add-attachments,
 design D11), so a recalled conversation's files can be opened again; never
 image data or PDF text.
 """
@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from alfred.attachments.handles import AttachmentRef, handle, with_handles
 
 SUMMARY_PROMPT = """\
-You title and summarise a finished chat between the owner and alfred, their \
+You title and summarise a finished chat between a user and alfred, their \
 assistant, so it can be found again later.
 Answer with exactly two lines and nothing else:
 Title: <the topic in at most six words>
@@ -50,8 +50,8 @@ def render(entries: list[TranscriptEntry]) -> str:
 
 def _line(e: TranscriptEntry) -> str:
     match e.kind:
-        case "owner":
-            return f"Owner: {with_handles(e.text, (handle(a) for a in e.attachments))}"
+        case "user":
+            return f"User: {with_handles(e.text, (handle(a) for a in e.attachments))}"
         case "assistant" | "ask_reply" | "reminder_reply":
             return f"alfred: {e.text}"
         case "reminder":
@@ -151,7 +151,7 @@ def _clean(value: str) -> str:
 
 
 def local_date(moment: datetime, zone: ZoneInfo) -> str:
-    """``Tue 3 Nov 2026``, in the owner's timezone."""
+    """``Tue 3 Nov 2026``, in alfred's timezone."""
     day = moment.astimezone(zone)
     return f"{day:%a} {day.day} {day:%b %Y}"
 

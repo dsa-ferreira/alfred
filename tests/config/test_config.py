@@ -6,10 +6,16 @@ import pytest
 
 from alfred.config import ConfigError, load_config
 
-MINIMAL = """
-[telegram]
-owner_user_id = 42
+USER = """
+[[users]]
+name = "diogo"
+telegram_user_id = 42
+admin = true
+"""
 
+MINIMAL = (
+    USER
+    + """
 [ai]
 model = "some-model"
 
@@ -22,6 +28,7 @@ name = "mcparr"
 url = "http://mcparr.lan:8090/mcp"
 token_env = "ALFRED_MCP_TOKEN_MCPARR"
 """
+)
 
 DISK_CHECK = '\n[[services]]\nname = "disk-check"\ntoken_env = "ALFRED_SERVICE_TOKEN_DISK"\n'
 
@@ -56,7 +63,7 @@ def problems(text: str, tmp_path: Path, **extra: str) -> list[str]:
 def test_custom_path(tmp_path: Path) -> None:
     path = write(tmp_path, MINIMAL, "custom.toml")
     config = load_config(env_for(path))
-    assert config.telegram.owner_user_id == 42
+    assert config.users.admin.telegram_user_id == 42
 
 
 def test_default_path_is_alfred_toml_in_working_dir(
@@ -76,7 +83,7 @@ def test_missing_file_names_path(tmp_path: Path) -> None:
 
 
 def test_unparseable_file_names_path(tmp_path: Path) -> None:
-    path = write(tmp_path, "[telegram\nowner_user_id = ")
+    path = write(tmp_path, "[telegram\nadmin = ")
     with pytest.raises(ConfigError) as exc:
         load_config(env_for(path))
     assert str(path) in str(exc.value)
@@ -103,7 +110,6 @@ def test_minimal_file_takes_defaults(tmp_path: Path) -> None:
     assert config.ai.max_requests_per_turn == 12
     assert config.ai.tool_result_max_chars == 4000
     assert config.ai.persona is None
-    assert config.ai.owner_address == "sir"
     assert config.history.max_entries == 30
     assert config.queue.retry_initial_s == 30
     assert config.queue.retry_max_s == 900
@@ -119,8 +125,12 @@ def test_minimal_file_takes_defaults(tmp_path: Path) -> None:
 
 def test_every_setting_can_be_changed(tmp_path: Path) -> None:
     text = """
-[telegram]
-owner_user_id = 7
+[[users]]
+name = "diogo"
+telegram_user_id = 7
+address = "Mr. Ferreira"
+admin = true
+tools = ["*"]
 
 [ai]
 base_url = "https://llm.example.com/"
@@ -129,7 +139,6 @@ request_timeout_s = 60
 max_requests_per_turn = 3
 tool_result_max_chars = 100
 persona = "Be terse."
-owner_address = "Mr. Ferreira"
 
 [history]
 max_entries = 50
@@ -155,7 +164,7 @@ log_level = "DEBUG"
     assert config.ai.max_requests_per_turn == 3
     assert config.ai.tool_result_max_chars == 100
     assert config.ai.persona == "Be terse."
-    assert config.ai.owner_address == "Mr. Ferreira"
+    assert config.users.admin.address == "Mr. Ferreira"
     assert config.history.max_entries == 50
     assert (config.queue.retry_initial_s, config.queue.retry_max_s) == (5, 10)
     assert (config.mcp.list_timeout_s, config.mcp.call_timeout_s) == (2, 3)
@@ -193,10 +202,10 @@ def test_old_system_prompt_key_is_rejected(tmp_path: Path) -> None:
     assert any("ai.system_prompt" in p and "unknown key" in p for p in found)
 
 
-def test_empty_owner_address_is_rejected(tmp_path: Path) -> None:
-    text = MINIMAL.replace('model = "some-model"', 'model = "some-model"\nowner_address = ""')
+def test_empty_address_is_rejected(tmp_path: Path) -> None:
+    text = MINIMAL.replace("admin = true", 'admin = true\naddress = ""')
     found = problems(text, tmp_path)
-    assert any("ai.owner_address" in p for p in found)
+    assert any("users[0] (diogo).address" in p for p in found)
 
 
 def test_instructions_max_chars_must_be_positive(tmp_path: Path) -> None:
@@ -205,8 +214,8 @@ def test_instructions_max_chars_must_be_positive(tmp_path: Path) -> None:
 
 
 def test_wrong_type(tmp_path: Path) -> None:
-    found = problems(MINIMAL.replace("owner_user_id = 42", 'owner_user_id = "me"'), tmp_path)
-    assert any("telegram.owner_user_id" in p for p in found)
+    found = problems(MINIMAL.replace("telegram_user_id = 42", 'telegram_user_id = "me"'), tmp_path)
+    assert any("users[0] (diogo).telegram_user_id" in p for p in found)
 
 
 def test_several_problems_reported_together(tmp_path: Path) -> None:
@@ -247,9 +256,25 @@ def test_retry_max_below_initial(tmp_path: Path) -> None:
     assert any("retry_max_s" in p for p in found)
 
 
-def test_missing_owner(tmp_path: Path) -> None:
-    found = problems(MINIMAL.replace("[telegram]\nowner_user_id = 42\n", ""), tmp_path)
-    assert any("telegram: required" in p for p in found)
+def test_no_users(tmp_path: Path) -> None:
+    found = problems(MINIMAL.replace(USER, ""), tmp_path)
+    assert any(p.startswith("users:") and "required" in p for p in found)
+
+
+def test_empty_users_list(tmp_path: Path) -> None:
+    found = problems("users = []\n" + MINIMAL.replace(USER, ""), tmp_path)
+    assert any(p.startswith("users:") for p in found)
+
+
+def test_old_owner_user_id_is_rejected(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[telegram]\nowner_user_id = 42\n", tmp_path)
+    assert any("telegram.owner_user_id" in p and "unknown key" in p for p in found)
+
+
+def test_old_owner_address_is_rejected(tmp_path: Path) -> None:
+    text = MINIMAL.replace('model = "some-model"', 'model = "some-model"\nowner_address = "sir"')
+    found = problems(text, tmp_path)
+    assert any("ai.owner_address" in p and "unknown key" in p for p in found)
 
 
 # --- Secrets --------------------------------------------------------------------
@@ -300,9 +325,9 @@ def test_duplicate_service_tokens_name_both_services(tmp_path: Path) -> None:
 
 
 def test_config_and_secret_problems_together(tmp_path: Path) -> None:
-    text = MINIMAL.replace("owner_user_id = 42", "owner_user_id = -1")
+    text = MINIMAL.replace("telegram_user_id = 42", "telegram_user_id = -1")
     found = problems(text, tmp_path, ALFRED_SERVICE_TOKEN_BACKUP="")
-    assert any("owner_user_id" in p for p in found)
+    assert any("telegram_user_id" in p for p in found)
     assert any("ALFRED_SERVICE_TOKEN_BACKUP" in p for p in found)
 
 
@@ -615,3 +640,163 @@ def test_object_store_key_missing(tmp_path: Path, missing: str) -> None:
     env = {k: v for k, v in S3.items() if k != missing}
     found = problems(MINIMAL + ATTACHMENTS, tmp_path, **env)
     assert any(p.startswith(f"{missing} is required") for p in found), found
+
+
+# --- Users (change add-multiple-users) --------------------------------------------
+
+ANA = """
+[[users]]
+name = "ana"
+telegram_user_id = 222
+address = "madam"
+tools = ["alfred_*", "mcparr_find_media"]
+"""
+
+COOKBOOK = """
+[[mcp_servers]]
+name = "cookbook"
+url = "http://cookbook.lan:8080/mcp"
+token_env = "ALFRED_MCP_TOKEN_COOKBOOK"
+"""
+
+
+def test_minimal_user(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL)))
+    (user,) = config.users
+    assert (user.name, user.telegram_user_id, user.admin) == ("diogo", 42, True)
+    assert user.address == "sir"
+    assert user.tools.entries == ()
+    assert not user.tools.matches("alfred_calculate")
+    assert user.mcp_tokens == {}
+
+
+def test_two_users(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL + ANA)))
+    assert config.users.names == ["diogo", "ana"]
+    assert config.users.admin.name == "diogo"
+    ana = config.users.by_telegram_id(222)
+    assert ana is not None and ana.name == "ana" and ana.address == "madam"
+    assert ana.tools.matches("alfred_remind_set") and ana.tools.matches("mcparr_find_media")
+    assert not ana.tools.matches("mcparr_add_media")
+    assert config.users.get("bob") is None
+
+
+def test_two_admins_name_both(tmp_path: Path) -> None:
+    text = MINIMAL + ANA.replace('address = "madam"', 'address = "madam"\nadmin = true')
+    found = problems(text, tmp_path)
+    assert any("'diogo'" in p and "'ana'" in p and "one admin" in p for p in found)
+
+
+def test_no_admin(tmp_path: Path) -> None:
+    found = problems(MINIMAL.replace("admin = true\n", ""), tmp_path)
+    assert any("exactly one admin is required" in p for p in found)
+
+
+def test_duplicate_telegram_id_names_both(tmp_path: Path) -> None:
+    found = problems(MINIMAL + ANA.replace("222", "42"), tmp_path)
+    assert any("'diogo'" in p and "'ana'" in p and "telegram_user_id" in p for p in found)
+
+
+def test_duplicate_user_names(tmp_path: Path) -> None:
+    found = problems(MINIMAL + ANA.replace('"ana"', '"diogo"'), tmp_path)
+    assert any("users: duplicate name 'diogo'" in p for p in found)
+
+
+@pytest.mark.parametrize("name", ["Ana", "ana smith", ""])
+def test_user_name_rules(tmp_path: Path, name: str) -> None:
+    found = problems(MINIMAL + ANA.replace('"ana"', f'"{name}"'), tmp_path)
+    assert any(p.startswith("users[1]") and ".name" in p for p in found)
+
+
+def test_token_for_unknown_server(tmp_path: Path) -> None:
+    text = MINIMAL + ANA + 'mcp_tokens = { sonarr = "ALFRED_X" }\n'
+    found = problems(text, tmp_path, ALFRED_X="x")
+    assert any("users[1] (ana)" in p and "'sonarr'" in p for p in found)
+
+
+def test_unknown_server_prefix_in_tools(tmp_path: Path) -> None:
+    text = MINIMAL + ANA.replace('"mcparr_find_media"', '"sonarr_add_series"')
+    found = problems(text, tmp_path)
+    assert any("users[1] (ana)" in p and "'sonarr_add_series'" in p for p in found)
+
+
+@pytest.mark.parametrize("entry", ["web_search", "alfred*", "mcparr*", "cook*"])
+def test_tools_entry_prefix_must_be_known(tmp_path: Path, entry: str) -> None:
+    found = problems(MINIMAL + ANA.replace('"mcparr_find_media"', f'"{entry}"'), tmp_path)
+    assert any("users[1] (ana)" in p and repr(entry) in p for p in found)
+
+
+def test_unknown_alfred_tool_in_tools(tmp_path: Path) -> None:
+    text = MINIMAL + ANA.replace('"alfred_*"', '"alfred_web_serach"')
+    found = problems(text, tmp_path)
+    assert any("users[1] (ana)" in p and "'alfred_web_serach'" in p for p in found)
+
+
+def test_valid_tools_entries(tmp_path: Path) -> None:
+    tools = '["*", "alfred_web_search", "alfred_web_*", "mcparr_*", "cookbook_list_recipes"]'
+    text = MINIMAL + COOKBOOK + ANA.replace('["alfred_*", "mcparr_find_media"]', tools)
+    config = load_config(env_for(write(tmp_path, text), ALFRED_MCP_TOKEN_COOKBOOK="c"))
+    assert config.users.get("ana") is not None
+
+
+def test_user_problems_reported_together(tmp_path: Path) -> None:
+    text = (
+        MINIMAL.replace("admin = true\n", "")
+        + ANA.replace('"mcparr_find_media"', '"sonarr_x"')
+        + 'mcp_tokens = { sonarr = "ALFRED_X" }\n'
+    )
+    found = problems(text, tmp_path, ALFRED_X="x")
+    assert any("exactly one admin" in p for p in found)
+    assert any("'sonarr_x'" in p for p in found)
+    assert any("mcp_tokens names 'sonarr'" in p for p in found)
+
+
+def test_user_token_reference(tmp_path: Path) -> None:
+    text = MINIMAL + ANA + 'mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }\n'
+    config = load_config(
+        env_for(write(tmp_path, text), ALFRED_MCP_TOKEN_MCPARR_ANA="mcp-secret-mcparr-ana")
+    )
+    ana, diogo = config.users.get("ana"), config.users.admin
+    assert ana is not None
+    (for_ana,) = config.servers_for(ana)
+    (for_diogo,) = config.servers_for(diogo)
+    assert for_ana.token.get_secret_value() == "mcp-secret-mcparr-ana"
+    assert for_diogo.token.get_secret_value() == "mcp-secret-mcparr"
+    assert (for_ana.name, for_ana.url) == (for_diogo.name, for_diogo.url)
+
+
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_user_token_variable_missing(tmp_path: Path, value: str | None) -> None:
+    text = MINIMAL + ANA + 'mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }\n'
+    extra = {} if value is None else {"ALFRED_MCP_TOKEN_MCPARR_ANA": value}
+    found = problems(text, tmp_path, **extra)
+    assert any(
+        "ALFRED_MCP_TOKEN_MCPARR_ANA" in p and "mcp_tokens.mcparr" in p and "users[1] (ana)" in p
+        for p in found
+    )
+
+
+def test_user_token_variable_must_be_alfred(tmp_path: Path) -> None:
+    text = MINIMAL + ANA + 'mcp_tokens = { mcparr = "MCPARR_TOKEN" }\n'
+    found = problems(text, tmp_path)
+    assert any("users[1] (ana).mcp_tokens" in p for p in found)
+
+
+def test_shared_mcp_token_is_fine(tmp_path: Path) -> None:
+    text = MINIMAL + ANA + 'mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }\n'
+    config = load_config(
+        env_for(write(tmp_path, text), ALFRED_MCP_TOKEN_MCPARR_ANA="mcp-secret-mcparr")
+    )
+    assert len(config.users) == 2
+
+
+def test_user_token_never_in_errors(tmp_path: Path) -> None:
+    text = (
+        MINIMAL.replace("admin = true\n", "")
+        + ANA
+        + 'mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA", sonarr = "ALFRED_X" }\n'
+    )
+    found = problems(
+        text, tmp_path, ALFRED_MCP_TOKEN_MCPARR_ANA="very-secret-ana", ALFRED_X="secret-x"
+    )
+    assert found and all("very-secret-ana" not in p and "secret-x" not in p for p in found)

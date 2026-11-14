@@ -10,7 +10,7 @@ from alfred.tools.base import TurnInput
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.dates import DATE
 from tests.agent.turn_helpers import agent, owner_turn, tool_result, tool_rows
-from tests.helpers import FakeModel, add_queue_item, calls, text
+from tests.helpers import DIOGO, FakeModel, add_queue_item, calls, text
 
 
 async def test_calculate_then_date_then_answer(
@@ -62,7 +62,7 @@ async def test_ask_turn_can_calculate(sessions: async_sessionmaker[AsyncSession]
         ]
     )
     result = await agent(sessions, model).run(
-        TurnInput("ask", "used 930 of 1000 GB", item, "disk-check")
+        TurnInput("ask", "used 930 of 1000 GB", item, "disk-check", user=DIOGO)
     )
     assert result.reply == "The data disk is 93% full, sir."
     assert tool_result(model, 1) == "930 / 1000 * 100 = 93"

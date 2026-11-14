@@ -34,6 +34,7 @@ from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
 from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
+from alfred.db.users import warn_unknown_users
 from alfred.history import History
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
@@ -91,8 +92,9 @@ def build_toolsets(
 ) -> list[Toolset]:
     """What the model may call, in the order it is offered; alfred's own tools first.
 
-    Each toolset decides on which turns it is offered. A name offered by two
-    toolsets goes to the first.
+    Each toolset decides on which turns it is offered; the turn user's
+    allow-list then gates every one of them (``alfred.agent.turn``). A name
+    offered by two toolsets goes to the first.
     """
     toolsets: list[Toolset] = []
     if web is not None:
@@ -116,10 +118,12 @@ def build_toolsets(
 async def serve(config: Config) -> None:
     engine = make_engine(config.database_url.get_secret_value())
     sessions = make_session_factory(engine)
+    # A misspelt ALFRED_MIGRATE_ADMIN or a renamed user shows up here (design D9).
+    await warn_unknown_users(sessions, config.users.names)
     history = History(sessions)
     queue = Queue(sessions)
     bot = Bot(config.telegram_bot_token.get_secret_value())
-    outbox = TelegramOutbox(bot, config.telegram.owner_user_id)
+    outbox = TelegramOutbox(bot)
     model = ModelClient(config.ai.base_url, config.ai.model, config.ai.request_timeout_s)
     # A second client only when summaries use another model (memory design D5).
     summary_model = (
@@ -152,13 +156,7 @@ async def serve(config: Config) -> None:
     if config.attachments is not None:
         assert config.s3_key is not None
         store = await S3Store.open(config.attachments, config.s3_key)
-        intake = Intake(
-            config.attachments,
-            store,
-            queue,
-            TelegramDownloader(bot),
-            owner_address=config.ai.owner_address,
-        )
+        intake = Intake(config.attachments, store, queue, TelegramDownloader(bot))
         attachment_tools = AttachmentTools(store, sessions, brains, config.attachments)
         inline = InlineAttachments(store, config.attachments)
         orphans = OrphanSweeper(store, sessions)
@@ -185,22 +183,21 @@ async def serve(config: Config) -> None:
         history,
         outbox,
         config.queue,
-        owner_address=config.ai.owner_address,
+        users=config.users,
         memory=summaries,
         typing=outbox.typing,
         reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
     )
     dispatcher = make_dispatcher(
-        config.telegram.owner_user_id,
+        config.users,
         queue,
-        config.ai.owner_address,
         intake=intake,
         album_wait_s=config.attachments.album_wait_s if config.attachments else 2,
     )
     server = _Server(
         uvicorn.Config(
-            create_app(config.services, queue, history, outbox),
+            create_app(config.services, config.users, queue, history, outbox),
             host=config.server.host,
             port=config.server.port,
             log_level=config.server.log_level.lower(),
@@ -238,7 +235,7 @@ async def serve(config: Config) -> None:
     log.info(
         "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
         "embeddings by %s at %s, web search at %s, reminders checked every %gs, "
-        "attachments %s, %d MCP server(s)",
+        "attachments %s, %d MCP server(s), users %s (admin %s)",
         config.server.host,
         config.server.port,
         brains.current.name,
@@ -256,6 +253,8 @@ async def serve(config: Config) -> None:
             else "off"
         ),
         len(config.mcp_servers),
+        ", ".join(config.users.names),
+        config.users.admin.name,
     )
     failed: asyncio.Task[object] | None = None
     try:

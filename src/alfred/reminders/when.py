@@ -1,12 +1,12 @@
 """When a reminder is due, and how times are shown (change add-reminders, design D2).
 
-The model passes the time as the owner said it: ``in_minutes``, or ``at`` as
-``HH:MM``, ``YYYY-MM-DD HH:MM`` or ``YYYY-MM-DD``. alfred resolves it in the
-owner's timezone against an injected ``now``, so the model never does date
+The model passes the time as the user said it: ``in_minutes``, or ``at`` as
+``HH:MM``, ``YYYY-MM-DD HH:MM`` or ``YYYY-MM-DD``. alfred resolves it in
+alfred's timezone against an injected ``now``, so the model never does date
 arithmetic and never needs the time of day.
 
 Due times are whole minutes: ``in_minutes`` drops the seconds, so a
-reminder fires at the minute the owner is told, and the due-reminder loop
+reminder fires at the minute the user is told, and the due-reminder loop
 checks on the minute.
 
 Local times are built with ``fold=0``. A time in a DST gap (it does not
@@ -38,7 +38,7 @@ class WhenError(ValueError):
 def parse_text(value: Any) -> str:
     """The reminder text, stripped. Raises :class:`WhenError` if blank or too long."""
     if not isinstance(value, str) or not value.strip():
-        raise WhenError("Error: text is required: what to remind the owner of.")
+        raise WhenError("Error: text is required: what to remind them of.")
     text = value.strip()
     if len(text) > MAX_TEXT_CHARS:
         raise WhenError(f"Error: text is too long (at most {MAX_TEXT_CHARS} characters).")
@@ -63,7 +63,7 @@ def resolve(
     now = now.astimezone(UTC)
     if in_minutes is not None:
         minutes = _whole_minutes(in_minutes)
-        # Down to the minute shown to the owner: 13:55:37 + 2 min is 13:57:00.
+        # Down to the minute shown to the user: 13:55:37 + 2 min is 13:57:00.
         return (now + timedelta(minutes=minutes)).replace(second=0, microsecond=0)
 
     if not isinstance(at, str):
@@ -91,7 +91,7 @@ def resolve(
     if due <= now:
         raise WhenError(
             f"Error: {format_when(due, zone)} has already passed. "
-            "Ask the owner for a time in the future."
+            "Ask the user for a time in the future."
         )
     if due - now > timedelta(minutes=MAX_MINUTES):
         raise WhenError("Error: a reminder can be at most one year ahead.")
@@ -157,7 +157,7 @@ def _local(day: date, clock: time, zone: ZoneInfo) -> datetime:
 
 
 def format_when(moment: datetime, zone: ZoneInfo) -> str:
-    """``Monday 9 November 2026, 17:00`` in the owner's timezone."""
+    """``Monday 9 November 2026, 17:00`` in alfred's timezone."""
     local = moment.astimezone(zone)
     return f"{local:%A} {local.day} {local:%B %Y}, {local:%H:%M}"
 
@@ -180,7 +180,7 @@ def format_day_time(moment: datetime, now: datetime, zone: ZoneInfo) -> str:
 
 
 def format_clock(moment: datetime, zone: ZoneInfo) -> str:
-    """``17:00`` in the owner's timezone."""
+    """``17:00`` in alfred's timezone."""
     return f"{moment.astimezone(zone):%H:%M}"
 
 
@@ -194,7 +194,7 @@ def format_now(now: datetime, due: datetime, zone: ZoneInfo) -> str:
 def format_in(delta: timedelta) -> str:
     """``in 2 h 13 min``: days, hours and minutes, zero parts dropped.
 
-    Rounded up, so it matches the clock times the owner sees: from 14:47:20
+    Rounded up, so it matches the clock times the user sees: from 14:47:20
     to 17:00 is "in 2 h 13 min", as from 14:47 to 17:00.
     """
     minutes = math.ceil(delta.total_seconds() / 60)

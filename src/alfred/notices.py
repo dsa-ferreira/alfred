@@ -1,8 +1,8 @@
-"""Fixed notices sent to the owner without the model (design D5).
+"""Fixed notices sent to a user without the model (design D5).
 
 Each one speaks in the butler's register and ends its first clause with the
-owner's form of address, used exactly as configured. They are not
-configurable, even when a custom persona is.
+form of address of the user it is sent to, used exactly as configured. They
+are not configurable, even when a custom persona is.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def fell_back(address: str, failed: str, default: str) -> str:
 def reminder(address: str, text: str, due: datetime, today: date) -> str:
     """A reminder delivered without the model (change add-reminders, design D6).
 
-    ``due`` is in the owner's timezone; its date is shown when it isn't ``today``.
+    ``due`` is in alfred's timezone; its date is shown when it isn't ``today``.
     """
     when = f"{due:%H:%M}"
     if due.date() != today:

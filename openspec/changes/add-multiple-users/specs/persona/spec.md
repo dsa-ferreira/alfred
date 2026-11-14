@@ -1,0 +1,64 @@
+# Spec Delta
+
+## MODIFIED Requirements
+
+### Requirement: Form of address
+The built-in persona SHALL tell the model to address the turn's user with that user's configured form of address at the moments a butler would: a greeting, a formal acknowledgement, bad news or an apology, and an interruption. Otherwise the model SHALL use it seldom, and plain answers to everyday requests SHALL use none. The persona's examples SHALL show the address at each of those moments and leave it out of the everyday-request examples. A user's form of address SHALL default to "sir".
+
+#### Scenario: Default address
+- **WHEN** the turn's user has no form of address configured
+- **THEN** the built-in persona tells the model to address them as "sir" at a greeting, a formal acknowledgement, bad news or an apology, and an interruption, and seldom otherwise
+
+#### Scenario: Examples mostly without the address
+- **WHEN** the model receives the built-in persona on a turn of a user addressed as "sir"
+- **THEN** its everyday-request example replies contain no form of address, and the interruption example still opens with "Pardon the interruption, sir."
+
+#### Scenario: Examples show each moment
+- **WHEN** the model receives the built-in persona
+- **THEN** it contains an example reply with the address for a greeting, for bad news and for a formal acknowledgement
+
+#### Scenario: Custom address
+- **WHEN** the turn's user has the form of address "Mr. Ferreira"
+- **THEN** the built-in persona tells the model to address them as "Mr. Ferreira" instead, at the same moments
+
+#### Scenario: Each user their own address
+- **WHEN** `diogo` is addressed as "sir" and `ana` as "madam"
+- **THEN** the persona on `ana`'s turns uses "madam" and on `diogo`'s turns uses "sir"
+
+### Requirement: Interrupting on a service's behalf
+The built-in persona SHALL tell the model that a message it writes for a service's `/ask` turn interrupts the target user unprompted and SHALL open with a brief, courteous acknowledgement of the interruption.
+
+#### Scenario: Backup failure ask
+- **WHEN** service `backup` asks about a failed backup and the model decides the admin should know
+- **THEN** the persona the model received tells it to open with a brief acknowledgement of the interruption before the news
+
+### Requirement: Fixed notices in the persona's voice
+The notices alfred sends without the model (only text is supported, the request failed, the AI is unreachable, the AI became unreachable mid-request, the request was stopped after too many steps, some actions may have partly completed, the chosen brain failed so alfred went back to the startup brain, and a reminder delivered without the model) SHALL be sent to the user they concern, use a formal butler register and end with that user's configured form of address, used exactly as configured. They SHALL NOT be configurable.
+
+#### Scenario: Failure notice with the default address
+- **WHEN** a user's turn fails with no tool having run and that user has no form of address configured
+- **THEN** the user receives a formal failure notice ending in ", sir."
+
+#### Scenario: Notice uses the configured address as written
+- **WHEN** the user's form of address is "Mr. Ferreira" and they send a voice message
+- **THEN** they receive a formal notice naming what alfred can read, ending in ", Mr. Ferreira."
+
+#### Scenario: Notice for another user
+- **WHEN** `ana`, addressed as "madam", has a turn that fails
+- **THEN** `ana` receives the failure notice ending in ", madam." and nobody else receives it
+
+#### Scenario: Partial completion
+- **WHEN** a user's turn fails after a tool ran
+- **THEN** the notice also says, in the same register, that some actions may have partly completed, and the form of address appears once in the whole notice
+
+#### Scenario: Custom persona keeps the notices formal
+- **WHEN** a custom persona is configured
+- **THEN** the fixed notices still use the butler register and the user's configured form of address
+
+#### Scenario: Fallback notice
+- **WHEN** the brain `bonsai` fails and alfred goes back to the startup brain `gemma`
+- **THEN** each user who receives it gets a formal notice naming `bonsai` and `gemma`, with their own form of address once
+
+#### Scenario: Reminder notice
+- **WHEN** the turn for reminder #12 "call mum", due at 17:00, fails
+- **THEN** the recipient receives a formal notice containing "call mum" and 17:00, with their form of address once at the end

@@ -1,7 +1,11 @@
 """Search and recall of archived conversations (memory design D7, D8).
 
-:class:`MemoryTools` offers them to the model on owner turns as
+:class:`MemoryTools` offers them to the model on chat turns as
 ``alfred_search_conversations`` and ``alfred_recall_conversation``.
+
+Both see only the turn user's own conversations (change add-multiple-users,
+design D5): every query is limited to them, and another user's conversation
+is refused exactly like one that doesn't exist.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from alfred.tools.base import (
     LocalToolset,
     ToolOutcome,
     TurnInput,
-    owner_only,
+    chat_only,
     parse_arguments,
 )
 
@@ -43,13 +47,13 @@ SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
     "function": {
         "name": SEARCH_CONVERSATIONS,
         "description": (
-            "Search earlier, archived conversations with the owner by topic, by date, or "
-            "both. Use when the owner refers to something discussed before ('remember "
+            "Search earlier, archived conversations with the user by topic, by date, or "
+            "both. Use when the user refers to something discussed before ('remember "
             "when…', 'that recipe we talked about last week', 'what did we talk about on "
             "Tuesday?'). Turn relative dates into after/before (YYYY-MM-DD, inclusive) using "
             "today's date from the system prompt. If one result is clearly the best match, "
-            "recall it and tell the owner which conversation you picked (its title and "
-            "date). If several match about equally, ask the owner which one they meant."
+            "recall it and tell the user which conversation you picked (its title and "
+            "date). If several match about equally, ask the user which one they meant."
         ),
         "parameters": {
             "type": "object",
@@ -77,7 +81,7 @@ RECALL_CONVERSATION_TOOL: dict[str, Any] = {
         "name": RECALL_CONVERSATION,
         "description": (
             "Bring an archived conversation, by its number, into this conversation so you "
-            "can use what was said. Use when the owner names a conversation number or after "
+            "can use what was said. Use when the user names a conversation number or after "
             "search found the one they mean."
         ),
         "parameters": {
@@ -119,6 +123,7 @@ hits AS (
 SELECT c.id
 FROM conversations c CROSS JOIN q LEFT JOIN hits h ON h.conversation_id = c.id
 WHERE c.ended_at IS NOT NULL
+  AND c.user_name = :user
   AND (c.search_tsv @@ q.tsq OR h.conversation_id IS NOT NULL)
   {dates}
 ORDER BY greatest(ts_rank(c.search_tsv, q.tsq), coalesce(h.rank, 0)) DESC, c.id DESC
@@ -153,8 +158,10 @@ class ConversationSearch:
         self._embedder = embedder
         self._zone = ZoneInfo(config.ai.timezone)
 
-    async def search(self, query: Any = None, after: Any = None, before: Any = None) -> ToolOutcome:
-        """Archived conversations by topic, by date, or both (memory design D7)."""
+    async def search(
+        self, user: str, query: Any = None, after: Any = None, before: Any = None
+    ) -> ToolOutcome:
+        """``user``'s archived conversations by topic, by date, or both (memory design D7)."""
         if query is not None and not isinstance(query, str):
             return ToolOutcome(False, "Error: query must be text.")
         query = (query or "").strip() or None
@@ -171,7 +178,7 @@ class ConversationSearch:
                 "Error: give a query, a date range (after and/or before, YYYY-MM-DD), or both.",
             )
 
-        dates: list[ColumnElement[bool]] = []
+        dates: list[ColumnElement[bool]] = [Conversation.user_name == user]
         if lower is not None:
             dates.append(Conversation.ended_at >= lower)  # it ended on or after the range starts
         if upper is not None:
@@ -201,7 +208,7 @@ class ConversationSearch:
             note = NO_MEANING_NOTE
         else:
             vector_ids = await self._vector_candidates(vector, dates, limit * 2)
-        keyword_ids = await self._keyword_candidates(query, lower, upper, limit * 2)
+        keyword_ids = await self._keyword_candidates(user, query, lower, upper, limit * 2)
 
         scores: dict[int, float] = {}
         for ranking in (vector_ids, keyword_ids):
@@ -243,10 +250,10 @@ class ConversationSearch:
             return list(rows)
 
     async def _keyword_candidates(
-        self, query: str, lower: datetime | None, upper: datetime | None, limit: int
+        self, user: str, query: str, lower: datetime | None, upper: datetime | None, limit: int
     ) -> list[int]:
         conditions = []
-        params: dict[str, Any] = {"query": query, "limit": limit}
+        params: dict[str, Any] = {"query": query, "limit": limit, "user": user}
         if lower is not None:
             conditions.append("AND c.ended_at >= :lower")
             params["lower"] = lower
@@ -265,7 +272,7 @@ class ConversationSearch:
             return {r.id: _Found(*r) for r in rows}
 
     def _day_start(self, value: Any, name: str, *, next_day: bool = False) -> datetime | None:
-        """Local midnight starting ``value`` (or the day after), in the owner's timezone."""
+        """Local midnight starting ``value`` (or the day after), in alfred's timezone."""
         if value is None or value == "":
             return None
         if not isinstance(value, str) or not _DATE.fullmatch(value.strip()):
@@ -287,21 +294,22 @@ class ConversationSearch:
 
     # --- recall ------------------------------------------------------------------
 
-    async def recall(self, conversation_id: Any) -> ToolOutcome:
-        """Bring an archived conversation into the current one (memory design D8)."""
+    async def recall(self, user: str, conversation_id: Any) -> ToolOutcome:
+        """Bring one of ``user``'s archived conversations into their current one (D8)."""
         cid = _parse_id(conversation_id)
         if cid is None:
             return ToolOutcome(False, "Error: id must be a conversation number, such as 41.")
         async with self._sessions.begin() as session:
             # The same lock as History.append: a reset can't slip in between.
-            current = await current_id(session, lock=True)
+            current = await current_id(session, user, lock=True)
             if cid == current:
                 return ToolOutcome(
                     False,
                     f"Error: #{cid} is the current conversation; it is already in your context.",
                 )
             target = await session.get(Conversation, cid)
-            if target is None:
+            # Another user's conversation is refused as if it didn't exist.
+            if target is None or target.user_name != user:
                 return ToolOutcome(False, f"Error: there is no conversation #{cid}.")
             if await self._already_recalled(session, current, cid):
                 return ToolOutcome(False, _already(cid))
@@ -369,14 +377,14 @@ class ConversationSearch:
 
 class Searcher(Protocol):
     async def search(
-        self, query: Any = None, after: Any = None, before: Any = None
+        self, user: str, query: Any = None, after: Any = None, before: Any = None
     ) -> ToolOutcome: ...
 
-    async def recall(self, conversation_id: Any) -> ToolOutcome: ...
+    async def recall(self, user: str, conversation_id: Any) -> ToolOutcome: ...
 
 
 class MemoryTools(LocalToolset):
-    """Search and recall, offered on owner turns."""
+    """Search and recall of the turn user's conversations, offered on chat turns."""
 
     definitions = [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
 
@@ -384,17 +392,18 @@ class MemoryTools(LocalToolset):
         self._search = search
 
     def offered(self, turn: TurnInput) -> bool:
-        return owner_only(turn)
+        return chat_only(turn)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         arguments = parse_arguments(raw_arguments)
         if isinstance(arguments, str):
             return ToolOutcome(False, arguments)
+        user = attempt.turn.user.name
         if name == SEARCH_CONVERSATIONS:
             return await self._search.search(
-                arguments.get("query"), arguments.get("after"), arguments.get("before")
+                user, arguments.get("query"), arguments.get("after"), arguments.get("before")
             )
-        return await self._search.recall(arguments.get("id"))
+        return await self._search.recall(user, arguments.get("id"))
 
 
 _FOUND_COLUMNS = (

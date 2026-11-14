@@ -206,7 +206,7 @@ async def load_transcript(session: AsyncSession, conversation_id: int) -> list[T
         .order_by(Entry.id)
     )
     entries = [TranscriptEntry(*row) for row in rows]
-    refs = await refs_by_entry(session, (e.entry_id for e in entries if e.kind == "owner"))
+    refs = await refs_by_entry(session, (e.entry_id for e in entries if e.kind == "user"))
     return [
         dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
         for e in entries

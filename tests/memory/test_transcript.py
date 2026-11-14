@@ -25,7 +25,7 @@ LISBON = ZoneInfo("Europe/Lisbon")
 
 def test_render_every_kind() -> None:
     entries = [
-        TranscriptEntry("owner", None, "chicken thighs tonight?"),
+        TranscriptEntry("user", None, "chicken thighs tonight?"),
         TranscriptEntry("assistant", None, "Lemon and garlic, sir."),
         TranscriptEntry("notice", "backup", "Nightly backup done"),
         TranscriptEntry("ask_prompt", "disk-check", "93% full"),
@@ -34,7 +34,7 @@ def test_render_every_kind() -> None:
     ]
     assert render(entries) == "\n".join(
         [
-            "Owner: chicken thighs tonight?",
+            "User: chicken thighs tonight?",
             "alfred: Lemon and garlic, sir.",
             "[notice:backup] Nightly backup done",
             "[ask:disk-check] 93% full",
@@ -45,7 +45,7 @@ def test_render_every_kind() -> None:
 
 
 def test_recall_is_rendered_by_title_only() -> None:
-    entry = TranscriptEntry("recall", None, "Owner: secret detail from #41", 41, "Old chat")
+    entry = TranscriptEntry("recall", None, "User: secret detail from #41", 41, "Old chat")
     assert "secret detail" not in render([entry])
 
 
@@ -85,10 +85,10 @@ def test_cut_with_tiny_budget() -> None:
 
 
 def test_summary_messages() -> None:
-    messages = summary_messages("Owner: hi")
+    messages = summary_messages("User: hi")
     assert messages == [
         {"role": "system", "content": SUMMARY_PROMPT},
-        {"role": "user", "content": "Owner: hi"},
+        {"role": "user", "content": "User: hi"},
     ]
     assert "Title:" in SUMMARY_PROMPT and "Summary:" in SUMMARY_PROMPT
 
