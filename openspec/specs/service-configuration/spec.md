@@ -18,7 +18,7 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, the idle close time, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, the number of search results, and the quiet period before summaries, and the user facts settings: whether facts are in the context, the facts budget, the fact size, the extraction attempts before giving up, and the duplicate distance, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, the idle close time, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, the number of search results, and the quiet period before summaries, and the user facts settings: whether facts are in the context, the facts budget, the fact size, the extraction attempts before giving up, and the distance within which facts are checked for duplicates, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
 - **WHEN** the file sets only one user, the model, services and MCP servers
@@ -110,7 +110,7 @@ Every non-secret setting SHALL be settable in the config file, including the use
 
 #### Scenario: Fact defaults
 - **WHEN** the file sets none of the `[memory]` fact settings
-- **THEN** facts are learned and can be remembered and listed, but are not in the context; when turned on, the facts budget is 3000 characters; a fact is at most 300 characters; extraction is never given up; and facts within a cosine distance of 0.1 are duplicates
+- **THEN** facts are learned and can be remembered and listed, but are not in the context; when turned on, the facts budget is 3000 characters; a fact is at most 300 characters; extraction is never given up; and facts within a cosine distance of 0.2 of each other are checked for duplicates
 
 #### Scenario: Turn facts on
 - **WHEN** `[memory] facts_in_context` is set to true and alfred restarts
