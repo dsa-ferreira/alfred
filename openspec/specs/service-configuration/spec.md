@@ -18,15 +18,19 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the owner user ID, model base URL and name, the brains the owner can switch between, request timeout, maximum model requests per turn, persona, the owner's form of address, the owner's timezone, context window size, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, and the number of search results, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, and the number of search results, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
-- **WHEN** the file sets only the owner user ID, model, services and MCP servers
+- **WHEN** the file sets only one user, the model, services and MCP servers
 - **THEN** every other setting takes its documented default
 
 #### Scenario: Change a limit without code
 - **WHEN** the context window size is changed from 30 to 50 in the file and alfred restarts
 - **THEN** the model receives up to 50 entries
+
+#### Scenario: Old owner keys
+- **WHEN** the file still sets `[telegram] owner_user_id` or `[ai] owner_address`
+- **THEN** alfred exits at startup with an error naming the unknown key
 
 #### Scenario: Old system prompt key
 - **WHEN** the file still sets the removed `system_prompt` key under `[ai]`
@@ -89,14 +93,18 @@ Every non-secret setting SHALL be settable in the config file, including the own
 - **THEN** alfred exits at startup with an error naming `attachments.max_bytes` and the 20 MB maximum
 
 ### Requirement: Secrets only from the environment
-Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), the object store key (`ALFRED_S3_ACCESS_KEY_ID` and `ALFRED_S3_SECRET_ACCESS_KEY`, required only when `[attachments]` is set), and the tokens of services and MCP servers. Services and MCP servers SHALL name their secret's variable with `token_env`.
+Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), the object store key (`ALFRED_S3_ACCESS_KEY_ID` and `ALFRED_S3_SECRET_ACCESS_KEY`, required only when `[attachments]` is set), the tokens of services and MCP servers, and users' MCP tokens. Services and MCP servers SHALL name their secret's variable with `token_env`, and a user SHALL name a per-server variable in `mcp_tokens`.
 
 #### Scenario: Token reference
 - **WHEN** the mcparr entry has `token_env = "ALFRED_MCP_TOKEN_MCPARR"` and that variable is set
 - **THEN** alfred uses its value as mcparr's bearer token
 
+#### Scenario: User token reference
+- **WHEN** user `ana` has `mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }` and that variable is set
+- **THEN** alfred uses its value as mcparr's bearer token on `ana`'s turns
+
 #### Scenario: Referenced variable missing
-- **WHEN** a `token_env` names a variable that is unset or empty
+- **WHEN** a `token_env` or an `mcp_tokens` value names a variable that is unset or empty
 - **THEN** alfred exits at startup with an error naming the variable and the entry that references it
 
 #### Scenario: Object store key missing
@@ -147,3 +155,40 @@ Each `[ai.models]` key SHALL be lowercase letters, digits and hyphens, and each 
 #### Scenario: Unknown key in a brain table
 - **WHEN** `[ai.models]` has `gemma = { model = "gemma4:26b-a4b-it-qat", vison = true }`
 - **THEN** alfred exits at startup with an error naming `ai.models.gemma` and the unknown key
+
+### Requirement: User list
+The config file SHALL have at least one `[[users]]` entry. Each SHALL have a `name` (lowercase letters, digits and hyphens), a positive `telegram_user_id`, and optionally `address` (default "sir"), `admin` (default `false`), `tools` (the allow-list, default empty) and `mcp_tokens` (configured server name to token variable, default none).
+
+#### Scenario: Minimal user
+- **WHEN** a user entry sets only `name`, `telegram_user_id` and `admin = true`
+- **THEN** that user is addressed as "sir" and is offered no tools
+
+#### Scenario: No users
+- **WHEN** the file has no `[[users]]` entry
+- **THEN** alfred exits at startup with an error naming `users`
+
+### Requirement: User list validation
+Two users with the same name or the same Telegram user ID, a number of admins other than one, and an `mcp_tokens` key that is not a configured MCP server SHALL be startup errors naming the users or keys involved.
+
+#### Scenario: Two admins
+- **WHEN** both `diogo` and `ana` have `admin = true`
+- **THEN** alfred exits at startup with an error naming both users
+
+#### Scenario: No admin
+- **WHEN** no user has `admin = true`
+- **THEN** alfred exits at startup with an error saying exactly one admin is required
+
+#### Scenario: Duplicate Telegram ID
+- **WHEN** `diogo` and `ana` have the same `telegram_user_id`
+- **THEN** alfred exits at startup with an error naming both users
+
+#### Scenario: Token for an unknown server
+- **WHEN** `ana` has `mcp_tokens = { sonarr = "ALFRED_X" }` and no server is named `sonarr`
+- **THEN** alfred exits at startup with an error naming `ana` and `sonarr`
+
+### Requirement: Users may share an MCP token
+alfred SHALL accept users' MCP token variables that hold the same value as each other or as the server's own `token_env`; this SHALL NOT be a startup error.
+
+#### Scenario: Same token for now
+- **WHEN** `ALFRED_MCP_TOKEN_MCPARR_ANA` and `ALFRED_MCP_TOKEN_MCPARR` hold the same value
+- **THEN** alfred starts normally

@@ -9,18 +9,18 @@ the model sees them when they arrive and later.
 ## Requirements
 
 ### Requirement: Accepted attachments
-When attachments are configured, alfred SHALL accept from the owner a Telegram photo, an image sent as a file, and a PDF sent as a file, each with an optional caption. Each SHALL be queued as an owner message whose text is the caption (empty if none), with the file attached.
+When attachments are configured, alfred SHALL accept from any configured user a Telegram photo, an image sent as a file, and a PDF sent as a file, each with an optional caption. Each SHALL be queued as that user's message whose text is the caption (empty if none), with the file attached, and the attachment SHALL belong to that user.
 
 #### Scenario: Photo with caption
-- **WHEN** the owner sends a photo captioned "what's the total?"
-- **THEN** one owner message "what's the total?" with that photo attached is queued for the AI
+- **WHEN** a user sends a photo captioned "what's the total?"
+- **THEN** one message from that user, "what's the total?", with that photo attached is queued for the AI
 
 #### Scenario: PDF without caption
-- **WHEN** the owner sends `invoice.pdf` as a file with no caption
-- **THEN** one owner message with empty text and that PDF attached is queued for the AI
+- **WHEN** a user sends `invoice.pdf` as a file with no caption
+- **THEN** one message from that user with empty text and that PDF attached is queued for the AI
 
 #### Scenario: Image sent as a file
-- **WHEN** the owner sends `rack.png` as a file
+- **WHEN** a user sends `rack.png` as a file
 - **THEN** it is accepted as an image attachment
 
 ### Requirement: Albums are one message
@@ -85,10 +85,10 @@ Attachments of owner messages outside the inline window SHALL be sent to the mod
 - **THEN** that turn's model request contains attachment 7 only as its handle, not the image
 
 ### Requirement: Viewing an attachment again
-In owner turns on a vision brain, the model SHALL be offered `alfred_view_attachment`, taking an attachment number and, for a PDF, a page number. It SHALL return the image, or that PDF page rendered as an image, as the tool result.
+In turns started by a user's message on a vision brain, the model SHALL be offered `alfred_view_attachment` when the user's allow-list matches it, taking an attachment number and, for a PDF, a page number. It SHALL return the image, or that PDF page rendered as an image, as the tool result.
 
 #### Scenario: Look again
-- **WHEN** attachment 7 is a photo from earlier in the conversation and the owner asks "and the date on it?"
+- **WHEN** attachment 7 is a photo from earlier in the conversation and the user asks "and the date on it?"
 - **THEN** the model can call `alfred_view_attachment` with 7, and the next model request contains the image as that call's result
 
 #### Scenario: PDF page
@@ -100,7 +100,7 @@ In owner turns on a vision brain, the model SHALL be offered `alfred_view_attach
 - **THEN** the result is an error saying the PDF has 12 pages
 
 ### Requirement: Reading a document's text
-In owner turns, the model SHALL be offered `alfred_read_document`, taking an attachment number and a page range. It SHALL return the text of those pages, each marked with its page number, up to the configured number of characters. When text is cut, the result SHALL say which page to continue from. Pages without text SHALL be marked as having no text.
+In turns started by a user's message, the model SHALL be offered `alfred_read_document` when the user's allow-list matches it, taking an attachment number and a page range. It SHALL return the text of those pages, each marked with its page number, up to the configured number of characters. When text is cut, the result SHALL say which page to continue from. Pages without text SHALL be marked as having no text.
 
 #### Scenario: Read pages
 - **WHEN** the model calls `alfred_read_document` with attachment 9 and pages "3-5"
@@ -122,7 +122,7 @@ Results of `alfred_read_document` SHALL be bounded by the attachments read limit
 - **THEN** the model receives all 6000 characters
 
 ### Requirement: Which attachments the tools can reach
-The attachment tools SHALL accept only attachments sent in the current conversation or in a conversation recalled into it. Any other number SHALL return an error saying there is no such attachment in this conversation.
+The attachment tools SHALL accept only attachments sent in the turn's user's current conversation or in one of their conversations recalled into it. Any other number, including another user's attachment, SHALL return an error saying there is no such attachment in this conversation.
 
 #### Scenario: From a recalled conversation
 - **WHEN** conversation #41 had attachment 9 and #41 was recalled into the current conversation
@@ -131,6 +131,10 @@ The attachment tools SHALL accept only attachments sent in the current conversat
 #### Scenario: From an unrelated conversation
 - **WHEN** attachment 9 belongs to archived conversation #41, which was not recalled into the current conversation
 - **THEN** `alfred_view_attachment` with 9 returns an error saying there is no attachment 9 in this conversation
+
+#### Scenario: Another user's attachment
+- **WHEN** on `ana`'s turn the model asks for attachment 9, which `diogo` sent
+- **THEN** the result is the same error saying there is no attachment 9 in this conversation
 
 ### Requirement: Images reach the model in a model-friendly form
 Images sent to the model, both attachments and rendered PDF pages, SHALL be scaled down so their longer side is at most the configured number of pixels, turned upright per their orientation metadata, and sent in a format the model server accepts. The stored file SHALL stay unchanged.
@@ -154,11 +158,15 @@ Transcripts used for summaries and recalls SHALL show each owner message's attac
 - **THEN** the recalled transcript has the owner line with "file this" and the handle for attachment 9
 
 ### Requirement: Attachment tools explained
-When attachment tools are offered, the system prompt SHALL explain attachment handles, that `alfred_view_attachment` looks at an image or a PDF page again and `alfred_read_document` reads PDF text, and that a handle alone does not show the content.
+When attachment tools are offered, the system prompt SHALL explain attachment handles, that `alfred_view_attachment` looks at an image or a PDF page again and `alfred_read_document` reads PDF text, and that a handle alone does not show the content. It SHALL describe only the attachment tools offered on the turn.
 
 #### Scenario: Owner turn on a vision brain
-- **WHEN** an owner turn runs on a vision brain with attachments configured
+- **WHEN** a turn of a user whose allow-list matches both tools runs on a vision brain with attachments configured
 - **THEN** the system prompt explains handles and both tools
+
+#### Scenario: Only reading allowed
+- **WHEN** the user's allow-list matches `alfred_read_document` but not `alfred_view_attachment`
+- **THEN** the system prompt explains handles and `alfred_read_document` only
 
 ### Requirement: Orphan files are removed
 A stored file that no attachment refers to, older than one day, SHALL be deleted from the object store in the background. This SHALL NOT delay or fail any turn.
