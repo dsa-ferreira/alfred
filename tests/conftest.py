@@ -39,7 +39,11 @@ def postgres_url() -> Iterator[str]:
     import psycopg
     from testcontainers.community.postgres import PostgresContainer
 
-    with PostgresContainer(POSTGRES_IMAGE, driver=None) as pg:
+    # Above the podman service's own score (200 under systemd's user defaults):
+    # with an explicit lower value, ``podman exec`` (testcontainers' readiness
+    # check) fails with "write to /proc/self/oom_score_adj: Permission denied".
+    container = PostgresContainer(POSTGRES_IMAGE, driver=None).with_kwargs(oom_score_adj=300)
+    with container as pg:
         url = pg.get_connection_url()
         # The container's user is a superuser, standing in for the init script.
         with psycopg.connect(url, autocommit=True) as conn:
