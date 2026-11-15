@@ -800,3 +800,30 @@ def test_user_token_never_in_errors(tmp_path: Path) -> None:
         text, tmp_path, ALFRED_MCP_TOKEN_MCPARR_ANA="very-secret-ana", ALFRED_X="secret-x"
     )
     assert found and all("very-secret-ana" not in p and "secret-x" not in p for p in found)
+
+
+# --- Idle close and the summary quiet period (change close-idle-conversations) ---
+
+
+def test_idle_close_off_and_quiet_period_default(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL)))
+    assert config.history.idle_close_after_h is None
+    assert config.memory.summary_quiet_s == 60
+
+
+def test_set_idle_close_and_quiet_period(tmp_path: Path) -> None:
+    text = MINIMAL + "\n[history]\nidle_close_after_h = 6\n\n[memory]\nsummary_quiet_s = 0\n"
+    config = load_config(env_for(write(tmp_path, text)))
+    assert config.history.idle_close_after_h == 6
+    assert config.memory.summary_quiet_s == 0
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_idle_close_must_be_positive(tmp_path: Path, value: str) -> None:
+    found = problems(MINIMAL + f"\n[history]\nidle_close_after_h = {value}\n", tmp_path)
+    assert any("history.idle_close_after_h" in p for p in found)
+
+
+def test_quiet_period_not_negative(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[memory]\nsummary_quiet_s = -1\n", tmp_path)
+    assert any("memory.summary_quiet_s" in p for p in found)

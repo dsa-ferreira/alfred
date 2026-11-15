@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
-from alfred.db.models import Attachment, Conversation, Entry, Reminder
+from alfred.db.models import Attachment, Conversation, Entry, QueueItem, Reminder
 from alfred.memory.transcript import recall_label
 from alfred.reminders.when import format_when
 from alfred.tools.base import ModelImage
@@ -74,6 +74,15 @@ class Reset:
 
     archived_id: int | None
     new_id: int
+
+
+@dataclass(frozen=True)
+class LastMessage:
+    """A current conversation and when its user last wrote in it."""
+
+    conversation_id: int
+    user: str
+    at: datetime
 
 
 class History:
@@ -189,13 +198,94 @@ class History:
             archived_id = await session.scalar(
                 update(Conversation)
                 .where(Conversation.ended_at.is_(None), Conversation.user_name == user)
-                .values(ended_at=func.now())
+                .values(ended_at=func.now(), end_reason="user")
                 .returning(Conversation.id)
             )
             new = Conversation(user_name=user)
             session.add(new)
             await session.flush()
             return Reset(archived_id, new.id)
+
+    # --- idle close (change close-idle-conversations, design D3, D4) ----------
+
+    async def last_user_messages(self) -> list[LastMessage]:
+        """Every current conversation with a message from its user, and the newest one's time.
+
+        Notices, ``/ask`` turns and reminders don't count.
+        """
+        async with self._sessions() as session:
+            rows = await session.execute(
+                select(Conversation.id, Conversation.user_name, func.max(Entry.created_at))
+                .join(Entry, Entry.conversation_id == Conversation.id)
+                .where(Conversation.ended_at.is_(None), Entry.kind == "user")
+                .group_by(Conversation.id, Conversation.user_name)
+                .order_by(Conversation.id)
+            )
+            return [LastMessage(*row) for row in rows]
+
+    async def close_idle(self, conversation_id: int, cutoff: datetime) -> Reset | None:
+        """Archive a current conversation whose user hasn't written since ``cutoff``.
+
+        Returns ``None`` and changes nothing if it is no longer current, its
+        user wrote after ``cutoff`` (or never), or one of its user's
+        queue items is waiting or running.
+        """
+        async with self._sessions.begin() as session:
+            # Lock first: this waits for an append in flight (it holds FOR
+            # SHARE), and the checks below are new statements, so they see
+            # what it committed.
+            user = await session.scalar(
+                select(Conversation.user_name)
+                .where(Conversation.id == conversation_id, Conversation.ended_at.is_(None))
+                .with_for_update()
+            )
+            if user is None:
+                return None
+            newest = await session.scalar(
+                select(func.max(Entry.created_at)).where(
+                    Entry.conversation_id == conversation_id, Entry.kind == "user"
+                )
+            )
+            if newest is None or newest > cutoff:
+                return None
+            busy = await session.scalar(
+                select(QueueItem.id)
+                .where(QueueItem.status == "pending", QueueItem.user_name == user)
+                .limit(1)
+            )
+            if busy is not None:
+                return None
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation_id)
+                .values(ended_at=func.now(), end_reason="idle")
+            )
+            new = Conversation(user_name=user)
+            session.add(new)
+            await session.flush()
+            return Reset(conversation_id, new.id)
+
+    async def take_idle_marker(self, user: str) -> tuple[int, int] | None:
+        """Claim ``user``'s pending idle-close marker: (archived id, current id), or ``None``.
+
+        Claimed before it is sent, so it is handed out once, even if the
+        turn is retried. Older pending markers are claimed with the newest.
+        """
+        async with self._sessions.begin() as session:
+            claimed = await session.scalars(
+                update(Conversation)
+                .where(
+                    Conversation.user_name == user,
+                    Conversation.end_reason == "idle",
+                    Conversation.marker_sent_at.is_(None),
+                )
+                .values(marker_sent_at=func.now())
+                .returning(Conversation.id)
+            )
+            ids = list(claimed)
+            if not ids:
+                return None
+            return max(ids), await current_id(session, user, lock=False)
 
 
 async def current_id(session: AsyncSession, user: str, *, lock: bool) -> int:

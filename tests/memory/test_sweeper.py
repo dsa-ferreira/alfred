@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelUnreachable
-from alfred.db.models import Conversation
+from alfred.agent.model import ModelReply, ModelUnreachable
+from alfred.db.models import Conversation, QueueItem
 from alfred.history import History
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
@@ -169,7 +170,7 @@ async def test_owner_messages_answered_while_sweeper_fails(
 
     agent = make_agent(cfg, FakeModel([text("one"), text("two")]), history, sessions, _no_mcp)
     worker = Worker(
-        queue, agent, history, Outbox(), cfg.queue, users=cfg.users, memory=mem.summaries
+        queue, agent, history, Outbox(), cfg.queue, users=cfg.users, nudge=mem.summaries.changed.set
     )
     tasks = [asyncio.create_task(mem.run_forever()), asyncio.create_task(worker.run_forever())]
     try:
@@ -193,3 +194,175 @@ async def _has_failed(model: FakeModel, times: int) -> bool:
 
 def _no_mcp(server, timeout):  # type: ignore[no-untyped-def]
     raise AssertionError("no MCP servers are configured")
+
+
+# --- waiting for a quiet queue (change close-idle-conversations, D5, D6) ----------
+
+
+class Ticks:
+    """The queue's monotonic clock, moved by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+BLOCK = object()
+
+
+class ScriptedStream:
+    """A summary model: ``BLOCK`` waits until cancelled, a reply is returned.
+
+    Records each request's start and whether it was cancelled.
+    """
+
+    def __init__(self, *script: object) -> None:
+        self.script = list(script)
+        self.started = 0
+        self.cancelled = 0
+        self.running = asyncio.Event()
+
+    async def complete_streamed(self, messages: list[dict[str, Any]]) -> ModelReply:
+        self.started += 1
+        step = self.script.pop(0)
+        if step is BLOCK:
+            self.running.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                self.running.clear()
+                raise
+        assert isinstance(step, ModelReply)
+        return step
+
+
+def quiet_sweeper(
+    sessions: async_sessionmaker[AsyncSession],
+    model: object,
+    embedder: FakeEmbedder,
+    quiet_s: float,
+) -> tuple[Sweeper, Queue, Ticks]:
+    cfg = make_config(memory={"summary_quiet_s": quiet_s})
+    ticks = Ticks()
+    queue = Queue(sessions, clock=ticks)
+    summaries = Summaries(cfg, sessions, model, embedder)  # type: ignore[arg-type]
+    return Sweeper(cfg, sessions, summaries, queue=queue), queue, ticks
+
+
+async def finish_all(sessions: async_sessionmaker[AsyncSession], queue: Queue) -> None:
+    """What the worker does when its items end."""
+    async with sessions.begin() as session:
+        await session.execute(update(QueueItem).values(status="done"))
+    queue.activity.finished()
+
+
+async def settle() -> None:
+    """Let the sweeper run as far as it can."""
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+
+
+async def test_no_summary_while_an_item_is_pending(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = FakeModel([text(REPLY)])
+    mem, queue, ticks = quiet_sweeper(sessions, model, FakeEmbedder(default=[1.0]), 0)
+    await queue.enqueue_ask("backup", "anything?", "diogo")
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        await settle()
+        assert model.requests == []
+        await finish_all(sessions, queue)
+        await until(lambda: _summarised(sessions, cid))
+    finally:
+        task.cancel()
+
+
+async def test_no_summary_within_the_quiet_period(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = FakeModel([text(REPLY)])
+    mem, queue, ticks = quiet_sweeper(sessions, model, FakeEmbedder(default=[1.0]), 120)
+    queue.activity.finished()  # an item just ended
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        ticks.now += 119
+        mem.summaries.changed.set()  # wake it: still within the period
+        await settle()
+        assert model.requests == []
+        ticks.now += 1
+        mem.summaries.changed.set()
+        await until(lambda: _summarised(sessions, cid))
+    finally:
+        task.cancel()
+
+
+async def test_an_arriving_item_cancels_the_summary(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = ScriptedStream(BLOCK, BLOCK, text(REPLY))
+    mem, queue, ticks = quiet_sweeper(sessions, model, FakeEmbedder(default=[1.0]), 60)
+    ticks.now += 60  # quiet since start
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        for cancelled in (1, 2):
+            await asyncio.wait_for(model.running.wait(), 5)
+            await queue.enqueue_user("diogo", "a message")
+            await until(lambda: _true(model.cancelled == cancelled))  # noqa: B023
+            stored = await row(sessions, cid)
+            assert stored.summary is None
+            assert stored.summary_attempts == 0 and stored.summary_next_at is None
+            # The item is answered; the summary waits for another quiet period.
+            await finish_all(sessions, queue)
+            await settle()
+            assert model.started == cancelled
+            ticks.now += 60
+            mem.summaries.changed.set()
+        await until(lambda: _summarised(sessions, cid))
+        assert model.started == 3
+        assert (await row(sessions, cid)).summary_attempts == 0
+    finally:
+        task.cancel()
+
+
+async def test_embedding_only_does_not_wait_for_the_queue(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    needs_summary = await archived(sessions, "a", "b")
+    needs_embedding = await archived(sessions, "chicken?", "Lemon.")
+    async with sessions.begin() as session:
+        await session.execute(
+            update(Conversation)
+            .where(Conversation.id == needs_embedding)
+            .values(title="Chicken", summary="Lemon and garlic.")
+        )
+    model = FakeModel()
+    embedder = FakeEmbedder(default=[1.0])
+    mem, queue, _ = quiet_sweeper(sessions, model, embedder, 0)
+    await queue.enqueue_user("diogo", "busy")
+    task = asyncio.create_task(mem.run_forever())
+    try:
+
+        async def embedded() -> bool:
+            return (await row(sessions, needs_embedding)).embedding is not None
+
+        await until(embedded)
+        assert model.requests == []
+        assert (await row(sessions, needs_summary)).summary is None
+    finally:
+        task.cancel()
+
+
+async def _summarised(sessions: async_sessionmaker[AsyncSession], cid: int) -> bool:
+    stored = await row(sessions, cid)
+    return stored.summary is not None and stored.embedding is not None
+
+
+async def _true(value: bool) -> bool:
+    return value

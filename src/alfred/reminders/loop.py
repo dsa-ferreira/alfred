@@ -3,7 +3,7 @@
 ```
 loop forever:
     claim due reminders into the queue   # one transaction, see Reminders.claim_due
-    if any: wake the queue worker
+    if any: tell the queue (wakes the worker)
     sleep until the next check on the clock
 ```
 
@@ -30,13 +30,14 @@ log = logging.getLogger(__name__)
 
 
 async def claim_once(
-    store: Reminders, signal: asyncio.Event, now: Callable[[], datetime]
+    store: Reminders, notify: Callable[[], None], now: Callable[[], datetime]
 ) -> list[int]:
-    """Queue the reminders due now and wake the worker if there were any."""
+    """Queue the reminders due now and, if there were any, tell the queue
+    (``QueueActivity.notify``: it wakes the worker and the memory sweeper)."""
     ids = await store.claim_due(now())
     if ids:
         log.info("%d due reminder(s) queued as item(s) %s", len(ids), ids)
-        signal.set()
+        notify()
     return ids
 
 
@@ -51,7 +52,7 @@ def seconds_to_next_check(now: datetime, interval_s: float) -> float:
 
 async def run_due_loop(
     store: Reminders,
-    signal: asyncio.Event,
+    notify: Callable[[], None],
     interval_s: float,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -60,7 +61,7 @@ async def run_due_loop(
     log.info("reminder loop started, checking every %gs", interval_s)
     while True:
         try:
-            await claim_once(store, signal, now)
+            await claim_once(store, notify, now)
         except Exception:
             # A database blip: the reminders stay pending and are claimed next time.
             log.exception("checking for due reminders failed; trying again later")

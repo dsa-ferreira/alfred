@@ -13,6 +13,12 @@ configured is marked failed instead of blocking the queue. Replies and fixed
 notices go to that user, in their form of address; a brain fallback is also
 told to the admin (design D11).
 
+A user's message starts with the marker of a conversation closed for
+inactivity, if one is pending (change close-idle-conversations, design D4).
+Ending a conversation only archives it: the memory sweeper summarises it in
+the background, so the next item never waits (design D1). The queue tells
+the sweeper when items arrive and finish (``QueueActivity``, design D5).
+
 A reminder always reaches its recipient (change add-reminders, design D6): a
 blank or ``NO_REPLY`` answer, or a turn that fails for good, is replaced by
 the fixed reminder notice.
@@ -23,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
@@ -60,25 +67,72 @@ class ReminderLookup(Protocol):
     async def get(self, reminder_id: int) -> ReminderRow | None: ...
 
 
-class Summariser(Protocol):
-    async def summarise(self, conversation_id: int) -> str | None:
-        """The archived conversation's title, or ``None``. Never raises."""
-        ...
+def reset_marker(archived_id: int | None, new_id: int, *, idle: bool = False) -> str:
+    """The one message that tells the user a conversation ended.
 
-
-def reset_marker(archived_id: int | None, title: str | None, new_id: int) -> str:
-    """The one message that tells the user a conversation ended (memory design D3)."""
+    Ids only: the title is made later, in the background (change
+    close-idle-conversations, design D1). ``idle`` for a conversation closed
+    after inactivity.
+    """
     lines: list[str] = []
     if archived_id is not None:
-        lines.append(f'— #{archived_id} "{title}" —' if title else f"— #{archived_id} archived —")
+        how = "closed after inactivity" if idle else "archived"
+        lines.append(f"— #{archived_id} {how} —")
     lines.append(f"— new conversation #{new_id} —")
     return "\n".join(lines)
 
 
+class QueueActivity:
+    """When items arrive and finish, for the memory sweeper (change
+    close-idle-conversations, design D5).
+
+    In-process, like the worker's ``signal``: the queue and the sweeper share
+    a process, and "finished recently" needn't survive a restart.
+    """
+
+    def __init__(self, signal: asyncio.Event, clock: Callable[[], float] = time.monotonic) -> None:
+        self._signal = signal
+        self._clock = clock
+        # Set on every arrival; a summary request in progress gives way to it.
+        self.arrived = asyncio.Event()
+        # Set when an item finishes, so a waiting sweeper looks again.
+        self.changed = asyncio.Event()
+        # Starts at process start: after a restart summaries wait one quiet period too.
+        self.last_finished = clock()
+
+    def notify(self) -> None:
+        """An item was queued: wake the worker, and tell the sweeper."""
+        self._signal.set()
+        self.arrived.set()
+
+    def finished(self) -> None:
+        """The worker is done with an item, whatever the outcome."""
+        self.last_finished = self._clock()
+        self.changed.set()
+
+    def quiet_for(self) -> float:
+        """Seconds since an item last finished (or since start)."""
+        return self._clock() - self.last_finished
+
+
 class Queue:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._sessions = sessions
         self.signal = asyncio.Event()
+        self.activity = QueueActivity(self.signal, clock)
+
+    async def has_pending(self) -> bool:
+        """Whether an item is waiting or running (it stays pending until it ends)."""
+        async with self._sessions() as session:
+            found = await session.scalar(
+                select(QueueItem.id).where(QueueItem.status == "pending").limit(1)
+            )
+        return found is not None
 
     async def enqueue_user(
         self,
@@ -120,7 +174,7 @@ class Queue:
                     for n, page in enumerate(new.pages, start=1)
                 )
             item_id = item.id
-        self.signal.set()
+        self.activity.notify()
         return item_id
 
     async def enqueue_ask(self, source: str, prompt: str, user: str) -> int:
@@ -132,7 +186,7 @@ class Queue:
             session.add(item)
             await session.flush()
             item_id = item.id
-        self.signal.set()
+        self.activity.notify()
         return item_id
 
     async def head(self) -> QueueItem | None:
@@ -172,7 +226,7 @@ class Worker:
         config: QueueConfig,
         *,
         users: Users,
-        memory: Summariser | None = None,
+        nudge: Callable[[], None] | None = None,
         typing: Callable[[User], AbstractAsyncContextManager[None]] | None = None,
         reminders: ReminderLookup | None = None,
         zone: ZoneInfo | None = None,
@@ -181,7 +235,8 @@ class Worker:
         self._queue = queue
         # Shown in a user's chat while their own chat turn runs (typing design D1).
         self._typing = typing
-        self._memory = memory
+        # Wakes the memory sweeper after a reset (design D1); None in tests.
+        self._nudge = nudge
         self._agent = agent
         self._history = history
         self._outbox = outbox
@@ -208,7 +263,10 @@ class Worker:
             # Head-of-line: nothing behind it may start, so new items don't matter.
             await asyncio.sleep(delay)
             return True
-        await self._process(item)
+        try:
+            await self._process(item)
+        finally:
+            self._queue.activity.finished()
         return True
 
     async def _process(self, item: QueueItem) -> None:
@@ -220,6 +278,12 @@ class Worker:
             await self._queue.finish(item.id, "failed", reason)
             return
         if item.kind == "user":
+            # A conversation closed for inactivity is told before the reply
+            # (change close-idle-conversations, design D4). Claimed before it
+            # is sent, so a retried turn doesn't send it again.
+            marker = await self._history.take_idle_marker(user.name)
+            if marker is not None:
+                await self._send(item, user, reset_marker(*marker, idle=True))
             # Recorded when the turn starts (once, even if retried), so it is
             # the newest entry of its own context and after earlier replies.
             await self._history.append(user.name, "user", item.text, queue_item_id=item.id)
@@ -360,8 +424,8 @@ class Worker:
             await self._reset(item, user)
 
     async def _reset(self, item: QueueItem, user: User) -> None:
-        # Archive first: anything recorded while the summary is made (a
-        # /notify notice) already lands in the new conversation.
+        # The archived conversation is summarised by the memory sweeper, so the
+        # next item never waits for it (change close-idle-conversations, D1).
         reset = await self._history.reset(user.name)
         log.info(
             "queue item %s: %s's conversation %s archived, %s started",
@@ -370,10 +434,9 @@ class Worker:
             reset.archived_id,
             reset.new_id,
         )
-        title = None
-        if self._memory is not None and reset.archived_id is not None:
-            title = await self._memory.summarise(reset.archived_id)
-        await self._send(item, user, reset_marker(reset.archived_id, title, reset.new_id))
+        if self._nudge is not None and reset.archived_id is not None:
+            self._nudge()
+        await self._send(item, user, reset_marker(reset.archived_id, reset.new_id))
 
     async def _send(self, item: QueueItem, user: User, text: str) -> None:
         try:

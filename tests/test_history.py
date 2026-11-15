@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.db.engine import make_engine, make_session_factory
-from alfred.db.models import Conversation, Entry
+from alfred.db.models import Conversation, Entry, QueueItem
 from alfred.history import STAMP, History, HistoryEntry, Inline, strip_stamp, to_messages
 from alfred.reminders.store import Reminders
 from alfred.tools.base import ModelImage
-from tests.helpers import image_file, owner_with_files, pdf_file
+from tests.helpers import add_queue_item, image_file, owner_with_files, pdf_file
 
 
 def unstamped(messages: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -86,6 +88,8 @@ async def test_archived_conversations_are_kept(
     async with sessions() as session:
         archived = await session.get(Conversation, old)
         assert archived is not None and archived.ended_at is not None
+        assert archived.end_reason == "user"
+        assert archived.marker_sent_at is None
         count = await session.scalar(
             select(func.count()).select_from(Entry).where(Entry.conversation_id == old)
         )
@@ -465,3 +469,172 @@ async def test_reminder_set_by_someone_else(sessions: async_sessionmaker[AsyncSe
     assert ana[0]["content"].startswith(f"[reminder:#{reminder_id} due ")
     assert ana[0]["content"].endswith(", set by diogo] buy milk")
     assert "set by" not in diogo[0]["content"]
+
+
+# --- idle close (change close-idle-conversations, design D3, D4) -------------------
+
+
+async def user_wrote_at(
+    sessions: async_sessionmaker[AsyncSession], user: str, at: datetime, kind: str = "user"
+) -> int:
+    """Append an entry for ``user`` and backdate it to ``at``. Returns its conversation."""
+    history = History(sessions)
+    entry_id = await history.append(user, kind, "hi", source="backup" if kind == "notice" else None)  # type: ignore[arg-type]
+    async with sessions.begin() as session:
+        await session.execute(update(Entry).where(Entry.id == entry_id).values(created_at=at))
+    return await history.current_conversation_id(user)
+
+
+IDLE_NOW = datetime(2026, 11, 14, 5, 10, tzinfo=UTC)
+CUTOFF = IDLE_NOW - timedelta(hours=6)
+
+
+async def test_close_idle(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    old = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(minutes=1))
+    # A notice after the last user message doesn't keep it open.
+    await user_wrote_at(sessions, "diogo", IDLE_NOW - timedelta(hours=3), kind="notice")
+    reset = await history.close_idle(old, CUTOFF)
+    assert reset is not None and reset.archived_id == old
+    assert await history.current_conversation_id("diogo") == reset.new_id
+    async with sessions() as session:
+        archived = await session.get(Conversation, old)
+    assert archived is not None and archived.ended_at is not None
+    assert archived.end_reason == "idle" and archived.marker_sent_at is None
+    # The notice stays in the archived conversation.
+    assert await history.recent("diogo", 30) == []
+    assert await history.close_idle(old, CUTOFF) is None  # no longer current
+
+
+async def test_close_idle_refuses_a_recent_message(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    cid = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(hours=1))
+    await user_wrote_at(sessions, "diogo", CUTOFF + timedelta(minutes=1))
+    assert await history.close_idle(cid, CUTOFF) is None
+    assert await history.current_conversation_id("diogo") == cid
+
+
+async def test_close_idle_refuses_only_notices(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    cid = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(days=3), kind="notice")
+    assert await history.last_user_messages() == []
+    assert await history.close_idle(cid, CUTOFF) is None
+    assert await history.current_conversation_id("diogo") == cid
+
+
+async def test_close_idle_refuses_while_the_user_has_a_queue_item(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    cid = await user_wrote_at(sessions, "ana", CUTOFF - timedelta(hours=1))
+    item = await add_queue_item(sessions, user="ana")
+    # Another user's item doesn't matter...
+    await add_queue_item(sessions, user="diogo")
+    assert await history.close_idle(cid, CUTOFF) is None
+    async with sessions.begin() as session:
+        await session.execute(update(QueueItem).where(QueueItem.id == item).values(status="done"))
+    # ...and once ana's ends, it can close.
+    assert await history.close_idle(cid, CUTOFF) is not None
+
+
+async def test_close_idle_leaves_other_users_alone(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    ana = await user_wrote_at(sessions, "ana", CUTOFF - timedelta(hours=1))
+    diogo = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(hours=1))
+    assert [(m.conversation_id, m.user) for m in await history.last_user_messages()] == [
+        (ana, "ana"),
+        (diogo, "diogo"),
+    ]
+    assert await history.close_idle(ana, CUTOFF) is not None
+    assert await history.current_conversation_id("diogo") == diogo
+    assert [e.kind for e in await history.recent("diogo", 30)] == ["user"]
+
+
+async def test_close_idle_and_a_concurrent_append(
+    sessions: async_sessionmaker[AsyncSession], database_url: str
+) -> None:
+    """An append in flight lands before the close (which is then refused) or after it,
+    in the new conversation; never in the archived one."""
+    history = History(sessions)
+    cid = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(hours=1))
+
+    # The append holds its FOR SHARE lock: the close waits, then sees its entry.
+    other_engine = make_engine(database_url)
+    other = make_session_factory(other_engine)
+    async with other.begin() as session:
+        await session.execute(
+            select(Conversation.id).where(Conversation.id == cid).with_for_update(read=True)
+        )
+        await session.execute(
+            insert(Entry).values(conversation_id=cid, kind="user", text="still here")
+        )
+        closing = asyncio.create_task(history.close_idle(cid, CUTOFF))
+        await asyncio.sleep(0.2)
+        assert not closing.done()  # waiting for the append's lock
+    assert await closing is None
+    assert await history.current_conversation_id("diogo") == cid
+
+    # The close holds its lock: the append waits, then lands in the new conversation.
+    async with sessions.begin() as session:
+        await session.execute(
+            update(Entry)
+            .where(Entry.conversation_id == cid)
+            .values(created_at=CUTOFF - timedelta(hours=1))
+        )
+    async with other.begin() as session:
+        # Stops the close at its queue check, after it has locked the conversation.
+        await session.execute(text("LOCK TABLE queue_items IN ACCESS EXCLUSIVE MODE"))
+        closing = asyncio.create_task(history.close_idle(cid, CUTOFF))
+        await asyncio.sleep(0.2)
+        appending = asyncio.create_task(history.append("diogo", "user", "late"))
+        await asyncio.sleep(0.2)
+        assert not closing.done() and not appending.done()
+    reset = await closing
+    await appending
+    assert reset is not None and reset.archived_id == cid
+    assert await history.current_conversation_id("diogo") == reset.new_id
+    assert [e.text for e in await history.recent("diogo", 30)] == ["late"]
+    await other_engine.dispose()
+
+
+async def test_take_idle_marker_once(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    cid = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(hours=1))
+    reset = await history.close_idle(cid, CUTOFF)
+    assert reset is not None
+    assert await history.take_idle_marker("ana") is None
+    assert await history.take_idle_marker("diogo") == (cid, reset.new_id)
+    assert await history.take_idle_marker("diogo") is None
+    async with sessions() as session:
+        archived = await session.get(Conversation, cid)
+    assert archived is not None and archived.marker_sent_at is not None
+
+
+async def test_take_idle_marker_claims_older_ones_too(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    first = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(hours=9))
+    assert await history.close_idle(first, CUTOFF) is not None
+    second = await user_wrote_at(sessions, "diogo", CUTOFF - timedelta(hours=1))
+    reset = await history.close_idle(second, CUTOFF)
+    assert reset is not None
+    assert await history.take_idle_marker("diogo") == (second, reset.new_id)
+    assert await history.take_idle_marker("diogo") is None
+
+
+async def test_no_idle_marker_after_a_user_reset_or_before_the_upgrade(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    await history.append("diogo", "user", "we're done")
+    await history.reset("diogo")
+    async with sessions.begin() as session:  # archived before 0006: no end reason
+        await session.execute(
+            insert(Conversation).values(user_name="diogo", ended_at=func.now(), end_reason=None)
+        )
+    assert await history.take_idle_marker("diogo") is None

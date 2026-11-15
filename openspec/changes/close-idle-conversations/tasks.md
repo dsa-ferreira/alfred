@@ -1,0 +1,36 @@
+# Tasks
+
+## 1. Config and schema
+
+- [x] 1.1 Add `[history] idle_close_after_h: PositiveFloat | None = None` and `[memory] summary_quiet_s: NonNegativeFloat = 60` to `config.py` (design D7). Document both in `alfred.toml.example` (commented out) and the README config table. Verify with `tests/config` cases for the defaults (idle close off, quiet 60), setting 6 hours, and `idle_close_after_h = 0` rejected with an error naming `history.idle_close_after_h`, and that the example config still loads.
+- [x] 1.2 Add migration `0006_conversation_end_reason`: nullable `end_reason` text with CHECK `IN ('user', 'idle')` and nullable `marker_sent_at timestamptz` on `conversations`, with a downgrade. Update `db/models.py` (design D2). Verify on Postgres in `tests/db/test_schema.py` that the upgrade keeps existing rows with `NULL`s, the CHECK rejects other values, and downgrade to 0005 works.
+
+## 2. Resets no longer wait for the summary
+
+- [x] 2.1 Change `reset_marker` to `(archived_id, new_id, *, idle=False)`, giving `— #41 archived —` or `— #41 closed after inactivity —` followed by `— new conversation #42 —` (design D1). Verify with `test_reset_marker` cases for both forms and for no archived conversation.
+- [x] 2.2 Make `History.reset` record `end_reason = 'user'`. Make `Worker._reset` archive, nudge the sweeper (`summaries.changed.set`, passed to the worker in place of the `Summariser`) and send the ids-only marker without summarising. Update `app.py` wiring. Verify with `tests/test_queue.py`: the reset sequence sends the reply then the ids-only marker, the summariser is never called by the worker, the nudge fires, and the next queued user item starts while a summary would still be pending. Verify with `tests/test_history.py` that `end_reason` is `'user'`.
+- [x] 2.3 Update the README's description of ending a conversation (line ~22): the title and summary are made in the background, and the marker shows ids only. Verify by reading the section against the `conversation-history` "Reset after the turn" requirement.
+
+## 3. Summaries give way to the queue
+
+- [x] 3.1 Add `QueueActivity` to `queue.py` (design D5): `notify()` sets the worker's `signal` and `arrived`, `finished()` records a monotonic `last_finished` and sets `changed`, and `last_finished` starts at construction. Route every enqueue through `notify()`, including the reminders loop (pass it the notifier instead of the bare `signal`). Call `finished()` after every item, whatever its outcome. Verify with queue tests that enqueue_user, enqueue_ask and a reminder claim set `arrived`, that done, failed and unknown-user items call `finished()`, and that `tests/reminders/test_loop.py` still passes with the new argument.
+- [x] 3.2 Add `ModelClient.complete_streamed` (design D6): `"stream": true` with `stream_options.include_usage`, SSE chunks joined into the same `ModelReply` with usage from the final chunk, and the same error classes as `complete`. Make `Summaries` use it. Verify in `tests/agent` with an `httpx.MockTransport` serving SSE: content and usage are assembled, a reply without usage gives `None`, 5xx and transport errors map to `ModelUnreachable`, and a malformed chunk maps to the same error as an unparseable non-streamed reply. Verify that the summary token-count log line still passes in `tests/memory/test_summarise.py`.
+- [x] 3.3 Add `preempt` to `Summaries.summarise`. Only the model request races against it; when preempted, cancel and await the request and return without `_retry_later`, so `summary_attempts` and `summary_next_at` are unchanged (design D6). Verify in `tests/memory/test_summarise.py` with a model fake that blocks until cancelled: setting `preempt` cancels it, attempts stay 0, nothing is stored; a preempt set during the embedding step doesn't stop it and the title, summary and embedding are stored.
+- [x] 3.4 Make the `Sweeper` wait for a quiet queue (no `pending` item and `summary_quiet_s` since `last_finished`) before a summary request, clear `arrived` after that check, pass it as `preempt`, go back to waiting after a preemption without treating it as a failed retry write, and skip the wait for a conversation that only needs its embedding (design D5, D6). Verify in `tests/memory/test_sweeper.py` with a fake clock: no summary while an item is pending or within the quiet period; a summary starts once quiet; an item arriving mid-request cancels it and the conversation is summarised after the next quiet period with no failed attempts recorded; an embedding-only conversation is processed while items are pending.
+
+## 4. Idle close
+
+- [x] 4.1 Add `History.close_idle(conversation_id, cutoff)`: lock the current conversation row `FOR UPDATE`, re-check the newest `user` entry against the cutoff and that the user has no `pending` queue item, then archive with `end_reason = 'idle'` and create the new current conversation; return `Reset` or `None` (design D3). Verify in `tests/test_history.py` on Postgres: closes an idle conversation; refuses one with a recent user entry, one with only notices, and one whose user has a pending item; another user's conversation is untouched; an `append` running concurrently either lands before the close (and the close is refused) or lands in the new conversation.
+- [x] 4.2 Add `History.take_idle_marker(user)`: claim the user's newest pending idle marker (and any older ones) by setting `marker_sent_at`, returning `(archived_id, current_id)` or `None` (design D4). Verify in `tests/test_history.py` that it returns the ids once and `None` after, and `None` for a `'user'` reset or a pre-upgrade conversation.
+- [x] 4.3 Add `IdleCloser` in `src/alfred/idle.py`: find candidates (newest `user` entry older than the cutoff), call `close_idle`, nudge the sweeper, log at INFO, and sleep until the soonest due time, `idle_close_after` when there is none, or at most 60 s after a skip (design D3). Start it in `app.py` only when `idle_close_after_h` is set. Verify in a new `tests/test_idle.py` with a fake clock: closes at the due time and not before; a notice after the last user message doesn't delay it; a skipped candidate is retried; the sleep never passes a due time created during it. Verify in `tests/test_serve.py` that the task starts only when the key is set.
+- [x] 4.4 In `Worker._process`, for `user` items, call `take_idle_marker` before appending the user entry and send the `idle=True` marker before the turn runs (design D4). Verify in `tests/test_queue.py`: after an idle close, the next user message gets the marker then the reply, in order, and its context has none of the old entries; a second message gets no marker; `/ask` and reminder items for that user don't take it; a retried turn doesn't resend it.
+
+## 5. Integration
+
+- [x] 5.1 Run `make lint` and `make test` and verify both pass.
+- [ ] 5.2 End-to-end against `ai.lan`: run alfred locally (`make run`), end a long conversation, send a message while its summary is being generated, and check that the reply's wait is about a second, not the rest of the summary (the tiny-request timing in design Context). If the reply waits for the whole summary, stop and ask the owner before going on.
+
+## Workflow follow-up
+
+- Bump the version before building images, then add a handover update (new config keys, migration `0006`).
+- Archive the change after review.

@@ -63,6 +63,9 @@ timezone = "Europe/Lisbon"
 [history]
 # Most recent conversation entries sent to the model each turn.
 max_entries = 30
+# Hours after a user's last own message before their conversation is closed and a
+# new one started; they see a marker with their next message. Unset: never.
+# idle_close_after_h = 6
 
 [queue]
 # Retry delay while the AI is unreachable: starts here and doubles up to retry_max_s.
@@ -87,6 +90,8 @@ recall_max_chars = 32000
 summary_input_max_chars = 60000
 # Most conversations one search returns.
 search_results = 5
+# Seconds with no queue item waiting, running or finishing before a summary starts.
+summary_quiet_s = 60
 
 [web]
 # SearXNG instance for alfred_web_search; alfred queries {searxng_url}/search?format=json.

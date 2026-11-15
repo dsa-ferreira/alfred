@@ -124,6 +124,12 @@ class FakeModel:
             raise step
         return step
 
+    async def complete_streamed(
+        self, messages: list[dict[str, Any]], *, model: str | None = None
+    ) -> ModelReply:
+        """Summaries stream their request; the fake answers it like any other."""
+        return await self.complete(messages, [], model=model)
+
     def tool_names(self, request: int = 0) -> set[str]:
         return {t["function"]["name"] for t in self.requests[request][1]}
 

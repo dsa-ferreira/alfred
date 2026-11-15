@@ -7,6 +7,9 @@ conversation.
 
 - ``conversations``: at most one per user has ``ended_at IS NULL`` (their
   current one).
+  ``end_reason`` says how an archived one ended (``user`` or ``idle``), and
+  ``marker_sent_at`` when its idle-close marker was handed out (change
+  close-idle-conversations, design D2).
   Archived ones get a title, a summary and an embedding of both (memory
   design D1); ``search_tsv`` is generated from title and summary.
 - ``entries``: what was said in a conversation, in order. Entries written by
@@ -79,6 +82,7 @@ QUEUE_KINDS = ("user", "ask", "reminder")
 REMINDER_STATUSES = ("pending", "fired", "cancelled")
 QUEUE_STATUSES = ("pending", "done", "failed")
 ATTACHMENT_KINDS = ("image", "pdf")
+END_REASONS = ("user", "idle")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -100,6 +104,7 @@ class Conversation(Base):
             postgresql_where=text("ended_at IS NULL"),
         ),
         Index("ix_conversations_search_tsv", "search_tsv", postgresql_using="gin"),
+        CheckConstraint(_in("end_reason", END_REASONS), name="end_reason"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -116,6 +121,10 @@ class Conversation(Base):
     summary_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     summary_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     search_tsv: Mapped[Any] = mapped_column(TSVECTOR, Computed(SEARCH_TSV, persisted=True))
+    # How it ended (null while current, and for rows archived before 0006).
+    end_reason: Mapped[str | None] = mapped_column(Text)
+    # When the idle-close marker was handed to the user's next message.
+    marker_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Entry(Base):

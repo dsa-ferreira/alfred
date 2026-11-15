@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.brains import Brains
-from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable
+from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
@@ -64,6 +64,7 @@ class Setup:
         summary_model: object | None = None,
         brains: Brains | None = None,
         users: tuple[User, ...] = (DIOGO,),
+        clock: Callable[[], float] | None = None,
     ) -> None:
         cfg = make_config(queue=FAST, mcp_servers=[server_config("mcparr")], users=users)
         self.sessions = sessions
@@ -71,7 +72,7 @@ class Setup:
         tools = ReminderTools(self.reminders, LISBON, "09:00", cfg.users)
         self.model = model
         self.history = History(sessions)
-        self.queue = Queue(sessions)
+        self.queue = Queue(sessions) if clock is None else Queue(sessions, clock=clock)
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
         self.agent = make_agent(
@@ -85,6 +86,8 @@ class Setup:
                 summary_model,
                 FakeEmbedder(default=[1.0]),  # type: ignore[arg-type]
             )
+        # Times the worker woke the memory sweeper.
+        self.nudges = 0
         self.worker = Worker(
             self.queue,
             self.agent,
@@ -92,10 +95,13 @@ class Setup:
             self.outbox,
             cfg.queue,
             users=cfg.users,
-            memory=self.memory,
+            nudge=self._nudge,
             reminders=self.reminders,
             zone=LISBON,
         )
+
+    def _nudge(self) -> None:
+        self.nudges += 1
 
     async def drain(self) -> None:
         while await self.worker.step():
@@ -355,73 +361,79 @@ async def start_at_41(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 
 def test_reset_marker() -> None:
-    assert reset_marker(41, "Chicken thighs recipe", 42) == (
-        '— #41 "Chicken thighs recipe" —\n— new conversation #42 —'
+    assert reset_marker(41, 42) == "— #41 archived —\n— new conversation #42 —"
+    assert reset_marker(41, 42, idle=True) == (
+        "— #41 closed after inactivity —\n— new conversation #42 —"
     )
-    assert reset_marker(41, None, 42) == "— #41 archived —\n— new conversation #42 —"
-    assert reset_marker(None, None, 1) == "— new conversation #1 —"
+    assert reset_marker(None, 1) == "— new conversation #1 —"
+    assert reset_marker(None, 1, idle=True) == "— new conversation #1 —"
+
+
+class BlockingModel:
+    """A summary model that never answers; records that it was asked."""
+
+    def __init__(self) -> None:
+        self.asked = asyncio.Event()
+
+    async def complete_streamed(self, messages, *, model=None):  # type: ignore[no-untyped-def]
+        self.asked.set()
+        await asyncio.Event().wait()
 
 
 async def test_reset_sequence(sessions: async_sessionmaker[AsyncSession]) -> None:
     await start_at_41(sessions)
+    summary_model = BlockingModel()
     s = Setup(
         sessions,
         FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍"), text("Hi again")]),
-        summary_model=FakeModel([text(SUMMARY)]),
+        summary_model=summary_model,
     )
     await s.queue.enqueue_user("diogo", "great, that's sorted, we're done here")
     await s.drain()
-    assert s.outbox.sent == [
-        "Done 👍",
-        '— #41 "Chicken thighs recipe" —\n— new conversation #42 —',
-    ]
+    assert s.outbox.sent == ["Done 👍", "— #41 archived —\n— new conversation #42 —"]
+    assert s.nudges == 1
+    assert not summary_model.asked.is_set()  # the worker never summarises
 
     await s.queue.enqueue_user("diogo", "new question")
     await s.drain()
     assert user_messages(s.model, 2) == ["new question"]
 
 
-async def test_reset_marker_without_title_when_summary_fails(
+async def test_next_message_does_not_wait_for_the_summary(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     await start_at_41(sessions)
+    summary_model = BlockingModel()
     s = Setup(
         sessions,
-        FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍")]),
-        summary_model=FakeModel([ModelUnreachable("brainiac asleep")]),
+        FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍"), text("Dinner: soup")]),
+        summary_model=summary_model,
     )
+    assert s.memory is not None
     await s.queue.enqueue_user("diogo", "we're done")
-    await s.drain()
-    assert s.outbox.sent == ["Done 👍", "— #41 archived —\n— new conversation #42 —"]
-    assert [i.status for i in await s.items()] == ["done"]
+    await s.queue.enqueue_user("diogo", "new topic: what's for dinner?")
+    await s.worker.step()
+    # #41's summary is being made (and never finishes) while the next item runs.
+    summarising = asyncio.create_task(s.memory.summarise(41))
+    try:
+        await asyncio.wait_for(summary_model.asked.wait(), 5)
+        await asyncio.wait_for(s.drain(), 5)
+    finally:
+        summarising.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await summarising
+    assert s.outbox.sent[-1] == "Dinner: soup"
+    assert [i.status for i in await s.items()] == ["done", "done"]
 
 
-async def test_notice_during_summary_lands_in_new_conversation(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
+async def test_reset_end_reason_is_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     await start_at_41(sessions)
-    history = History(sessions)
-
-    transcripts: list[str] = []
-
-    class NoticeWhileSummarising:
-        async def complete(self, messages, tools):  # type: ignore[no-untyped-def]
-            await history.append("diogo", "notice", "backup ok", source="backup")
-            transcripts.append(messages[-1]["content"])
-            return ModelReply(content=SUMMARY)
-
-    s = Setup(
-        sessions,
-        FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]),
-        summary_model=NoticeWhileSummarising(),
-    )
+    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]))
     await s.queue.enqueue_user("diogo", "we're done")
     await s.drain()
-    assert await history.current_conversation_id("diogo") == 42
-    assert [e.text for e in await history.recent("diogo", 30)] == ["backup ok"]
-    assert s.outbox.sent[-1].startswith('— #41 "Chicken thighs recipe" —')
-    # The summary is of the archived conversation only.
-    assert transcripts == ["User: we're done\nalfred: Bye"]
+    async with sessions() as session:
+        reason = await session.scalar(sql("SELECT end_reason FROM conversations WHERE id = 41"))
+    assert reason == "user"
 
 
 async def test_reset_without_memory_sends_ids(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -605,8 +617,10 @@ async def test_summary_ignores_the_chosen_brain(
     await start_at_41(sessions)
     model = FakeModel([calls((END_CONVERSATION, "{}")), text("Done."), text(SUMMARY)])
     s = Setup(sessions, model, summary_model=model, brains=on_bonsai())
+    assert s.memory is not None
     await s.queue.enqueue_user("diogo", "we're done")
     await s.drain()
+    await s.memory.summarise(41)
     assert model.models == ["b:8b", "b:8b", None]
 
 
@@ -948,3 +962,142 @@ async def test_reminder_reaches_a_user_without_reminder_tools(
     await s.drain()
     assert s.outbox.sent_to == [("ana", "Buy milk, madam.")]
     assert s.model.tool_names(0) == set()
+
+
+# --- Queue activity for the memory sweeper (change close-idle-conversations, D5) ---
+
+
+class Ticks:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def test_arrivals_are_reported(sessions: async_sessionmaker[AsyncSession]) -> None:
+    from alfred.reminders.loop import claim_once
+
+    queue = Queue(sessions)
+    activity = queue.activity
+    assert not activity.arrived.is_set()
+    assert not await queue.has_pending()
+
+    await queue.enqueue_user("diogo", "hi")
+    assert activity.arrived.is_set() and queue.signal.is_set()
+    assert await queue.has_pending()
+
+    activity.arrived.clear()
+    await queue.enqueue_ask("backup", "anything to report?", "diogo")
+    assert activity.arrived.is_set()
+
+    activity.arrived.clear()
+    reminders = Reminders(sessions)
+    await reminders.set("call mum", datetime.now(UTC) - timedelta(minutes=1), "diogo", ["diogo"])
+    await claim_once(reminders, activity.notify, lambda: datetime.now(UTC))
+    assert activity.arrived.is_set()
+
+
+async def test_quiet_period_starts_at_construction(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    ticks = Ticks()
+    queue = Queue(sessions, clock=ticks)
+    assert queue.activity.quiet_for() == 0
+    ticks.now += 7
+    assert queue.activity.quiet_for() == 7
+
+
+@pytest.mark.parametrize("outcome", ["done", "failed", "unknown user"])
+async def test_every_finished_item_is_reported(
+    sessions: async_sessionmaker[AsyncSession], outcome: str
+) -> None:
+    script = {
+        "done": [text("hi")],
+        "failed": [ModelFailed("HTTP 400")],
+        "unknown user": [],
+    }[outcome]
+    ticks = Ticks()
+    s = Setup(sessions, FakeModel(script), clock=ticks)
+    await s.queue.enqueue_user("nobody" if outcome == "unknown user" else "diogo", "hi")
+    s.queue.activity.changed.clear()
+    ticks.now += 50
+    await s.drain()
+    assert s.queue.activity.changed.is_set()
+    assert s.queue.activity.last_finished == ticks.now
+    assert [i.status for i in await s.items()] == ["done" if outcome == "done" else "failed"]
+
+
+# --- Idle close marker on the next message (change close-idle-conversations, D4) ---
+
+
+async def closed_for_inactivity(s: Setup) -> tuple[int, int]:
+    """Make #41 hold an old exchange, then close it as the idle closer would."""
+    await start_at_41(s.sessions)
+    await s.history.append("diogo", "user", "chicken thighs tonight?")
+    await s.history.append("diogo", "assistant", "Lemon and garlic, sir.")
+    later = datetime.now(UTC) + timedelta(seconds=1)  # every entry is before it
+    reset = await s.history.close_idle(41, later)
+    assert reset is not None and reset.archived_id == 41
+    return 41, reset.new_id
+
+
+async def test_idle_marker_before_the_reply(sessions: async_sessionmaker[AsyncSession]) -> None:
+    s = Setup(sessions, FakeModel([text("Sunny, sir."), text("You're welcome.")]))
+    archived, new = await closed_for_inactivity(s)
+    await s.queue.enqueue_user("diogo", "morning! what's the weather?")
+    await s.drain()
+    assert s.outbox.sent == [
+        f"— #{archived} closed after inactivity —\n— new conversation #{new} —",
+        "Sunny, sir.",
+    ]
+    assert user_messages(s.model, 0) == ["morning! what's the weather?"]
+
+    await s.queue.enqueue_user("diogo", "thanks")
+    await s.drain()
+    assert s.outbox.sent[2:] == ["You're welcome."]  # sent once
+
+
+async def test_ask_and_reminders_do_not_take_the_idle_marker(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    s = Setup(sessions, FakeModel([text("Backup ok."), text("Call mum, sir."), text("Hi.")]))
+    archived, new = await closed_for_inactivity(s)
+    await s.queue.enqueue_ask("backup", "backup finished", "diogo")
+    await due_reminder(s)
+    await s.drain()
+    assert s.outbox.sent == ["[backup] Backup ok.", "Call mum, sir."]
+
+    await s.queue.enqueue_user("diogo", "hello")
+    await s.drain()
+    assert s.outbox.sent[2:] == [
+        f"— #{archived} closed after inactivity —\n— new conversation #{new} —",
+        "Hi.",
+    ]
+
+
+async def test_idle_marker_not_resent_on_a_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    down = ModelUnreachable("refused")
+    s = Setup(sessions, FakeModel([down, down, text("Here you go.")]))
+    archived, new = await closed_for_inactivity(s)
+    await s.queue.enqueue_user("diogo", "what's downloading?")
+    await s.drain()
+    assert s.outbox.sent == [
+        f"— #{archived} closed after inactivity —\n— new conversation #{new} —",
+        "Here you go.",
+    ]
+
+
+async def test_no_idle_marker_after_a_user_reset(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await start_at_41(sessions)
+    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye"), text("Hi")]))
+    await s.queue.enqueue_user("diogo", "we're done")
+    await s.queue.enqueue_user("diogo", "hello again")
+    await s.drain()
+    assert s.outbox.sent == ["Bye", "— #41 archived —\n— new conversation #42 —", "Hi"]

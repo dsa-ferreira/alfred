@@ -99,6 +99,7 @@ TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
 TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
 PositiveInt = Annotated[int, Field(gt=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
+NonNegativeFloat = Annotated[float, Field(ge=0)]
 
 
 class _Section(BaseModel):
@@ -168,6 +169,9 @@ class AIConfig(_Section):
 
 class HistoryConfig(_Section):
     max_entries: PositiveInt = 30
+    # Hours after a user's last own message before their conversation is
+    # closed (change close-idle-conversations, design D7). None: never.
+    idle_close_after_h: PositiveFloat | None = None
 
 
 class QueueConfig(_Section):
@@ -194,6 +198,9 @@ class MemoryConfig(_Section):
     recall_max_chars: PositiveInt = 32000
     summary_input_max_chars: PositiveInt = 60000
     search_results: PositiveInt = 5
+    # Seconds the queue must have been quiet before a summary request starts
+    # (change close-idle-conversations, design D5). 0: only an empty queue.
+    summary_quiet_s: NonNegativeFloat = 60
 
 
 class WebConfig(_Section):

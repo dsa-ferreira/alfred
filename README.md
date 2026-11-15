@@ -19,9 +19,13 @@ allow-list (see [Users](#users)).
   something.
 - **Memory.** Each user has one current conversation, kept in Postgres. The AI sees the
   most recent entries, including service notices. Saying the conversation is
-  over ("thanks, we're done") archives it with a short title and summary and
-  starts a fresh one, marked in the chat with `— #41 "Chicken thighs recipe" —`
-  and `— new conversation #42 —`. Later, "remember conversation 41" or
+  over ("thanks, we're done") archives it and starts a fresh one, marked in
+  the chat with `— #41 archived —` and `— new conversation #42 —`. The
+  archived conversation gets a short title and summary in the background,
+  so your next message doesn't wait for it. With
+  `history.idle_close_after_h` set, a conversation you haven't written in for
+  that long is closed the same way, and your next message shows
+  `— #41 closed after inactivity —` first. Later, "remember conversation 41" or
   "remember when we talked about the chicken recipe last week?" makes the AI
   search the archived conversations (by meaning through the embedding service
   on `ragman.lan`, by keywords, and by date) and bring one back. Every
@@ -92,6 +96,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
 | `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt, the times on history messages, `alfred_date` and the dates of conversation search use it. An unknown name stops alfred at startup. |
 | `history.max_entries` | integer | `30` | Most recent entries of the current conversation (the user's messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
+| `history.idle_close_after_h` | number | none | Hours after a user's last own message before alfred archives their conversation and starts a new one. Notices, `/ask` turns and reminders don't count, and a conversation with no message from its user is never closed. The user sees `— #41 closed after inactivity —` before the reply to their next message. Unset: never closed for inactivity. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |
 | `memory.summary_model` | string | `ai.model` | Model that writes the title and summary of an ended conversation, on `ai.base_url`. |
@@ -103,6 +108,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `memory.recall_max_chars` | integer | `32000` | Largest recalled conversation, in characters. A longer one is recalled as its summary plus the end of its transcript. |
 | `memory.summary_input_max_chars` | integer | `60000` | Most transcript characters sent to the summary model; a longer transcript keeps its start and end. |
 | `memory.search_results` | integer | `5` | Most conversations a search returns. |
+| `memory.summary_quiet_s` | number | `60` | Seconds with no queue item waiting, running or finishing before a summary request starts. A queue item that arrives during a summary request cancels it; it is made again once the queue is quiet. `0` waits only for an empty queue. |
 | `web.searxng_url` | URL | `"http://oracle.lan"` | SearXNG instance used by web search. alfred queries `{searxng_url}/search?format=json`; the JSON format must be enabled there. |
 | `web.search_results` | integer | `5` | Most results one web search lists. |
 | `web.fetch_page_chars` | integer | `8000` | Characters of page text in one fetch result. The model reads further with a start offset. Not affected by `ai.tool_result_max_chars`. |

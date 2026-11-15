@@ -7,11 +7,17 @@ Failures are classified because that decides retrying:
   has run yet.
 - :class:`ModelFailed`: 4xx answers and replies that can't be understood.
   Retrying would fail the same way.
+
+Summaries use a streamed request (:meth:`ModelClient.complete_streamed`):
+Ollama stops generating when a streamed request's client goes away, but
+finishes a non-streamed one regardless (change close-idle-conversations,
+design D6).
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -121,6 +127,79 @@ class ModelClient:
             return _parse(response.json())
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ModelFailed(f"unusable model reply: {exc}") from None
+
+    async def complete_streamed(
+        self, messages: list[dict[str, Any]], *, model: str | None = None
+    ) -> ModelReply:
+        """One streamed request with no tools, joined into a single reply.
+
+        Same errors as :meth:`complete`. Cancelling the call closes the
+        connection, which makes the server stop generating.
+        """
+        body: dict[str, Any] = {
+            "model": model or self._model,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        try:
+            async with self._http.stream("POST", self._url, json=body) as response:
+                status = response.status_code
+                if status >= 500:
+                    raise ModelUnreachable(f"model server answered HTTP {status}")
+                if status != 200:
+                    await response.aread()
+                    raise ModelFailed(
+                        f"model server answered HTTP {status}: {_snippet(response.text)}"
+                    )
+                chunks = [chunk async for chunk in _sse_data(response)]
+        except httpx.TimeoutException as exc:
+            raise ModelUnreachable(f"model request timed out ({type(exc).__name__})") from None
+        except httpx.TransportError as exc:
+            raise ModelUnreachable(f"can't reach the model server ({type(exc).__name__})") from None
+        try:
+            return _join(chunks)
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise ModelFailed(f"unusable model reply: {exc}") from None
+
+
+async def _sse_data(response: httpx.Response) -> AsyncIterator[str]:
+    """The ``data:`` payloads of a server-sent event stream, up to ``[DONE]``."""
+    async for line in response.aiter_lines():
+        if not line.startswith("data:"):
+            continue  # blank separators, comments and other fields
+        data = line[5:].strip()
+        if data == "[DONE]":
+            return
+        yield data
+
+
+def _join(chunks: list[str]) -> ModelReply:
+    """The streamed chunks as one reply: their content joined, usage from the last."""
+    parts: list[str] = []
+    usage: Usage | None = None
+    seen_choice = False
+    for raw in chunks:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("a chunk is not an object")
+        if "error" in data:
+            raise ValueError(f"error in the stream: {data['error']}")
+        for choice in data.get("choices") or []:
+            seen_choice = True
+            delta = choice["delta"]
+            if not isinstance(delta, dict):
+                raise ValueError("choices[0].delta is not an object")
+            content = delta.get("content")
+            if content is not None and not isinstance(content, str):
+                raise ValueError("delta content is not text")
+            if content:
+                parts.append(content)
+        if data.get("usage") is not None:
+            usage = _usage(data["usage"])
+    if not seen_choice:
+        raise ValueError("no choices in the reply")
+    return ModelReply(content="".join(parts), usage=usage)
 
 
 def _parse(data: Any) -> ModelReply:

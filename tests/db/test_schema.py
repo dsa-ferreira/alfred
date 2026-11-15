@@ -525,3 +525,38 @@ def test_users_downgrade_restores_0004(postgres_url: str) -> None:
         command.check(cfg)
     finally:
         engine.dispose()
+
+
+# --- end reason (migration 0006) ----------------------------------------------------
+
+
+def test_end_reason_upgrade_keeps_rows_and_is_checked(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "end_reason")
+    with _admin("diogo"):
+        command.upgrade(cfg, "0005")
+    command.upgrade(cfg, "head")
+    engine = create_engine(sa_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT id, end_reason, marker_sent_at FROM conversations ORDER BY id")
+            ).all()
+            assert rows == [(41, None, None), (42, None, None)]
+            conn.execute(text("UPDATE conversations SET end_reason = 'idle' WHERE id = 41"))
+            conn.execute(text("UPDATE conversations SET end_reason = 'user' WHERE id = 41"))
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text("UPDATE conversations SET end_reason = 'timeout' WHERE id = 41"))
+            conn.rollback()
+        command.check(cfg)
+
+        command.downgrade(cfg, "0005")
+        columns = {c["name"] for c in inspect(engine).get_columns("conversations")}
+        assert not {"end_reason", "marker_sent_at"} & columns
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT count(*) FROM conversations")) == 2
+        command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()

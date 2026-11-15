@@ -21,6 +21,7 @@ from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
 from alfred.config import AttachmentsConfig, BrainEntry, S3Key, ServerConfig
+from alfred.idle import IdleCloser
 from alfred.mcp.toolset import McpTools
 from alfred.memory.search import ConversationSearch, MemoryTools
 from alfred.memory.sweeper import Sweeper
@@ -257,7 +258,7 @@ async def test_reminder_wiring(
     loop_started = asyncio.Event()
     loop_stopped = asyncio.Event()
 
-    async def probe_loop(store: Any, signal_: asyncio.Event, interval_s: float) -> None:
+    async def probe_loop(store: Any, notify: Any, interval_s: float) -> None:
         loops.append((store, interval_s))
         loop_started.set()
         try:
@@ -420,3 +421,48 @@ async def test_no_attachments_without_the_section(
     assert agents[0]["attachments"] is None
     assert dispatchers[0]["intake"] is None
     assert "attachments off" in caplog.text
+
+
+# --- idle close (change close-idle-conversations) ------------------------------------
+
+
+@pytest.mark.parametrize("hours", [None, 6.0])
+async def test_idle_close_runs_only_when_set(
+    database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    hours: float | None,
+) -> None:
+    session = PollingSession()
+    monkeypatch.setattr(alfred.app, "Bot", lambda token: Bot(TOKEN, session=session))
+    sweeper = SweeperProbe()
+    monkeypatch.setattr(Sweeper, "run_forever", sweeper.run)
+    idle = SweeperProbe()
+    closers: list[IdleCloser] = []
+
+    def probe(self: IdleCloser) -> Any:
+        closers.append(self)
+        return idle.run()
+
+    monkeypatch.setattr(IdleCloser, "run_forever", probe)
+    config = serve_config(database_url, free_port())
+    config = type(config)(
+        **{
+            **config.__dict__,
+            "history": config.history.model_copy(update={"idle_close_after_h": hours}),
+        }
+    )
+    with caplog.at_level("INFO", logger="alfred.app"):
+        task = asyncio.create_task(alfred.app.serve(config))
+        await asyncio.wait_for(sweeper.started.wait(), 5)
+        if hours is not None:
+            await asyncio.wait_for(idle.started.wait(), 5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, 10)
+
+    if hours is None:
+        assert closers == [] and not idle.started.is_set()
+        assert "idle close off" in caplog.text
+    else:
+        assert len(closers) == 1 and idle.stopped.is_set()  # cancelled on shutdown
+        assert "idle close after 6h" in caplog.text

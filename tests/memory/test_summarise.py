@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelUnreachable, Usage
+from alfred.agent.model import ModelReply, ModelUnreachable, Usage
 from alfred.db.models import Conversation
 from alfred.history import History
 from alfred.memory.embedding import EmbeddingUnreachable
@@ -225,3 +227,74 @@ async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSess
     assert render(entries) == (
         f"[reminder:#{reminder_id}] call mum\nalfred: Your call to mum, sir.\nUser: done"
     )
+
+
+# --- giving way to the queue (change close-idle-conversations, design D6) ---------
+
+
+class BlockingModel:
+    """Never answers until cancelled; records the request and the cancellation."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def complete_streamed(self, messages: list[dict[str, Any]]) -> ModelReply:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+
+async def test_preempt_cancels_the_summary_request(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = BlockingModel()
+    embedder = FakeEmbedder([[0.5]])
+    preempt = asyncio.Event()
+    mem = memory(sessions, model, embedder)  # type: ignore[arg-type]
+    task = asyncio.create_task(mem.summarise(cid, preempt=preempt))
+    await asyncio.wait_for(model.started.wait(), 5)
+    preempt.set()
+    assert await asyncio.wait_for(task, 5) is None
+    assert model.cancelled
+    assert embedder.documents == []
+    stored = await row(sessions, cid)
+    assert stored.title is None and stored.summary is None and stored.embedding is None
+    # Not a failure: no attempt counted and no backoff.
+    assert stored.summary_attempts == 0 and stored.summary_next_at is None
+
+
+async def test_preempt_set_before_the_request_starts(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    preempt = asyncio.Event()
+    preempt.set()
+    mem = memory(sessions, BlockingModel(), FakeEmbedder([[0.5]]))  # type: ignore[arg-type]
+    assert await asyncio.wait_for(mem.summarise(cid, preempt=preempt), 5) is None
+    assert (await row(sessions, cid)).summary_attempts == 0
+
+
+async def test_preempt_does_not_stop_the_embedding(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    preempt = asyncio.Event()
+
+    class SlowEmbedder(FakeEmbedder):
+        async def embed_document(self, text: str) -> list[float]:
+            preempt.set()  # a message arrives while the embedding is made
+            await asyncio.sleep(0.01)
+            return await super().embed_document(text)
+
+    mem = memory(sessions, FakeModel([text(REPLY)]), SlowEmbedder([[0.1, 0.2]]))
+    assert await mem.summarise(cid, preempt=preempt) == "Chicken thighs recipe"
+    stored = await row(sessions, cid)
+    assert stored.title == "Chicken thighs recipe" and stored.summary is not None
+    assert stored.embedding is not None
+    assert stored.summary_attempts == 0

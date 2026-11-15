@@ -96,7 +96,7 @@ def test_example_shows_every_default() -> None:
         if annotation is None or optional:
             continue
         for key, info in annotation.model_fields.items():
-            if key in ("persona", "summary_model"):  # optional, no default value
+            if key in ("persona", "summary_model", "idle_close_after_h"):  # optional, no default
                 assert re.search(rf"^# {key} =", EXAMPLE.read_text(), re.M)
                 continue
             if key == "models":  # a table, shown commented out

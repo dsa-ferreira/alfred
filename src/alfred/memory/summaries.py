@@ -1,9 +1,14 @@
 """Summaries of archived conversations: title, summary and embedding.
 
-``summarise`` runs inline when a conversation ends (memory design D3) and in
-the background sweeper (D4, ``alfred.memory.sweeper``). It never raises: on
-any failure it schedules a retry on the conversation row and the sweeper
-picks it up later.
+``summarise`` runs in the background memory sweeper (``alfred.memory.sweeper``)
+only; ending a conversation just wakes it (change close-idle-conversations,
+design D1). It never raises: on any failure it schedules a retry on the
+conversation row and the sweeper picks it up later.
+
+The summary request gives way to the queue (design D6): when ``preempt`` is
+set while it runs, it is cancelled and nothing is recorded, so the attempt
+doesn't count as a failure. The embedding request goes to another server and
+is never cancelled.
 """
 
 from __future__ import annotations
@@ -40,10 +45,15 @@ EMPTY_TITLE = "Empty conversation"
 EMPTY_SUMMARY = "Nothing was said in this conversation."
 
 
+class _Preempted:
+    """The summary request was cancelled because a queue item arrived."""
+
+
+PREEMPTED = _Preempted()
+
+
 class Model(Protocol):
-    async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-    ) -> ModelReply: ...
+    async def complete_streamed(self, messages: list[dict[str, Any]]) -> ModelReply: ...
 
 
 class Embedder(Protocol):
@@ -81,15 +91,19 @@ class Summaries:
         """Conversations embedded with any other model are embedded again."""
         return self._embedder.model
 
-    async def summarise(self, conversation_id: int) -> str | None:
+    async def summarise(
+        self, conversation_id: int, preempt: asyncio.Event | None = None
+    ) -> str | None:
         """Title, summarise and embed an archived conversation, as far as needed.
 
-        Returns the title, or ``None`` if there is none. Never raises.
+        Returns the title, or ``None`` if there is none. A summary request
+        still running when ``preempt`` is set is cancelled, and this returns
+        ``None`` with no retry scheduled. Never raises.
         """
         lock = self._locks.setdefault(conversation_id, asyncio.Lock())
         try:
             async with lock:
-                return await self._summarise(conversation_id)
+                return await self._summarise(conversation_id, preempt)
         except Exception:
             log.exception("conversation %s: summarising failed unexpectedly", conversation_id)
             await self._retry_later(conversation_id, "internal error")
@@ -97,7 +111,7 @@ class Summaries:
         finally:
             self.changed.set()  # the sweeper rechecks what is due
 
-    async def _summarise(self, conversation_id: int) -> str | None:
+    async def _summarise(self, conversation_id: int, preempt: asyncio.Event | None) -> str | None:
         async with self._sessions() as session:
             row = await session.get(Conversation, conversation_id)
         if row is None or row.ended_at is None:
@@ -105,8 +119,8 @@ class Summaries:
         title, summary = row.title, row.summary
 
         if summary is None:
-            made = await self._make_summary(conversation_id)
-            if made is None:
+            made = await self._make_summary(conversation_id, preempt)
+            if made is None or made is PREEMPTED:
                 return None
             title, summary = made
             async with self._sessions.begin() as session:
@@ -139,20 +153,41 @@ class Summaries:
             )
         return title
 
-    async def _make_summary(self, conversation_id: int) -> tuple[str, str] | None:
-        """One model request. ``None`` (and a retry scheduled) on failure."""
+    async def _make_summary(
+        self, conversation_id: int, preempt: asyncio.Event | None
+    ) -> tuple[str, str] | _Preempted | None:
+        """One model request. ``None`` (and a retry scheduled) on failure;
+        ``PREEMPTED`` (and nothing recorded) when ``preempt`` won."""
         entries = await self.transcript_entries(conversation_id)
         if not entries:
             return EMPTY_TITLE, EMPTY_SUMMARY
         transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
+        request = asyncio.ensure_future(self._model.complete_streamed(summary_messages(transcript)))
         try:
-            reply = await self._model.complete(summary_messages(transcript), [])
+            if preempt is not None:
+                waiter = asyncio.ensure_future(preempt.wait())
+                try:
+                    await asyncio.wait({request, waiter}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    waiter.cancel()
+                if not request.done():
+                    log.info(
+                        "conversation %s: summary request gave way to the queue", conversation_id
+                    )
+                    return PREEMPTED
+            reply = await request
             log.info("conversation %s summary: %s", conversation_id, token_counts(reply.usage))
             parsed = parse_summary(reply.content or "")
         except (ModelError, SummaryParseError) as exc:
             log.warning("conversation %s: summary failed: %s", conversation_id, exc)
             await self._retry_later(conversation_id, str(exc))
             return None
+        finally:
+            if not request.done():
+                # Preempted, or this task was cancelled: closing the stream
+                # makes the model server stop generating.
+                request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
         return parsed.title, parsed.summary
 
     async def transcript_entries(self, conversation_id: int) -> list[TranscriptEntry]:

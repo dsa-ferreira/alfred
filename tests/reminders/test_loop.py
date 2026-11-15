@@ -38,7 +38,7 @@ class FakeClock:
 
 async def run(store: Reminders, signal: asyncio.Event, clock: FakeClock) -> None:
     with pytest.raises(Stop):
-        await run_due_loop(store, signal, 30, now=clock, sleep=clock.sleep)
+        await run_due_loop(store, signal.set, 30, now=clock, sleep=clock.sleep)
 
 
 async def queue_items(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
@@ -112,7 +112,7 @@ async def test_failure_does_not_stop_the_loop() -> None:
     broken = Broken()
     clock = FakeClock(DUE, passes=3)
     with pytest.raises(Stop):
-        await run_due_loop(broken, asyncio.Event(), 30, now=clock, sleep=clock.sleep)  # type: ignore[arg-type]
+        await run_due_loop(broken, asyncio.Event().set, 30, now=clock, sleep=clock.sleep)  # type: ignore[arg-type]
     assert broken.calls == 3
 
 

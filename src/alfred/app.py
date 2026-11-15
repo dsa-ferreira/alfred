@@ -1,7 +1,8 @@
 """``alfred serve``: the bot, the service API, the AI worker, the memory sweeper,
-the due-reminder loop and, with ``[attachments]``, the orphan file sweeper.
+the due-reminder loop, with ``[attachments]`` the orphan file sweeper, and with
+``[history] idle_close_after_h`` the idle conversation closer.
 
-Five asyncio tasks (six with attachments) share the database engine and the
+Five asyncio tasks (more with those) share the database engine and the
 queue's in-process signal (design D1). SIGTERM or SIGINT stops them all; a turn in progress is
 interrupted and its item stays ``pending``, so it runs again after restart,
 a summary in progress is simply made again later, and a reminder claim is
@@ -17,7 +18,7 @@ import contextlib
 import logging
 import signal
 from collections.abc import Callable, Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import uvicorn
@@ -36,6 +37,7 @@ from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.users import warn_unknown_users
 from alfred.history import History
+from alfred.idle import IdleCloser
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
 from alfred.memory.embedding import EmbeddingClient
@@ -139,7 +141,7 @@ async def serve(config: Config) -> None:
         query_prefix=config.memory.query_prefix,
     )
     summaries = Summaries(config, sessions, summary_model, embedder)
-    sweeper = Sweeper(config, sessions, summaries)
+    sweeper = Sweeper(config, sessions, summaries, queue=queue)
     search = ConversationSearch(config, sessions, embedder)
     # Turns pass the current brain's tag per request; summaries never do, so
     # they stay on the summary model (change add-brain-switching, design D2).
@@ -184,7 +186,7 @@ async def serve(config: Config) -> None:
         outbox,
         config.queue,
         users=config.users,
-        memory=summaries,
+        nudge=summaries.changed.set,
         typing=outbox.typing,
         reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
@@ -225,17 +227,25 @@ async def serve(config: Config) -> None:
         asyncio.create_task(worker.run_forever(), name="worker"),
         asyncio.create_task(sweeper.run_forever(), name="memory"),
         asyncio.create_task(
-            run_due_loop(reminders.store, queue.signal, config.reminders.check_interval_s),
+            run_due_loop(reminders.store, queue.activity.notify, config.reminders.check_interval_s),
             name="reminders",
         ),
     }
     if orphans is not None:
         tasks.add(asyncio.create_task(orphans.run_forever(), name="attachments"))
+    # Only with [history] idle_close_after_h (change close-idle-conversations, D3).
+    if config.history.idle_close_after_h is not None:
+        idle = IdleCloser(
+            history,
+            timedelta(hours=config.history.idle_close_after_h),
+            nudge=summaries.changed.set,
+        )
+        tasks.add(asyncio.create_task(idle.run_forever(), name="idle"))
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(
         "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
         "embeddings by %s at %s, web search at %s, reminders checked every %gs, "
-        "attachments %s, %d MCP server(s), users %s (admin %s)",
+        "attachments %s, idle close %s, %d MCP server(s), users %s (admin %s)",
         config.server.host,
         config.server.port,
         brains.current.name,
@@ -250,6 +260,11 @@ async def serve(config: Config) -> None:
             f"in bucket {config.attachments.bucket} at {config.attachments.endpoint_url} "
             f"(vision: {', '.join(b.name for b in brains.brains if b.vision) or 'none'})"
             if config.attachments
+            else "off"
+        ),
+        (
+            f"after {config.history.idle_close_after_h:g}h"
+            if config.history.idle_close_after_h is not None
             else "off"
         ),
         len(config.mcp_servers),
@@ -272,7 +287,7 @@ async def serve(config: Config) -> None:
         with contextlib.suppress(RuntimeError):  # polling may already be stopped
             await dispatcher.stop_polling()
         for task in tasks:
-            if task.get_name() in ("worker", "memory", "reminders", "attachments"):
+            if task.get_name() in ("worker", "memory", "reminders", "attachments", "idle"):
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()

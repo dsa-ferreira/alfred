@@ -151,3 +151,106 @@ async def test_usage(usage: object, expected: Usage | None) -> None:
     assert result.content == "hi"
     assert result.usage == expected
     await client.aclose()
+
+
+# --- streamed requests, for summaries (change close-idle-conversations, D6) ------
+
+
+def sse(*events: object, done: bool = True) -> bytes:
+    """An SSE body: one ``data:`` event per item (dicts as JSON, strings as is)."""
+    import json
+
+    lines = [f"data: {e if isinstance(e, str) else json.dumps(e)}\n\n" for e in events]
+    if done:
+        lines.append("data: [DONE]\n\n")
+    return "".join(lines).encode()
+
+
+def delta(content: str) -> dict:
+    return {"choices": [{"index": 0, "delta": {"content": content}}]}
+
+
+USAGE_CHUNK = {"choices": [], "usage": {"prompt_tokens": 812, "completion_tokens": 41}}
+
+
+def streaming(body: bytes | Exception, status: int = 200, seen: list | None = None) -> ModelClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
+        if isinstance(body, Exception):
+            raise body
+        return httpx.Response(status, content=body, headers={"content-type": "text/event-stream"})
+
+    return ModelClient("http://ai.lan", "gemma", 300, transport=httpx.MockTransport(handler))
+
+
+async def test_streamed_reply_is_joined() -> None:
+    import json
+
+    seen: list[httpx.Request] = []
+    body = sse(
+        {"choices": [{"delta": {"role": "assistant"}}]},
+        delta("Title: "),
+        delta("Soup"),
+        USAGE_CHUNK,
+    )
+    client = streaming(body, seen=seen)
+    result = await client.complete_streamed([{"role": "user", "content": "sum up"}])
+    assert result.content == "Title: Soup"
+    assert result.tool_calls == []
+    assert result.usage == Usage(prompt_tokens=812, completion_tokens=41)
+    sent = json.loads(seen[0].content)
+    assert sent["stream"] is True
+    assert sent["stream_options"] == {"include_usage": True}
+    assert "tools" not in sent and sent["model"] == "gemma"
+    await client.aclose()
+
+
+async def test_streamed_reply_without_usage() -> None:
+    client = streaming(sse(delta("ok"), done=False))
+    result = await client.complete_streamed([])
+    assert result.content == "ok" and result.usage is None
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [httpx.ConnectError("refused"), httpx.ReadTimeout("slow"), httpx.ReadError("reset")],
+)
+async def test_streamed_unreachable(outcome: Exception) -> None:
+    client = streaming(outcome)
+    with pytest.raises(ModelUnreachable):
+        await client.complete_streamed([])
+    await client.aclose()
+
+
+async def test_streamed_5xx_is_unreachable() -> None:
+    client = streaming(b"loading model", status=503)
+    with pytest.raises(ModelUnreachable, match="HTTP 503"):
+        await client.complete_streamed([])
+    await client.aclose()
+
+
+async def test_streamed_4xx_fails() -> None:
+    client = streaming(b'{"error": "model not found"}', status=404)
+    with pytest.raises(ModelFailed, match="HTTP 404: .*model not found"):
+        await client.complete_streamed([])
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        sse("{not json"),
+        sse({"choices": [{"delta": "text"}]}),
+        sse({"choices": [{"delta": {"content": 7}}]}),
+        sse({"error": {"message": "out of memory"}}),
+        sse(USAGE_CHUNK),  # no choices at all
+        b"",
+    ],
+)
+async def test_streamed_malformed_fails_like_a_plain_reply(body: bytes) -> None:
+    client = streaming(body)
+    with pytest.raises(ModelFailed, match="unusable model reply"):
+        await client.complete_streamed([])
+    await client.aclose()
