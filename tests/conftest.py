@@ -28,7 +28,7 @@ os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 TABLES = (
     "attachment_pages, attachments, turn_tool_calls, entries, conversations, queue_items, "
-    "reminder_recipients, reminders"
+    "reminder_recipients, reminders, facts"
 )
 POSTGRES_IMAGE = "docker.io/pgvector/pgvector:0.8.7-pg17-trixie"
 

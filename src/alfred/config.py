@@ -100,6 +100,7 @@ TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
 PositiveInt = Annotated[int, Field(gt=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
 NonNegativeFloat = Annotated[float, Field(ge=0)]
+NonNegativeInt = Annotated[int, Field(ge=0)]
 
 
 class _Section(BaseModel):
@@ -201,6 +202,17 @@ class MemoryConfig(_Section):
     # Seconds the queue must have been quiet before a summary request starts
     # (change close-idle-conversations, design D5). 0: only an empty queue.
     summary_quiet_s: NonNegativeFloat = 60
+    # User facts (change add-user-facts, design D12). Off: facts are learned,
+    # remembered and listed by /memory, but sent in no prompt.
+    facts_in_context: bool = False
+    # Most characters of facts in one system prompt.
+    facts_context_max_chars: PositiveInt = 3000
+    # Longest fact; longer learned facts are cut, longer remembered ones refused.
+    fact_max_chars: PositiveInt = 300
+    # Failed extractions of one conversation before giving up. 0: never.
+    facts_extraction_max_attempts: NonNegativeInt = 0
+    # Cosine distance within which two of a user's facts are duplicates.
+    facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.1
 
 
 class WebConfig(_Section):

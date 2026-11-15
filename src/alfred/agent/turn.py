@@ -54,7 +54,7 @@ from alfred import notices
 from alfred.agent.brains import Brain, Brains
 from alfred.agent.context import context_sizes, largest_tools
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
-from alfred.agent.prompts import brain_line, system_prompt
+from alfred.agent.prompts import FactsBlock, KnownFact, brain_line, facts_block, system_prompt
 from alfred.attachments.inline import ImageCache, InlineAttachments
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
@@ -160,6 +160,14 @@ class _Turn:
     offered: frozenset[str]
     # The turn's attachment images, kept across attempts (change add-attachments).
     images: ImageCache | None = None
+    # The user's facts, when they are in the context (change add-user-facts).
+    facts: FactsBlock | None = None
+
+
+class Facts(Protocol):
+    """Where the turn reads its user's facts (``alfred.memory.facts.FactStore``)."""
+
+    async def list(self, user_name: str) -> Sequence[KnownFact]: ...
 
 
 class Agent:
@@ -173,9 +181,11 @@ class Agent:
         toolsets: Sequence[Toolset] = (),
         brains: Brains | None = None,
         attachments: InlineAttachments | None = None,
+        facts: Facts | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
+        self._facts = facts
         self._attachments = attachments
         self._brains = brains or Brains.from_config(config.ai)
         self._model = model
@@ -199,6 +209,7 @@ class Agent:
             [n.text for t in opened for n in t.prompt_notes],
             frozenset(d["function"]["name"] for d in definitions),
             self._attachments.new_cache() if self._attachments is not None else None,
+            await self._facts_block(turn),
         )
 
         fallback: Fallback | None = None
@@ -233,6 +244,23 @@ class Agent:
                 raise
             return dataclasses.replace(result, fallback=fallback)
 
+    async def _facts_block(self, turn: TurnInput) -> FactsBlock | None:
+        """The user's facts for every attempt of this turn, read once (design D9)."""
+        memory = self._config.memory
+        if not memory.facts_in_context or self._facts is None:
+            return None
+        name = turn.user.name
+        block = facts_block(name, await self._facts.list(name), memory.facts_context_max_chars)
+        if block.shown < block.total:
+            log.warning(
+                "turn %s: %d of %d facts fit [memory] facts_context_max_chars %d",
+                turn.queue_item_id,
+                block.shown,
+                block.total,
+                memory.facts_context_max_chars,
+            )
+        return block
+
     async def _attempt(self, this: _Turn, brain: Brain, *, can_fall_back: bool) -> TurnResult:
         cfg = self._config
         turn = this.input
@@ -259,6 +287,7 @@ class Agent:
                     others=[u.name for u in cfg.users if u.name != user.name],
                     notes=this.notes,
                     brain=brain_line(brain.name, brain.tag, others, this.offered),
+                    facts=this.facts.text if this.facts is not None else None,
                 ),
             }
         )
@@ -277,7 +306,13 @@ class Agent:
         log.info(
             "turn %s context: %s; brain %s",
             turn.queue_item_id,
-            context_sizes(state.messages, this.opened),
+            context_sizes(
+                state.messages,
+                this.opened,
+                None
+                if this.facts is None
+                else (this.facts.shown, this.facts.total, len(this.facts.text)),
+            ),
             brain.name,
         )
         if log.isEnabledFor(logging.DEBUG):

@@ -102,6 +102,11 @@ def test_example_shows_every_default() -> None:
             if key == "models":  # a table, shown commented out
                 assert re.search(rf"^# \[{section}\.{key}\]$", EXAMPLE.read_text(), re.M)
                 continue
+            if key.startswith(("facts_", "fact_")):  # shown commented out, with the default
+                line = re.search(rf"^# ({key} = .*)$", EXAMPLE.read_text(), re.M)
+                assert line, f"{section}.{key} missing from the example"
+                assert tomllib.loads(line.group(1))[key] == info.default, key
+                continue
             assert key in data[section], f"{section}.{key} missing from the example"
             if not info.is_required():
                 assert data[section][key] == info.default, f"{section}.{key} default differs"

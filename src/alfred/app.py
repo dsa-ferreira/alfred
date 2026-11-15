@@ -41,6 +41,8 @@ from alfred.idle import IdleCloser
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
 from alfred.memory.embedding import EmbeddingClient
+from alfred.memory.extract import FactExtractionJob
+from alfred.memory.facts import FactEmbeddingJob, FactStore, FactTools
 from alfred.memory.search import ConversationSearch, MemoryTools, Searcher
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
@@ -49,9 +51,11 @@ from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
 from alfred.telegram.bot import (
     ALLOWED_UPDATES,
+    MemoryCommand,
     TelegramDownloader,
     TelegramOutbox,
     make_dispatcher,
+    register_commands,
 )
 from alfred.tools.base import Toolset
 from alfred.tools.brains import BrainTools
@@ -88,6 +92,7 @@ def build_toolsets(
     brains: Brains,
     web: WebTools | None = None,
     memory: Searcher | None = None,
+    facts: FactTools | None = None,
     reminders: ReminderTools | None = None,
     attachments: AttachmentTools | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -104,6 +109,8 @@ def build_toolsets(
     toolsets.append(ConversationTools())
     if memory is not None:
         toolsets.append(MemoryTools(memory))
+    if facts is not None:
+        toolsets.append(facts)
     # Only with [attachments] (change add-attachments, design D8).
     if attachments is not None:
         toolsets.append(attachments)
@@ -141,7 +148,19 @@ async def serve(config: Config) -> None:
         query_prefix=config.memory.query_prefix,
     )
     summaries = Summaries(config, sessions, summary_model, embedder)
-    sweeper = Sweeper(config, sessions, summaries, queue=queue)
+    # User facts (change add-user-facts): extraction after the summaries, then
+    # embedding and dedupe, which needs no quiet queue.
+    facts = FactStore(config, sessions, embedder)
+    sweeper = Sweeper(
+        config,
+        sessions,
+        summaries,
+        queue=queue,
+        jobs=[
+            FactExtractionJob(config, sessions, summary_model, facts),
+            FactEmbeddingJob(facts),
+        ],
+    )
     search = ConversationSearch(config, sessions, embedder)
     # Turns pass the current brain's tag per request; summaries never do, so
     # they stay on the summary model (change add-brain-switching, design D2).
@@ -173,11 +192,13 @@ async def serve(config: Config) -> None:
             brains=brains,
             web=web,
             memory=search,
+            facts=FactTools(facts, config.memory),
             reminders=reminders,
             attachments=attachment_tools,
         ),
         brains=brains,
         attachments=inline,
+        facts=facts,
     )
     worker = Worker(
         queue,
@@ -196,7 +217,9 @@ async def serve(config: Config) -> None:
         queue,
         intake=intake,
         album_wait_s=config.attachments.album_wait_s if config.attachments else 2,
+        memory=MemoryCommand(facts, ZoneInfo(config.ai.timezone)),
     )
+    await register_commands(bot)
     server = _Server(
         uvicorn.Config(
             create_app(config.services, config.users, queue, history, outbox),

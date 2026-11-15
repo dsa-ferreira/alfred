@@ -53,7 +53,7 @@ async def test_context_size_line(
     expected = (
         f"turn {turn.queue_item_id} context: "
         f"system {len(messages[0]['content'])} chars "
-        f"(instructions: cookbook {len(COOKBOOK_INSTRUCTIONS)}); "
+        f"(facts off; instructions: cookbook {len(COOKBOOK_INSTRUCTIONS)}); "
         f"tools {len(tools)} defs {mcparr + cookbook + local} chars "
         f"(mcparr {mcparr}, cookbook {cookbook}, alfred {local}); "
         f"history 3 entries {size(messages[1:])} chars; "
@@ -169,3 +169,77 @@ def test_no_images_no_count() -> None:
 
     messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}]
     assert context_sizes(messages, []).endswith("chars")
+
+
+# --- the user's facts (change add-user-facts, design D10) ---------------------------------
+
+
+def test_facts_in_the_system_part() -> None:
+    from alfred.agent.context import context_sizes
+
+    messages = [{"role": "system", "content": "s" * 9120}]
+    assert context_sizes(messages, [], (14, 14, 1240)).startswith(
+        "system 9120 chars (facts 14, 1240 chars); "
+    )
+    assert context_sizes(messages, []).startswith("system 9120 chars (facts off); ")
+    assert context_sizes(messages, [], (0, 0, 0)).startswith("system 9120 chars (facts none); ")
+    assert context_sizes(messages, [], (40, 52, 2990)).startswith(
+        "system 9120 chars (facts 40 of 52, 2990 chars, 12 left out); "
+    )
+
+
+async def _facts_turn(
+    sessions: async_sessionmaker[AsyncSession],
+    caplog: pytest.LogCaptureFixture,
+    count: int,
+    budget: int = 3000,
+) -> tuple[TurnInput, FakeModel]:
+    from alfred.memory.facts import FactStore, FactTools
+    from tests.helpers import FakeEmbedder
+
+    cfg = make_config(memory={"facts_in_context": True})
+    store = FactStore(cfg, sessions, FakeEmbedder(default=[1.0]))
+    for i in range(count):
+        await store.add("diogo", f"secret fact {i:02}", "learned")
+    model = FakeModel([text("ok")])
+    turn = await owner_turn(sessions, "hi")
+    memory = {"facts_in_context": True, "facts_context_max_chars": budget}
+    with caplog.at_level(logging.INFO):
+        await agent(sessions, model, facts=FactTools(store, cfg.memory), memory_config=memory).run(
+            turn
+        )
+    return turn, model
+
+
+async def test_facts_logged_without_their_text(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    turn, model = await _facts_turn(sessions, caplog, 14)
+    prompt = model.requests[0][0][0]["content"]
+    block = prompt[prompt.index("What you know about") :]
+    [line] = turn_lines(caplog, turn, "context")
+    assert f"(facts 14, {len(block)} chars; instructions:" in line
+    assert "secret fact" not in caplog.text
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+async def test_facts_over_budget_warns(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    line_size = len("[10] secret fact 09 (learned)") + 1
+    turn, _ = await _facts_turn(sessions, caplog, 52, budget=40 * line_size)
+    [line] = turn_lines(caplog, turn, "context")
+    assert "(facts 40 of 52, " in line and ", 12 left out; " in line
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        f"turn {turn.queue_item_id}: 40 of 52 facts fit [memory] facts_context_max_chars "
+        f"{40 * line_size}"
+    ]
+
+
+async def test_no_facts_yet(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    turn, _ = await _facts_turn(sessions, caplog, 0)
+    [line] = turn_lines(caplog, turn, "context")
+    assert "(facts none; instructions:" in line

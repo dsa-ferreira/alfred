@@ -23,6 +23,7 @@ from alfred.attachments.tools import AttachmentTools
 from alfred.config import AttachmentsConfig, BrainEntry, S3Key, ServerConfig
 from alfred.idle import IdleCloser
 from alfred.mcp.toolset import McpTools
+from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch, MemoryTools
 from alfred.memory.sweeper import Sweeper
 from alfred.reminders.tools import ReminderTools
@@ -192,6 +193,7 @@ async def test_memory_wiring_and_clients_closed(
         WebTools,
         ConversationTools,
         MemoryTools,
+        FactTools,
         ReminderTools,
         BrainTools,
         CalculatorTools,
@@ -377,7 +379,11 @@ async def test_attachment_wiring(
     ((store, store_config, key),) = stores
     assert store_config is config.attachments and key is config.s3_key
     assert store.closed and orphans.stopped.is_set()
-    assert [type(t) for t in agents[0]["toolsets"]][2:4] == [MemoryTools, AttachmentTools]
+    assert [type(t) for t in agents[0]["toolsets"]][2:5] == [
+        MemoryTools,
+        FactTools,
+        AttachmentTools,
+    ]
     assert isinstance(agents[0]["attachments"], InlineAttachments)
     assert isinstance(dispatchers[0]["intake"], Intake)
     assert dispatchers[0]["album_wait_s"] == 0.5

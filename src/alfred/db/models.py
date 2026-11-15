@@ -29,6 +29,11 @@ conversation.
   ``object_key``; the row is written with its queue item and linked to the
   user entry (``entry_id``) when the turn records it. ``attachment_pages``
   holds each PDF page's text.
+- ``facts``: short facts about a user (change add-user-facts, design D1),
+  ``told`` by the user or ``learned`` from an archived conversation. Removal
+  is soft: ``removed_at``, ``removed_reason`` and, for replaced and duplicate
+  facts, ``replaced_by``. A conversation's ``facts_outcome`` is ``NULL``
+  while its fact extraction is pending.
 """
 
 from __future__ import annotations
@@ -83,6 +88,9 @@ REMINDER_STATUSES = ("pending", "fired", "cancelled")
 QUEUE_STATUSES = ("pending", "done", "failed")
 ATTACHMENT_KINDS = ("image", "pdf")
 END_REASONS = ("user", "idle")
+FACT_ORIGINS = ("told", "learned")
+FACT_REMOVAL_REASONS = ("forgotten", "replaced", "duplicate")
+FACTS_OUTCOMES = ("done", "gave_up")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -105,6 +113,14 @@ class Conversation(Base):
         ),
         Index("ix_conversations_search_tsv", "search_tsv", postgresql_using="gin"),
         CheckConstraint(_in("end_reason", END_REASONS), name="end_reason"),
+        CheckConstraint(_in("facts_outcome", FACTS_OUTCOMES), name="facts_outcome"),
+        # Archived conversations whose fact extraction is pending.
+        Index(
+            "ix_conversations_facts_pending",
+            "user_name",
+            "id",
+            postgresql_where=text("ended_at IS NOT NULL AND facts_outcome IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -125,6 +141,10 @@ class Conversation(Base):
     end_reason: Mapped[str | None] = mapped_column(Text)
     # When the idle-close marker was handed to the user's next message.
     marker_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Fact extraction (change add-user-facts): null while pending.
+    facts_outcome: Mapped[str | None] = mapped_column(Text)
+    facts_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    facts_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Entry(Base):
@@ -277,3 +297,36 @@ class AttachmentPage(Base):
     # 1-based, as the model and users count them.
     page: Mapped[int] = mapped_column(Integer, primary_key=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Fact(Base):
+    __tablename__ = "facts"
+    __table_args__ = (
+        CheckConstraint(_in("origin", FACT_ORIGINS), name="origin"),
+        CheckConstraint(_in("removed_reason", FACT_REMOVAL_REASONS), name="removed_reason"),
+        CheckConstraint("(removed_at IS NULL) = (removed_reason IS NULL)", name="removed"),
+        # Every read but an audit is of a user's active facts.
+        Index(
+            "ix_facts_active",
+            "user_name",
+            "id",
+            postgresql_where=text("removed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_name: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The conversation a learned fact came from.
+    conversation_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    embedding: Mapped[Any] = mapped_column(Vector(), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(Text)
+    embedding_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    embedding_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    removed_reason: Mapped[str | None] = mapped_column(Text)
+    replaced_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("facts.id"))

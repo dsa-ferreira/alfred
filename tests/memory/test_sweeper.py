@@ -8,8 +8,10 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.model import ModelReply, ModelUnreachable
-from alfred.db.models import Conversation, QueueItem
+from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.history import History
+from alfred.memory.embedding import EmbeddingUnreachable
+from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue, Worker
@@ -366,3 +368,192 @@ async def _summarised(sessions: async_sessionmaker[AsyncSession], cid: int) -> b
 
 async def _true(value: bool) -> bool:
     return value
+
+
+# --- a loop over jobs (change add-user-facts, design D2) ----------------------------
+
+
+class FakeJob:
+    """A job with keys due by hand; records what it ran and the preempt it got."""
+
+    def __init__(self, name: str, *, uses_model: bool) -> None:
+        self.name = name
+        self.uses_model = uses_model
+        self.changed = asyncio.Event()
+        self.due: list[str] = []
+        self.later: float | None = None
+        self.ran: list[tuple[str, asyncio.Event | None]] = []
+        self.asked: list[bool] = []
+
+    async def next_due(self, model_allowed: bool) -> str | None:
+        self.asked.append(model_allowed)
+        if self.uses_model and not model_allowed:
+            return None
+        return self.due[0] if self.due else None
+
+    async def seconds_until_due(self, model_allowed: bool) -> float | None:
+        return self.later
+
+    async def run(self, key: str, preempt: asyncio.Event | None) -> None:
+        self.ran.append((key, preempt))
+        self.due.remove(key)
+
+
+def job_sweeper(
+    sessions: async_sessionmaker[AsyncSession], *jobs: FakeJob, quiet_s: float = 0
+) -> tuple[Sweeper, Queue, Ticks]:
+    cfg = make_config(memory={"summary_quiet_s": quiet_s})
+    ticks = Ticks()
+    queue = Queue(sessions, clock=ticks)
+    summaries = Summaries(cfg, sessions, FakeModel(), FakeEmbedder())
+    return Sweeper(cfg, sessions, summaries, queue=queue, jobs=jobs), queue, ticks
+
+
+async def test_first_due_job_runs_in_priority_order(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    first, second = FakeJob("first", uses_model=True), FakeJob("second", uses_model=False)
+    first.due, second.due = ["a1", "a2"], ["b1"]
+    mem, queue, _ = job_sweeper(sessions, first, second)
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        await until(_lists_empty(first.due, second.due))
+    finally:
+        task.cancel()
+    assert [k for k, _ in first.ran] == ["a1", "a2"]
+    assert [k for k, _ in second.ran] == ["b1"]
+    # The model job got the queue's arrival event as preempt; the other none.
+    assert all(p is queue.activity.arrived for _, p in first.ran)
+    assert second.ran[0][1] is None
+
+
+async def test_model_job_waits_for_a_quiet_queue(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model_job, other = FakeJob("model", uses_model=True), FakeJob("other", uses_model=False)
+    model_job.due = ["m1"]
+    mem, queue, _ = job_sweeper(sessions, model_job, other)
+    await queue.enqueue_ask("backup", "anything?", "diogo")
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        await settle()
+        assert model_job.ran == []
+        assert model_job.asked and not any(model_job.asked)  # never offered the model
+        # Work that needs no model still runs while the item is pending.
+        other.due = ["o1"]
+        other.changed.set()
+        await until(_lists_empty(other.due))
+        await finish_all(sessions, queue)
+        await until(_lists_empty(model_job.due))
+    finally:
+        task.cancel()
+
+
+async def test_sleeps_until_the_soonest_job_and_wakes_on_either(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    first, second = FakeJob("first", uses_model=False), FakeJob("second", uses_model=False)
+    first.later, second.later = 3600, 0.05
+    mem, _, _ = job_sweeper(sessions, first, second)
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        await settle()
+        asked = len(second.asked)
+        await asyncio.sleep(0.2)  # second's 0.05 s passed: the sweeper looked again
+        assert len(second.asked) > asked
+        second.later = None
+        first.later = None
+        await settle()
+        # Woken by either job's changed.
+        first.due = ["a"]
+        first.changed.set()
+        await until(_lists_empty(first.due))
+        second.due = ["b"]
+        second.changed.set()
+        await until(_lists_empty(second.due))
+    finally:
+        task.cancel()
+
+
+def _lists_empty(*lists: list[str]):  # type: ignore[no-untyped-def]
+    async def check() -> bool:
+        return not any(lists)
+
+    return check
+
+
+# --- fact embedding (change add-user-facts, design D6) ---------------------------------
+
+
+def fact_sweeper(
+    sessions: async_sessionmaker[AsyncSession],
+    embedder: FakeEmbedder,
+    *,
+    queue: Queue | None = None,
+) -> tuple[Sweeper, FactStore]:
+    cfg = make_config(queue=FAST)
+    facts = FactStore(cfg, sessions, embedder)
+    summaries = Summaries(cfg, sessions, FakeModel(), embedder)
+    return Sweeper(cfg, sessions, summaries, queue=queue, jobs=[FactEmbeddingJob(facts)]), facts
+
+
+async def _fact_row(sessions: async_sessionmaker[AsyncSession], fact_id: int) -> Fact:
+    async with sessions() as session:
+        found = await session.get(Fact, fact_id)
+    assert found is not None
+    return found
+
+
+async def test_fact_added_while_ragman_is_down_is_embedded_later(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    down = EmbeddingUnreachable("down")
+    embedder = FakeEmbedder([[1.0, 0.0], down, down], default=[0.99, 0.05])
+    mem, facts = fact_sweeper(sessions, embedder)
+    old, _ = await facts.add("diogo", "allergic to shellfish", "learned")
+    await facts.embed(old)
+    new, _ = await facts.add("diogo", "the user is allergic to shellfish", "learned")
+    await facts.embed(new)  # ragman down
+    assert (await _fact_row(sessions, new)).embedding is None
+    task = asyncio.create_task(mem.run_forever())
+    try:
+
+        async def deduped() -> bool:
+            return (await _fact_row(sessions, new)).removed_reason == "duplicate"
+
+        await until(deduped)
+    finally:
+        task.cancel()
+    assert (await _fact_row(sessions, new)).replaced_by == old
+
+
+async def test_changing_the_embedding_model_reembeds_facts(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    _, old_facts = fact_sweeper(sessions, FakeEmbedder(default=[1.0, 0.0], model="old-model"))
+    fid, _ = await old_facts.add("diogo", "runs a homelab", "told")
+    await old_facts.embed(fid)
+    embedder = FakeEmbedder(default=[0.0, 1.0, 0.0], model="new-model")
+    mem, _ = fact_sweeper(sessions, embedder)
+    assert await mem.sweep_once() is None
+    assert embedder.documents == ["runs a homelab"]
+    stored = await _fact_row(sessions, fid)
+    assert stored.embedding_model == "new-model" and len(stored.embedding) == 3
+
+
+async def test_facts_are_embedded_while_an_item_is_pending(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    queue = Queue(sessions)
+    mem, facts = fact_sweeper(sessions, FakeEmbedder(default=[1.0, 0.0]), queue=queue)
+    await queue.enqueue_ask("backup", "anything?", "diogo")
+    task = asyncio.create_task(mem.run_forever())
+    try:
+        fid, _ = await facts.add("diogo", "my car is electric", "told")
+
+        async def embedded() -> bool:
+            return (await _fact_row(sessions, fid)).embedding is not None
+
+        await until(embedded)
+    finally:
+        task.cancel()

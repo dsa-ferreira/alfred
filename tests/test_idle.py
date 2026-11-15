@@ -144,3 +144,23 @@ async def test_run_forever_sleeps_as_told(sessions: async_sessionmaker[AsyncSess
         await asyncio.wait_for(idle.run_forever(), 5)
     assert sleeps == [pytest.approx(4 * 3600), SIX_HOURS.total_seconds()]
     assert await ended(sessions, cid) == "idle"
+
+
+async def test_memory_command_is_not_a_user_message(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """/memory leaves the last user message as it was (change add-user-facts, D11)."""
+    from tests.telegram.test_bot import memory_dispatcher, memory_texts
+
+    clock = Clock()
+    earlier = clock.now - timedelta(hours=5)
+    cid = await wrote(sessions, "diogo", earlier)
+    dispatcher, _ = memory_dispatcher(sessions)
+    await memory_texts(sessions, dispatcher, "/memory")
+    [last] = await History(sessions).last_user_messages()
+    assert (last.conversation_id, last.at) == (cid, earlier)
+    # Still due an hour after the earlier message's five, not six hours from now.
+    assert await closer(sessions, clock).close_once() == pytest.approx(3600)
+    clock.now += timedelta(hours=1, seconds=1)
+    await closer(sessions, clock).close_once()
+    assert await ended(sessions, cid) == "idle"

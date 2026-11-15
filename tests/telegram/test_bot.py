@@ -16,6 +16,7 @@ from alfred import notices
 from alfred.attachments.intake import DownloadFailed, Intake
 from alfred.config import AttachmentsConfig, Users
 from alfred.db.models import Attachment, QueueItem
+from alfred.memory.facts import FactStore
 from alfred.queue import Queue
 from alfred.telegram import bot as bot_module
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
@@ -528,3 +529,173 @@ async def test_typing_in_the_users_chat(monkeypatch: pytest.MonkeyPatch) -> None
         await asyncio.sleep(0.03)
     actions = chat_actions(session)
     assert actions and all(a.chat_id == ANA_ID for a in actions)
+
+
+# --- /memory (change add-user-facts, design D11) ---------------------------------------
+
+
+def memory_dispatcher(
+    sessions: async_sessionmaker[AsyncSession],
+) -> tuple[Dispatcher, FactStore]:
+    from zoneinfo import ZoneInfo
+
+    from alfred.telegram.bot import MemoryCommand
+    from tests.helpers import FakeEmbedder, make_config
+
+    store = FactStore(make_config(), sessions, FakeEmbedder(default=[1.0]))
+    memory = MemoryCommand(store, ZoneInfo("Europe/Lisbon"))
+    return make_dispatcher(USERS, Queue(sessions), memory=memory), store
+
+
+async def memory_texts(
+    sessions: async_sessionmaker[AsyncSession],
+    dispatcher: Dispatcher,
+    text: str,
+    user_id: int = OWNER,
+) -> list[str]:
+    bot, session = make_bot()
+    await dispatcher.feed_update(bot, message_update(user_id=user_id, text=text))
+    assert await queued(sessions) == []
+    sent = session.sent()
+    assert all(m.parse_mode is None and int(m.chat_id) == user_id for m in sent)
+    return [m.text for m in sent]
+
+
+@pytest.mark.parametrize("command", ["/memory", "/memory@alfred_bot", " /memory "])
+async def test_memory_lists_the_users_facts(
+    sessions: async_sessionmaker[AsyncSession], command: str
+) -> None:
+    dispatcher, store = memory_dispatcher(sessions)
+    await store.add("diogo", "allergic to shellfish", "told")
+    await store.add("diogo", "runs a homelab", "learned")
+    await store.add("ana", "likes tea", "told")
+    [text] = await memory_texts(sessions, dispatcher, command)
+    lines = text.splitlines()
+    assert lines[0] == notices.memory_list("sir")
+    assert [line.rsplit(", ", 1)[0] for line in lines[1:]] == [
+        "[1] allergic to shellfish (told",
+        "[2] runs a homelab (learned",
+    ]
+    assert "tea" not in text
+
+
+async def test_memory_line_has_the_date(sessions: async_sessionmaker[AsyncSession]) -> None:
+    from datetime import UTC, datetime
+
+    from alfred.telegram.bot import MemoryCommand
+
+    class OneFact:
+        async def list(self, user_name: str) -> list[Any]:
+            from alfred.memory.facts import FactRow
+
+            return [FactRow(12, "allergic to shellfish", "told", datetime(2026, 11, 3, tzinfo=UTC))]
+
+        async def forget(self, user_name: str, ids: Any) -> Any:
+            raise AssertionError
+
+    from zoneinfo import ZoneInfo
+
+    texts = await MemoryCommand(OneFact(), ZoneInfo("Europe/Lisbon")).answer(DIOGO, None)
+    assert texts[0].splitlines()[1] == "[12] allergic to shellfish (told, 3 Nov)"
+
+
+@pytest.mark.parametrize("text", ["/memorybank ideas", "/start", "remember /memory"])
+async def test_other_slash_text_still_queued(
+    sessions: async_sessionmaker[AsyncSession], text: str
+) -> None:
+    dispatcher, _ = memory_dispatcher(sessions)
+    bot, session = make_bot()
+    await dispatcher.feed_update(bot, message_update(text=text))
+    assert [i.text for i in await queued(sessions)] == [text]
+    assert session.sent() == []
+
+
+async def test_memory_forget(sessions: async_sessionmaker[AsyncSession]) -> None:
+    dispatcher, store = memory_dispatcher(sessions)
+    await store.add("diogo", "allergic to shellfish", "told")
+    await store.add("diogo", "runs a homelab", "learned")
+    await store.add("diogo", "likes jazz", "learned")
+    [text] = await memory_texts(sessions, dispatcher, "/memory forget 1 2")
+    lines = text.splitlines()
+    assert lines[0] == "I have forgotten these, sir:"
+    assert lines[1].startswith("[1] allergic to shellfish (told, ")
+    assert lines[2].startswith("[2] runs a homelab (learned, ")
+    assert [f.text for f in await store.list("diogo")] == ["likes jazz"]
+
+
+async def test_memory_forget_of_another_users_fact(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    dispatcher, store = memory_dispatcher(sessions)
+    await store.add("diogo", "allergic to shellfish", "told")
+    texts = await memory_texts(sessions, dispatcher, "/memory forget 1", user_id=ANA_ID)
+    assert texts == ["I found no fact 1, madam."]
+    assert len(await store.list("diogo")) == 1
+
+
+async def test_memory_forget_some_not_found(sessions: async_sessionmaker[AsyncSession]) -> None:
+    dispatcher, store = memory_dispatcher(sessions)
+    await store.add("diogo", "allergic to shellfish", "told")
+    [text] = await memory_texts(sessions, dispatcher, "/memory forget #1, 99")
+    assert text.splitlines()[-1] == "I found no fact 99."
+
+
+@pytest.mark.parametrize("text", ["/memory clear", "/memory forget", "/memory forget all"])
+async def test_memory_usage(sessions: async_sessionmaker[AsyncSession], text: str) -> None:
+    dispatcher, store = memory_dispatcher(sessions)
+    await store.add("diogo", "allergic to shellfish", "told")
+    assert await memory_texts(sessions, dispatcher, text) == [notices.memory_usage("sir")]
+    assert len(await store.list("diogo")) == 1
+
+
+async def test_memory_with_no_facts(sessions: async_sessionmaker[AsyncSession]) -> None:
+    dispatcher, _ = memory_dispatcher(sessions)
+    texts = await memory_texts(sessions, dispatcher, "/memory", user_id=ANA_ID)
+    assert texts == ["I know no facts about you yet, madam."]
+
+
+async def test_long_memory_list_is_split(sessions: async_sessionmaker[AsyncSession]) -> None:
+    dispatcher, store = memory_dispatcher(sessions)
+    for i in range(40):
+        await store.add("diogo", f"fact {i:02} " + "x" * 200, "learned")
+    texts = await memory_texts(sessions, dispatcher, "/memory")
+    assert len(texts) > 1
+    assert all(len(t) <= 4096 for t in texts)
+    assert sum(t.count("fact ") for t in texts) == 40
+
+
+async def test_memory_is_not_recorded(sessions: async_sessionmaker[AsyncSession]) -> None:
+    from alfred.db.models import Entry
+
+    dispatcher, store = memory_dispatcher(sessions)
+    await store.add("diogo", "allergic to shellfish", "told")
+    await memory_texts(sessions, dispatcher, "/memory")
+    await memory_texts(sessions, dispatcher, "/memory forget 1")
+    async with sessions() as session:
+        assert list(await session.scalars(select(Entry))) == []
+
+
+async def test_commands_registered() -> None:
+    from aiogram.methods import SetMyCommands
+
+    from alfred.telegram.bot import register_commands
+
+    bot, session = make_bot()
+    await register_commands(bot)
+    [request] = [r for r in session.requests if isinstance(r, SetMyCommands)]
+    assert [c.command for c in request.commands] == ["memory"]
+
+
+async def test_command_registration_failure_is_only_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from alfred.telegram.bot import register_commands
+
+    bot, session = make_bot()
+
+    def fail(method: Any) -> None:
+        raise TelegramNetworkError(method=method, message="down")
+
+    session.on_request = fail
+    await register_commands(bot)
+    assert "could not register the bot commands" in caplog.text

@@ -92,6 +92,18 @@ summary_input_max_chars = 60000
 search_results = 5
 # Seconds with no queue item waiting, running or finishing before a summary starts.
 summary_quiet_s = 60
+# Facts about each user, learned from archived conversations or told with "remember ...".
+# Whether every turn's system prompt carries its user's facts. /memory lists them either way.
+# facts_in_context = false
+# Most characters of facts in one system prompt; told facts go in first, then the newest.
+# facts_context_max_chars = 3000
+# Longest fact, in characters.
+# fact_max_chars = 300
+# Failed fact extractions of one conversation before giving up on it; 0 never gives up
+# (and the user's later conversations wait for it).
+# facts_extraction_max_attempts = 0
+# Cosine distance (0 to 1) within which two of a user's facts count as duplicates.
+# facts_duplicate_max_distance = 0.1
 
 [web]
 # SearXNG instance for alfred_web_search; alfred queries {searxng_url}/search?format=json.

@@ -19,7 +19,9 @@ most once a day, so the AI server can keep reusing its processed prefix.
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from datetime import date
+from typing import Protocol
 
 NO_REPLY = "NO_REPLY"
 
@@ -205,13 +207,16 @@ def system_prompt(
     others: Sequence[str] = (),
     notes: Sequence[str] = (),
     brain: str | None = None,
+    facts: str | None = None,
 ) -> str:
     """Persona, operating rules, date and brain, the toolsets' notes, then other additions.
 
     ``name`` and ``address`` are the turn's user's, ``tools`` the names
     offered on the turn, ``others`` the other users' names. ``brain`` is a
     :func:`brain_line`; it sits with the operating rules, so a custom
-    persona can't drop it.
+    persona can't drop it. ``facts`` is the user's :class:`FactsBlock` text,
+    always last, so a change to the facts only changes the prompt's end
+    (change add-user-facts, design D9).
     """
     parts = [
         persona or butler_persona(address),
@@ -225,7 +230,66 @@ def system_prompt(
         parts.append(ASK_RULE)
     elif reminder:
         parts.append(REMINDER_RULE)
+    if facts:
+        parts.append(facts)
     return "\n\n".join(parts)
+
+
+# --- The user's facts (change add-user-facts, design D9) --------------------------------
+
+FACT_LABELS = (
+    "told: {name} asked you to remember it; learned: picked up from an earlier "
+    "conversation, so it may be out of date."
+)
+
+
+class KnownFact(Protocol):
+    id: int
+    text: str
+    origin: str
+
+
+@dataclass(frozen=True)
+class FactsBlock:
+    """The facts part of the system prompt: ``shown`` of the user's ``total`` facts."""
+
+    text: str
+    shown: int
+    total: int
+
+
+def fact_line(fact: KnownFact) -> str:
+    return f"[{fact.id}] {fact.text} ({fact.origin})"
+
+
+def facts_block(name: str, facts: Sequence[KnownFact], max_chars: int) -> FactsBlock:
+    """The user's facts that fit ``max_chars``, in id order, under a header.
+
+    ``told`` facts are chosen first, then ``learned`` ones, newest first
+    within each; a fact that doesn't fit is skipped and smaller ones are
+    still tried. No facts: an empty block.
+    """
+    if not facts:
+        return FactsBlock("", 0, 0)
+    order = sorted(facts, key=lambda f: (f.origin != "told", -f.id))
+    chosen: list[KnownFact] = []
+    used = 0
+    for fact in order:
+        size = len(fact_line(fact)) + 1  # with its newline
+        if used + size <= max_chars:
+            chosen.append(fact)
+            used += size
+    chosen.sort(key=lambda f: f.id)
+    total = len(facts)
+    if len(chosen) == total:
+        count = f"all {total} fact{'' if total == 1 else 's'}"
+    else:
+        count = f"{len(chosen)} of {total} facts; the rest are listed by /memory"
+    lines = [
+        f"What you know about {name} ({count}). {FACT_LABELS.format(name=name)}",
+        *(fact_line(f) for f in chosen),
+    ]
+    return FactsBlock("\n".join(lines), len(chosen), total)
 
 
 def is_no_reply(answer: str) -> bool:

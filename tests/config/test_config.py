@@ -827,3 +827,39 @@ def test_idle_close_must_be_positive(tmp_path: Path, value: str) -> None:
 def test_quiet_period_not_negative(tmp_path: Path) -> None:
     found = problems(MINIMAL + "\n[memory]\nsummary_quiet_s = -1\n", tmp_path)
     assert any("memory.summary_quiet_s" in p for p in found)
+
+
+# --- User facts (change add-user-facts) -------------------------------------------
+
+
+def test_fact_defaults(tmp_path: Path) -> None:
+    memory = load_config(env_for(write(tmp_path, MINIMAL))).memory
+    assert memory.facts_in_context is False
+    assert memory.facts_context_max_chars == 3000
+    assert memory.fact_max_chars == 300
+    assert memory.facts_extraction_max_attempts == 0
+    assert memory.facts_duplicate_max_distance == 0.1
+
+
+def test_fact_settings(tmp_path: Path) -> None:
+    text = MINIMAL + "\n[memory]\nfacts_in_context = true\nfacts_extraction_max_attempts = 5\n"
+    memory = load_config(env_for(write(tmp_path, text))).memory
+    assert memory.facts_in_context is True
+    assert memory.facts_extraction_max_attempts == 5
+
+
+def test_fact_extraction_attempts_not_negative(tmp_path: Path) -> None:
+    found = problems(MINIMAL + "\n[memory]\nfacts_extraction_max_attempts = -1\n", tmp_path)
+    assert any("memory.facts_extraction_max_attempts" in p for p in found)
+
+
+@pytest.mark.parametrize("value", ["3", "0", "1"])
+def test_fact_duplicate_distance_between_0_and_1(tmp_path: Path, value: str) -> None:
+    found = problems(MINIMAL + f"\n[memory]\nfacts_duplicate_max_distance = {value}\n", tmp_path)
+    assert any("memory.facts_duplicate_max_distance" in p for p in found)
+
+
+@pytest.mark.parametrize("key", ["facts_context_max_chars", "fact_max_chars"])
+def test_fact_sizes_must_be_positive(tmp_path: Path, key: str) -> None:
+    found = problems(MINIMAL + f"\n[memory]\n{key} = 0\n", tmp_path)
+    assert any(f"memory.{key}" in p for p in found)

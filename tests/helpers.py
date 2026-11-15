@@ -38,6 +38,7 @@ from alfred.config import (
 from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.mcp.client import Connector
+from alfred.memory.facts import FactTools
 from alfred.memory.search import Searcher
 from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
@@ -195,6 +196,7 @@ def make_agent(
     connect: Connector,
     *,
     memory: Searcher | None = None,
+    facts: FactTools | None = None,
     web: WebTools | None = None,
     reminders: ReminderTools | None = None,
     brains: Brains | None = None,
@@ -216,6 +218,7 @@ def make_agent(
         brains=brains,
         web=web,
         memory=memory,
+        facts=facts,
         reminders=reminders,
         attachments=attachments,
         now=now,
@@ -228,6 +231,7 @@ def make_agent(
         toolsets=toolsets,
         brains=brains,
         attachments=inline,
+        facts=facts.facts if facts is not None else None,
         now=now,
     )
 

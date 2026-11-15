@@ -11,6 +11,7 @@ def alfred_tool_names() -> frozenset[str]:
     # Imported here, not at the top: these modules import alfred.config,
     # whose load_config calls this.
     from alfred.attachments.tools import READ_DOCUMENT, VIEW_ATTACHMENT
+    from alfred.memory.facts import NAMES as FACT_NAMES
     from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
     from alfred.reminders.tools import NAMES as REMINDER_NAMES
     from alfred.tools.brains import SET_MODEL
@@ -29,6 +30,7 @@ def alfred_tool_names() -> frozenset[str]:
             CALCULATE,
             END_CONVERSATION,
             DATE,
+            *FACT_NAMES,
             *REMINDER_NAMES,
             *WEB_NAMES,
         }

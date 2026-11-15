@@ -15,7 +15,24 @@ def _chars(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False))
 
 
-def context_sizes(messages: list[dict[str, Any]], opened: Sequence[OpenToolset]) -> str:
+def facts_size(facts: tuple[int, int, int] | None) -> str:
+    """``facts 14, 1240 chars``, ``facts 40 of 52, 2990 chars, 12 left out``,
+    ``facts none`` or ``facts off``, from ``(shown, total, chars)``."""
+    if facts is None:
+        return "facts off"
+    shown, total, chars = facts
+    if total == 0:
+        return "facts none"
+    if shown == total:
+        return f"facts {shown}, {chars} chars"
+    return f"facts {shown} of {total}, {chars} chars, {total - shown} left out"
+
+
+def context_sizes(
+    messages: list[dict[str, Any]],
+    opened: Sequence[OpenToolset],
+    facts: tuple[int, int, int] | None = None,
+) -> str:
     """The sizes of the system prompt, the tools by group and the history, without their text.
 
     Images in the history are counted (``1 image``), never measured in characters.
@@ -24,14 +41,17 @@ def context_sizes(messages: list[dict[str, Any]], opened: Sequence[OpenToolset])
     input), as built at the start of the attempt. Notes with a log label (a
     server's instructions) are listed inside the system prompt's size; tool
     sizes are each definition's JSON, grouped by toolset, with alfred's own
-    tools last.
+    tools last. ``facts`` is ``(shown, total, chars)`` of the user's facts
+    in the system prompt, or ``None`` when facts aren't in the context.
     """
     system = len(messages[0]["content"])
-    line = f"system {system} chars"
+    inside = [facts_size(facts)]
     labelled = [n for t in opened for n in t.prompt_notes if n.log_label is not None]
     if labelled:
-        parts = ", ".join(f"{n.log_label} {n.log_chars}" for n in labelled)
-        line += f" (instructions: {parts})"
+        inside.append(
+            "instructions: " + ", ".join(f"{n.log_label} {n.log_chars}" for n in labelled)
+        )
+    line = f"system {system} chars ({'; '.join(inside)})"
 
     by_group: dict[str, int] = {}
     local = 0

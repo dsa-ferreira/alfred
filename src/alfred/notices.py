@@ -78,3 +78,38 @@ def reminder(address: str, text: str, due: datetime, today: date) -> str:
     return (
         f'Your reminder, due at {when}: "{text}". My apologies for the plain delivery, {address}.'
     )
+
+
+# --- /memory (change add-user-facts, design D11) -----------------------------------------
+
+
+def memory_list(address: str) -> str:
+    """Before the list of a user's facts."""
+    return f"This is what I know about you, {address}:"
+
+
+def memory_none(address: str) -> str:
+    return f"I know no facts about you yet, {address}."
+
+
+def memory_forgot(address: str, removed: list[str], missing: list[int]) -> str:
+    """After ``/memory forget``: the facts removed (as listed) and the ids not found."""
+    if removed:
+        lines = [f"I have forgotten these, {address}:", *removed]
+        if missing:
+            lines.append(f"I found no fact {_numbers(missing)}.")
+    else:
+        lines = [f"I found no fact {_numbers(missing)}, {address}."]
+    return "\n".join(lines)
+
+
+def memory_usage(address: str) -> str:
+    return (
+        f"I'm afraid I don't follow, {address}. Send /memory to see what I know about "
+        "you, or /memory forget followed by the numbers of the facts to forget, "
+        "such as /memory forget 12 15."
+    )
+
+
+def _numbers(ids: list[int]) -> str:
+    return ", ".join(str(i) for i in ids)

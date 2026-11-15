@@ -21,6 +21,7 @@ from alfred.db.models import TurnToolCall
 from alfred.history import History, strip_stamp
 from alfred.mcp.registry import ServerInstructions
 from alfred.mcp.toolset import server_instructions
+from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
@@ -81,10 +82,17 @@ def agent(
     brains: Brains | None = None,
     reminders: ReminderTools | None = None,
     store: FakeStore | None = None,
+    facts: FactTools | None = None,
+    memory_config: dict[str, Any] | None = None,
     now: datetime | Callable[[], datetime] = NOW,
     **config: object,
 ) -> Agent:
-    cfg = make_config(mcp_servers=[MCPARR, COOKBOOK], **config)  # type: ignore[arg-type]
+    """The default test agent; ``memory_config`` is its ``[memory]`` section."""
+    cfg = make_config(
+        mcp_servers=[MCPARR, COOKBOOK],
+        memory=memory_config,
+        **config,  # type: ignore[arg-type]
+    )
     connect = in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()})
     return make_agent(
         cfg,
@@ -97,6 +105,7 @@ def agent(
         reminders=reminders,
         brains=brains,
         store=store,
+        facts=facts,
         now=now if callable(now) else lambda: now,
     )
 

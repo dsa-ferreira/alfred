@@ -32,6 +32,10 @@ allow-list (see [Users](#users)).
   message from you, a service or a reminder reaches the AI with the time it
   arrived (`[Mon 9 Nov 14:05] what time is it?`), so it knows the time of day
   (see [Message times](#message-times)).
+- **Facts about you.** alfred learns short, lasting facts about each user from
+  their archived conversations ("allergic to shellfish"), and keeps what you
+  ask it to remember. `/memory` lists them; with `memory.facts_in_context`
+  on, every turn's prompt carries them (see [Facts](#facts)).
 - **Web.** The AI can search the web through the homelab's SearXNG instance on
   `oracle.lan` and read pages it found or the user sent (see
   [Web search and fetch](#web-search-and-fetch)).
@@ -58,7 +62,7 @@ allow-list (see [Users](#users)).
                        └───────────────┬─────────────────┘
                                        │
                                    Postgres
-               (conversations, entries, queue, tool calls, reminders)
+          (conversations, entries, queue, tool calls, reminders, facts)
 ```
 
 One process, one event loop: the bot, the API, the queue worker, the memory
@@ -109,6 +113,11 @@ reported together and alfred exits. Error messages never contain secret values.
 | `memory.summary_input_max_chars` | integer | `60000` | Most transcript characters sent to the summary model; a longer transcript keeps its start and end. |
 | `memory.search_results` | integer | `5` | Most conversations a search returns. |
 | `memory.summary_quiet_s` | number | `60` | Seconds with no queue item waiting, running or finishing before a summary request starts. A queue item that arrives during a summary request cancels it; it is made again once the queue is quiet. `0` waits only for an empty queue. |
+| `memory.facts_in_context` | boolean | `false` | Whether every turn's system prompt (chat, `/ask` and reminder turns) carries its user's facts, and `alfred_forget` is offered. Facts are learned, remembered and listed by `/memory` either way. |
+| `memory.facts_context_max_chars` | integer | `3000` | Most characters of facts in one system prompt. Told facts go in first, then learned ones, newest first; the rest are only listed by `/memory`. |
+| `memory.fact_max_chars` | integer | `300` | Longest fact, in characters. A longer learned fact is cut; `alfred_remember` refuses a longer one. |
+| `memory.facts_extraction_max_attempts` | integer | `0` | Failed fact extractions of one conversation before alfred gives up on it. `0` never gives up: the conversation is retried with a WARNING on every failure, and its user's later conversations wait for it. |
+| `memory.facts_duplicate_max_distance` | number | `0.1` | Cosine distance, between 0 and 1 (exclusive), within which two of a user's facts are duplicates; one of them is removed (a told fact is kept over a learned one, otherwise the older). |
 | `web.searxng_url` | URL | `"http://oracle.lan"` | SearXNG instance used by web search. alfred queries `{searxng_url}/search?format=json`; the JSON format must be enabled there. |
 | `web.search_results` | integer | `5` | Most results one web search lists. |
 | `web.fetch_page_chars` | integer | `8000` | Characters of page text in one fetch result. The model reads further with a start offset. Not affected by `ai.tool_result_max_chars`. |
@@ -343,8 +352,13 @@ in total, per server and for alfred's own tools, and the history (with the
 `/ask` input):
 
 ```
-turn 812 context: system 5214 chars (instructions: cookbook 640); tools 15 defs 28410 chars (mcparr 6204, cookbook 19276, alfred 2930); history 30 entries 11032 chars
+turn 812 context: system 5214 chars (facts off; instructions: cookbook 640); tools 15 defs 28410 chars (mcparr 6204, cookbook 19276, alfred 2930); history 30 entries 11032 chars
 ```
+
+Inside the system prompt's size, the line also gives the user's
+[facts](#facts): `facts off`, `facts none` (no facts yet), `facts 14, 1240
+chars`, or `facts 40 of 52, 2990 chars, 12 left out` when they don't all fit
+`memory.facts_context_max_chars`.
 
 After every model request, alfred logs the token counts the model server
 reported. Conversation summaries get the same line:
@@ -367,6 +381,59 @@ definitions, largest first, to find a single oversized schema:
 ```
 turn 812 largest tools: cookbook_update_recipe 4120, cookbook_create_recipe 3980, mcparr_add_media 1210, ...
 ```
+
+## Facts
+
+alfred keeps a list of short facts about each user: their preferences,
+identity, goals, ongoing projects, constraints and the people in their life.
+A user's facts are theirs alone: no other user's turn, tool or `/memory`
+sees them.
+
+- **Learned.** When a conversation is archived, alfred asks the summary model,
+  in the background and only while the queue is quiet, for lasting facts
+  from it. The model reads only your own messages and alfred's replies to
+  them, never service notices, `/ask` prompts or reminders, together with
+  your current facts, and can say that a new fact replaces an old
+  *learned* one ("lives in Porto" replacing "lives in Lisbon"). A user's
+  conversations are read in order, oldest first; conversations archived
+  before the upgrade are read the same way. Each one logs a line without the
+  facts' text:
+
+  ```
+  conversation 41 facts: 2 added, 1 replaced; 812 prompt tokens, 24 completion tokens
+  ```
+
+  A failed extraction logs a WARNING with its attempt count and is retried
+  with the queue's backoff. By default it is never given up, and the user's
+  later conversations wait for it; `memory.facts_extraction_max_attempts`
+  gives up after that many failures.
+- **Told.** "Remember that I'm vegetarian now" makes the model call
+  `alfred_remember`, which stores a *told* fact. Told facts are never
+  replaced by learned ones. In chat turns the model also has `alfred_forget`
+  while facts are in the context, since it then sees the facts' ids.
+- **Duplicates.** Each fact is embedded through the embedding service and
+  compared with the user's other facts. Two within
+  `memory.facts_duplicate_max_distance` of each other are duplicates: the
+  told one, otherwise the older one, is kept, and the log names both ids
+  (`fact 88 duplicate of 12, removed 88`). With the embedding service down,
+  facts are stored anyway and compared once it answers.
+- **Removed facts are kept.** Forgotten, replaced and duplicate facts stay in
+  the `facts` table, marked with when, why and what replaced them, for
+  audit. They are never shown again.
+
+**In the context.** With `memory.facts_in_context = true`, every turn's
+system prompt (chat, `/ask` and reminder turns) ends with the user's facts,
+each with its id and origin, up to `memory.facts_context_max_chars`: told
+facts first, then the newest learned ones. It is off by default, so the
+learned facts can be checked with `/memory` first.
+
+**`/memory`.** The bot's only command. alfred answers it itself, without the
+model, and it isn't part of the conversation:
+
+- `/memory` lists your facts: `[12] allergic to shellfish (told, 3 Nov)`.
+- `/memory forget 12 15` forgets facts 12 and 15.
+
+Any other text after `/memory` gets a short explanation of the two forms.
 
 ## Web search and fetch
 

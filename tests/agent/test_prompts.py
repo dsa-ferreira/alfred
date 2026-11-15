@@ -405,3 +405,73 @@ def test_reminder_turn_rule_mentions_who_set_it() -> None:
     rule = _flat(REMINDER_RULE)
     assert 'by the user named after "set by"' in rule
     assert "If someone else set it, say who" in rule
+
+
+# --- The user's facts (change add-user-facts, design D9) ---------------------------------
+
+from dataclasses import dataclass  # noqa: E402
+
+from alfred.agent.prompts import facts_block  # noqa: E402
+
+
+@dataclass(frozen=True)
+class Known:
+    id: int
+    text: str
+    origin: str
+
+
+def test_facts_block_lists_all_in_id_order() -> None:
+    facts = [Known(15, "runs a homelab", "learned"), Known(12, "allergic to shellfish", "told")]
+    block = facts_block("diogo", facts, 3000)
+    lines = block.text.splitlines()
+    assert lines[0].startswith("What you know about diogo (all 2 facts).")
+    assert "told:" in lines[0] and "learned:" in lines[0]
+    assert lines[1:] == ["[12] allergic to shellfish (told)", "[15] runs a homelab (learned)"]
+    assert (block.shown, block.total) == (2, 2)
+
+
+def test_facts_block_header_counts() -> None:
+    facts = [Known(i, f"fact {i:02}", "learned") for i in range(1, 15)]
+    assert "(all 14 facts)" in facts_block("diogo", facts, 3000).text
+
+
+def test_over_budget_keeps_told_then_newest() -> None:
+    told = [Known(i, f"told fact {i:02}", "told") for i in range(1, 13)]
+    learned = [Known(i, f"learned fact {i:02}", "learned") for i in range(13, 53)]
+    line = len("[13] learned fact 13 (learned)") + 1
+    told_size = sum(len(f"[{f.id}] {f.text} (told)") + 1 for f in told)
+    block = facts_block("diogo", told + learned, told_size + 28 * line)
+    assert (block.shown, block.total) == (40, 52)
+    assert "(40 of 52 facts; the rest are listed by /memory)" in block.text
+    ids = [int(x.split("]")[0][1:]) for x in block.text.splitlines()[1:]]
+    assert ids == sorted(ids)
+    assert set(range(1, 13)) <= set(ids)  # every told fact
+    assert set(ids) - set(range(1, 13)) == set(range(25, 53))  # the newest learned
+    assert sum(len(x) + 1 for x in block.text.splitlines()[1:]) <= told_size + 28 * line
+
+
+def test_over_budget_tries_smaller_facts() -> None:
+    facts = [Known(1, "short", "learned"), Known(2, "x" * 100, "learned")]
+    block = facts_block("diogo", facts, 40)
+    assert block.text.splitlines()[1:] == ["[1] short (learned)"]
+
+
+def test_no_facts_no_block() -> None:
+    assert facts_block("ana", [], 3000).text == ""
+
+
+def test_facts_block_is_last() -> None:
+    block = facts_block("diogo", [Known(12, "allergic to shellfish", "told")], 3000).text
+    for ask, reminder in ((False, False), (True, False), (False, True)):
+        prompt = system_prompt(
+            None,
+            name="diogo",
+            address="sir",
+            ask=ask,
+            reminder=reminder,
+            today=date(2026, 11, 2),
+            notes=["a toolset note"],
+            facts=block,
+        )
+        assert prompt.endswith("\n\n" + block)

@@ -1,0 +1,251 @@
+"""Facts learned from archived conversations (change add-user-facts, design D3).
+
+``FactExtractionJob`` is a sweeper job. Every archived conversation starts
+with its extraction pending (``facts_outcome IS NULL``), so conversations
+from before the upgrade are backfilled like new ones, oldest first. A user's
+conversations are extracted in order: one waits while an older one of the
+same user is pending, even on its backoff; other users' don't hold it up.
+
+The request goes to the summary model, only while the queue is quiet, and is
+cancelled when a queue item arrives (``preempt``): then nothing is recorded
+and no attempt counted. A failed request or an unreadable reply logs a
+WARNING with the attempt count and is retried with backoff; with ``[memory]
+facts_extraction_max_attempts`` above 0 it is given up after that many.
+
+Every fact the model returns is stored as ``learned``; ``REPLACE <id>`` only
+removes one of the user's active learned facts, anything else is a plain
+addition.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
+
+from alfred.agent.model import ModelError, token_counts
+from alfred.backoff import backoff_s
+from alfred.config import Config
+from alfred.db.models import Conversation
+from alfred.memory.extraction import (
+    ExtractionParseError,
+    extraction_entries,
+    extraction_messages,
+    parse_facts,
+)
+from alfred.memory.facts import FactStore, insert_fact, lock_user
+from alfred.memory.summaries import Model, load_transcript
+from alfred.memory.transcript import cut_middle, render
+
+log = logging.getLogger(__name__)
+
+
+def _pending() -> tuple[object, ...]:
+    return (Conversation.ended_at.is_not(None), Conversation.facts_outcome.is_(None))
+
+
+def _first_of_its_user() -> object:
+    """No older conversation of the same user is pending (the partial index)."""
+    older = aliased(Conversation)
+    return ~exists().where(
+        older.user_name == Conversation.user_name,
+        older.id < Conversation.id,
+        older.ended_at.is_not(None),
+        older.facts_outcome.is_(None),
+    )
+
+
+class FactExtractionJob:
+    uses_model = True
+
+    def __init__(
+        self,
+        config: Config,
+        sessions: async_sessionmaker[AsyncSession],
+        model: Model,
+        facts: FactStore,
+        *,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._config = config
+        self._memory = config.memory
+        self._sessions = sessions
+        self._model = model
+        self._facts = facts
+        self._now = now
+        # Set when a retry was scheduled or an extraction ended.
+        self.changed = asyncio.Event()
+
+    async def next_due(self, model_allowed: bool) -> int | None:
+        """The oldest pending conversation that is due and has no older pending one."""
+        if not model_allowed:
+            return None
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(Conversation.id)
+                .where(
+                    *_pending(),
+                    or_(
+                        Conversation.facts_next_at.is_(None),
+                        Conversation.facts_next_at <= self._now(),
+                    ),
+                    _first_of_its_user(),
+                )
+                .order_by(Conversation.id)
+                .limit(1)
+            )
+
+    async def seconds_until_due(self, model_allowed: bool) -> float | None:
+        if not model_allowed:
+            return None  # the sweeper wakes when the queue goes quiet
+        async with self._sessions() as session:
+            soonest = await session.scalar(
+                select(func.min(Conversation.facts_next_at)).where(
+                    *_pending(), _first_of_its_user()
+                )
+            )
+        if soonest is None:
+            return None
+        return max(0.0, (soonest - self._now()).total_seconds())
+
+    async def run(self, key: int, preempt: asyncio.Event | None) -> None:
+        """Extract one conversation's facts. Never raises."""
+        try:
+            await self._extract(key, preempt)
+        except Exception as exc:
+            log.exception("conversation %s: fact extraction failed unexpectedly", key)
+            await self._failed(key, f"internal error ({type(exc).__name__})")
+        finally:
+            self.changed.set()
+
+    async def _extract(self, conversation_id: int, preempt: asyncio.Event | None) -> None:
+        async with self._sessions() as session:
+            row = await session.get(Conversation, conversation_id)
+            if row is None or row.ended_at is None or row.facts_outcome is not None:
+                return
+            user = row.user_name
+            entries = extraction_entries(await load_transcript(session, conversation_id))
+        if not any(e.kind == "user" for e in entries):
+            await self._done(conversation_id)
+            log.info("conversation %s facts: no message from its user", conversation_id)
+            return
+
+        transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
+        known = await self._facts.list(user)
+        messages = extraction_messages(user, known, transcript)
+        request = asyncio.ensure_future(self._model.complete_streamed(messages))
+        try:
+            if preempt is not None:
+                waiter = asyncio.ensure_future(preempt.wait())
+                try:
+                    await asyncio.wait({request, waiter}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    waiter.cancel()
+                if not request.done():
+                    log.info(
+                        "conversation %s: fact extraction gave way to the queue", conversation_id
+                    )
+                    return
+            reply = await request
+            found = parse_facts(reply.content or "")
+        except (ModelError, ExtractionParseError) as exc:
+            await self._failed(conversation_id, str(exc))
+            return
+        finally:
+            if not request.done():
+                # Preempted, or this task was cancelled: closing the stream
+                # makes the model server stop generating.
+                request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
+
+        shown = {f.id for f in known}
+        added = replaced = 0
+        async with self._sessions.begin() as session:
+            await lock_user(session, user)
+            still_pending = await session.scalar(
+                select(Conversation.id).where(Conversation.id == conversation_id, *_pending())
+            )
+            if still_pending is None:
+                return
+            for fact in found:
+                fact_id = await insert_fact(
+                    session,
+                    user,
+                    fact.text[: self._memory.fact_max_chars].strip(),
+                    "learned",
+                    conversation_id=conversation_id,
+                )
+                added += 1
+                # Only a fact the model was shown; never one stored just now.
+                if fact.replaces in shown:
+                    gone = await self._facts.replace_in(session, user, fact_id, [fact.replaces])
+                    replaced += len(gone)
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation_id)
+                .values(facts_outcome="done", facts_attempts=0, facts_next_at=None)
+            )
+        log.info(
+            "conversation %s facts: %d added, %d replaced; %s",
+            conversation_id,
+            added,
+            replaced,
+            token_counts(reply.usage),
+        )
+        if added:
+            self._facts.changed.set()  # embed and dedupe them now
+
+    async def _done(self, conversation_id: int) -> None:
+        async with self._sessions.begin() as session:
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation_id)
+                .values(facts_outcome="done", facts_attempts=0, facts_next_at=None)
+            )
+
+    async def _failed(self, conversation_id: int, reason: str) -> None:
+        """Count a failed attempt: retry later, or give up after the configured maximum."""
+        try:
+            async with self._sessions.begin() as session:
+                attempts = await session.scalar(
+                    update(Conversation)
+                    .where(Conversation.id == conversation_id)
+                    .values(facts_attempts=Conversation.facts_attempts + 1)
+                    .returning(Conversation.facts_attempts)
+                )
+                if attempts is None:
+                    return
+                log.warning(
+                    "conversation %s: fact extraction failed (attempt %d): %s",
+                    conversation_id,
+                    attempts,
+                    reason,
+                )
+                limit = self._memory.facts_extraction_max_attempts
+                if limit > 0 and attempts >= limit:
+                    await session.execute(
+                        update(Conversation)
+                        .where(Conversation.id == conversation_id)
+                        .values(facts_outcome="gave_up", facts_next_at=None)
+                    )
+                    log.warning(
+                        "conversation %s: gave up fact extraction after %d attempts",
+                        conversation_id,
+                        attempts,
+                    )
+                    return
+                delay = backoff_s(attempts, self._config.queue)
+                await session.execute(
+                    update(Conversation)
+                    .where(Conversation.id == conversation_id)
+                    .values(facts_next_at=self._now() + timedelta(seconds=delay))
+                )
+        except Exception:
+            log.exception("conversation %s: could not record a failed extraction", conversation_id)
+        finally:
+            self.changed.set()

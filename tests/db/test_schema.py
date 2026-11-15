@@ -560,3 +560,109 @@ def test_end_reason_upgrade_keeps_rows_and_is_checked(postgres_url: str) -> None
         command.check(cfg)
     finally:
         engine.dispose()
+
+
+# --- user facts (migration 0007) ------------------------------------------------------
+
+
+def test_facts_upgrade_leaves_archived_conversations_pending(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "user_facts")
+    with _admin("diogo"):
+        command.upgrade(cfg, "0006")
+    command.upgrade(cfg, "head")
+    engine = create_engine(sa_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, facts_outcome, facts_attempts, facts_next_at "
+                    "FROM conversations ORDER BY id"
+                )
+            ).all()
+            assert rows == [(41, None, 0, None), (42, None, 0, None)]
+        command.check(cfg)
+
+        command.downgrade(cfg, "0006")
+        assert "facts" not in inspect(engine).get_table_names()
+        columns = {c["name"] for c in inspect(engine).get_columns("conversations")}
+        assert not {"facts_outcome", "facts_attempts", "facts_next_at"} & columns
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT count(*) FROM conversations")) == 2
+        command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()
+
+
+def test_fact_checks(database_url: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("TRUNCATE facts, entries, conversations CASCADE"))
+            conn.execute(
+                text("INSERT INTO facts (user_name, text, origin) VALUES ('d', 'x', 'told')")
+            )
+            conn.execute(
+                text("INSERT INTO facts (user_name, text, origin) VALUES ('d', 'x', 'learned')")
+            )
+            bad = [
+                "INSERT INTO facts (user_name, text, origin) VALUES ('d', 'x', 'guessed')",
+                "INSERT INTO facts (user_name, text, origin, removed_at, removed_reason) "
+                "VALUES ('d', 'x', 'told', now(), 'lost')",
+                "INSERT INTO facts (user_name, text, origin, removed_at) "
+                "VALUES ('d', 'x', 'told', now())",
+                "INSERT INTO facts (user_name, text, origin, removed_reason) "
+                "VALUES ('d', 'x', 'told', 'forgotten')",
+                "INSERT INTO conversations (user_name, ended_at, facts_outcome) "
+                "VALUES ('d', now(), 'skipped')",
+            ]
+            for statement in bad:
+                with pytest.raises(IntegrityError), conn.begin_nested():
+                    conn.execute(text(statement))
+            for reason in ("forgotten", "replaced", "duplicate"):
+                conn.execute(
+                    text(
+                        "INSERT INTO facts (user_name, text, origin, removed_at, removed_reason) "
+                        f"VALUES ('d', 'x', 'told', now(), '{reason}')"
+                    )
+                )
+            for outcome in ("done", "gave_up"):
+                conn.execute(
+                    text(
+                        "INSERT INTO conversations (user_name, ended_at, facts_outcome) "
+                        f"VALUES ('d', now(), '{outcome}')"
+                    )
+                )
+            conn.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_deleting_a_conversation_keeps_its_facts(database_url: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("TRUNCATE facts, entries, conversations CASCADE"))
+            conversation = conn.scalar(
+                text(
+                    "INSERT INTO conversations (user_name, ended_at) "
+                    "VALUES ('d', now()) RETURNING id"
+                )
+            )
+            fact = conn.scalar(
+                text(
+                    "INSERT INTO facts (user_name, text, origin, conversation_id) "
+                    "VALUES ('d', 'x', 'learned', :c) RETURNING id"
+                ),
+                {"c": conversation},
+            )
+            conn.execute(text("DELETE FROM conversations WHERE id = :c"), {"c": conversation})
+            assert (
+                conn.scalar(text("SELECT conversation_id FROM facts WHERE id = :f"), {"f": fact})
+                is None
+            )
+            conn.rollback()
+    finally:
+        engine.dispose()

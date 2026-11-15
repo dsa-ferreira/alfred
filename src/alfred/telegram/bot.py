@@ -5,8 +5,11 @@ bot (change add-multiple-users, design D6); a private chat's ID is the user's
 ID, so replies go to ``telegram_user_id``. Anyone else, and every group
 chat, is ignored without a reply.
 
-alfred defines no bot commands. Every text message from a user, including
-one that starts with ``/``, is queued for the AI as theirs exactly as written.
+alfred defines one bot command, ``/memory`` (change add-user-facts, design
+D11): it lists the user's facts or forgets some, without the model, and is
+neither queued nor recorded in the conversation. Every other text message
+from a user, including one that starts with ``/``, is queued for the AI as
+theirs exactly as written.
 
 With attachments configured (change add-attachments), photos, ``image/*``
 files and PDF files go to the intake with their caption; anything else gets
@@ -21,18 +24,22 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from datetime import datetime
+from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message
+from aiogram.types import BotCommand, Message
 
 from alfred import notices
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
 from alfred.config import User, Users
 from alfred.queue import Queue
-from alfred.telegram.formatting import split_for_telegram
+from alfred.telegram.formatting import split_for_telegram, split_markdown
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +90,75 @@ class TelegramDownloader:
         return out.read()
 
 
+# ``/memory``, ``/memory@alfred_bot`` (from the command menu) and their
+# arguments; not ``/memorybank``.
+MEMORY_COMMAND = re.compile(r"/memory(?:@\w+)?(?:\s+(.*))?", re.DOTALL)
+COMMANDS = [BotCommand(command="memory", description="What I know about you")]
+
+
+async def register_commands(bot: Bot) -> None:
+    """Show ``/memory`` in the clients' command menu. A failure is only logged."""
+    try:
+        await bot.set_my_commands(COMMANDS)
+    except Exception as exc:
+        log.warning("could not register the bot commands: %s", type(exc).__name__)
+
+
+class Fact(Protocol):
+    id: int
+    text: str
+    origin: str
+    created_at: datetime
+
+
+class Facts(Protocol):
+    """The user's facts (``alfred.memory.facts.FactStore``)."""
+
+    async def list(self, user_name: str) -> Sequence[Fact]: ...
+
+    async def forget(
+        self, user_name: str, ids: Sequence[int]
+    ) -> tuple[Sequence[Fact], Sequence[int]]: ...
+
+
+class MemoryCommand:
+    """Answers ``/memory`` and ``/memory forget <id>...`` for the sender's own facts."""
+
+    def __init__(self, facts: Facts, zone: ZoneInfo) -> None:
+        self._facts = facts
+        self._zone = zone
+
+    async def answer(self, user: User, arguments: str | None) -> list[str]:
+        """The messages to send, already split for Telegram."""
+        words = (arguments or "").replace(",", " ").split()
+        if not words:
+            facts = await self._facts.list(user.name)
+            log.info("listed %s's facts (%d)", user.name, len(facts))
+            if not facts:
+                return [notices.memory_none(user.address)]
+            text = "\n".join([notices.memory_list(user.address), *map(self._line, facts)])
+            return split_markdown(text)
+        ids = [_fact_id(w) for w in words[1:]]
+        if words[0].lower() != "forget" or not ids or None in ids:
+            return [notices.memory_usage(user.address)]
+        removed, missing = await self._facts.forget(user.name, [i for i in ids if i is not None])
+        log.info(
+            "%s forgot %d fact(s) with /memory, %d not found", user.name, len(removed), len(missing)
+        )
+        text = notices.memory_forgot(user.address, [self._line(f) for f in removed], list(missing))
+        return split_markdown(text)
+
+    def _line(self, fact: Fact) -> str:
+        """``[12] allergic to shellfish (told, 3 Nov)``."""
+        day = fact.created_at.astimezone(self._zone)
+        return f"[{fact.id}] {fact.text} ({fact.origin}, {day.day} {day:%b})"
+
+
+def _fact_id(word: str) -> int | None:
+    word = word.removeprefix("#")
+    return int(word) if word.isdigit() else None
+
+
 class AlbumCollector:
     """Holds the parts of each album until ``wait_s`` passes without a new one."""
 
@@ -123,6 +199,7 @@ def make_dispatcher(
     *,
     intake: Intake | None = None,
     album_wait_s: float = 2,
+    memory: MemoryCommand | None = None,
 ) -> Dispatcher:
     dispatcher = Dispatcher()
 
@@ -168,6 +245,12 @@ def make_dispatcher(
             )
             return
         if message.text is not None:
+            command = MEMORY_COMMAND.fullmatch(message.text.strip())
+            if memory is not None and command is not None:
+                # Not queued and not recorded: it never reaches the conversation.
+                for text in await memory.answer(user, command.group(1)):
+                    await message.answer(text, parse_mode=None)
+                return
             item_id = await queue.enqueue_user(user.name, message.text, message.message_id)
             log.info("queued %s's message %s as item %s", user.name, message.message_id, item_id)
             return
