@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Fact
 from alfred.memory.embedding import EmbeddingUnreachable
-from alfred.memory.facts import Duplicate, FactsNotFound, FactStore
+from alfred.memory.facts import DUPLICATE_CANDIDATES, DuplicateCheck, FactsNotFound, FactStore
 from tests.helpers import FakeEmbedder, make_config
 
 NOW = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)
@@ -137,93 +136,81 @@ async def test_concurrent_forget_and_replace_mark_once(
     assert target not in [f.id for f in await facts.list("diogo")]
 
 
-# --- Embedding and near-duplicates (design D6) ---------------------------------------
+# --- Embedding and duplicate candidates (change fix-fact-removals, design D2) -------------
 
 
-async def embedded(
-    facts: FactStore, user: str, fact_text: str, origin: str = "learned"
-) -> tuple[int, Duplicate | None]:
+async def embedded(facts: FactStore, user: str, fact_text: str, origin: str = "learned") -> int:
     fid, _ = await facts.add(user, fact_text, origin)  # type: ignore[arg-type]
-    return fid, await facts.embed(fid)
+    assert await facts.embed(fid)
+    return fid
 
 
-async def test_near_duplicate_learned_fact_is_removed(
-    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+def candidate_ids(check: DuplicateCheck | None) -> list[int]:
+    assert check is not None
+    return [f.id for f in check.candidates]
+
+
+async def test_embedding_removes_nothing(sessions: async_sessionmaker[AsyncSession]) -> None:
+    facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
+    a = await embedded(facts, "diogo", "allergic to shellfish")
+    b = await embedded(facts, "diogo", "the user is allergic to shellfish")
+    assert [f.id for f in await facts.list("diogo")] == [a, b]
+    row = await fact(sessions, b)
+    assert row.embedding_model == "nomic-embed-text:v1.5" and row.duplicate_checked_at is None
+
+
+async def test_candidates_nearest_first_within_the_distance(
+    sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    embedder = FakeEmbedder([[1.0, 0.0], [0.99, 0.05]])
-    facts = store(sessions, embedder)
-    old, _ = await embedded(facts, "diogo", "allergic to shellfish")
-    with caplog.at_level(logging.INFO, logger="alfred.memory.facts"):
-        new, dup = await embedded(facts, "diogo", "the user is allergic to shellfish")
-    assert dup == Duplicate(kept=old, removed=new)
-    row = await fact(sessions, new)
-    assert (row.removed_reason, row.replaced_by) == ("duplicate", old)
-    assert row.text == "the user is allergic to shellfish"  # still stored
-    assert [f.id for f in await facts.list("diogo")] == [old]
-    assert f"fact {new} duplicate of {old}, removed {new}" in caplog.text
+    vectors = [[1.0, 0.0], [0.0, 1.0], [0.9, 0.2], [0.99, 0.05], [1.0, 0.0]]
+    facts = store(sessions, FakeEmbedder(vectors), facts_duplicate_max_distance=0.2)
+    far = await embedded(facts, "diogo", "runs a homelab")  # [1, 0]
+    await embedded(facts, "diogo", "likes jazz")  # [0, 1]: far away
+    close = await embedded(facts, "diogo", "lives in Lisbon")  # [0.9, 0.2]
+    closer = await embedded(facts, "diogo", "lives in Lisbon, Portugal")  # [0.99, 0.05]
+    new = await embedded(facts, "diogo", "runs a home lab")  # [1, 0]
+    check = await facts.duplicate_candidates(new)
+    assert check is not None and check.fact.id == new and check.user_name == "diogo"
+    assert candidate_ids(check) == [far, closer, close]
 
 
-async def test_distant_facts_both_stay(sessions: async_sessionmaker[AsyncSession]) -> None:
-    facts = store(sessions, FakeEmbedder([[1.0, 0.0], [0.0, 1.0]]))
-    await embedded(facts, "diogo", "allergic to shellfish")
-    _, dup = await embedded(facts, "diogo", "runs a homelab")
-    assert dup is None
-    assert len(await facts.list("diogo")) == 2
+async def test_candidates_capped(sessions: async_sessionmaker[AsyncSession]) -> None:
+    facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
+    ids = [await embedded(facts, "diogo", f"fact {i}") for i in range(8)]
+    assert candidate_ids(await facts.duplicate_candidates(ids[-1])) == ids[:DUPLICATE_CANDIDATES]
 
 
-async def test_removed_fact_is_never_the_match(
+async def test_candidates_leave_out_removed_foreign_and_other_model_facts(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    old_model = store(sessions, FakeEmbedder(default=[1.0, 0.0], model="old-model"))
+    await embedded(old_model, "diogo", "embedded with another model")
+    facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
+    removed = await embedded(facts, "diogo", "forgotten")
+    await facts.forget("diogo", [removed])
+    await embedded(facts, "ana", "allergic to shellfish")
+    kept = await embedded(facts, "diogo", "allergic to shellfish")
+    new = await embedded(facts, "diogo", "is allergic to shellfish")
+    assert candidate_ids(await facts.duplicate_candidates(new)) == [kept]
+
+
+async def test_no_candidates_for_an_unembedded_or_removed_fact(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
-    old, _ = await embedded(facts, "diogo", "allergic to shellfish")
-    await facts.forget("diogo", [old])
-    new, dup = await embedded(facts, "diogo", "allergic to shellfish")
-    assert dup is None
-    assert [f.id for f in await facts.list("diogo")] == [new]
-
-
-async def test_told_beats_learned_regardless_of_age(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
-    told, _ = await embedded(facts, "diogo", "always use metric units", "told")
-    learned, dup = await embedded(facts, "diogo", "prefers metric units", "learned")
-    assert dup == Duplicate(kept=told, removed=learned)
-
-    facts2 = store(sessions, FakeEmbedder(default=[0.0, 1.0]))
-    learned2, _ = await embedded(facts2, "diogo", "likes jazz", "learned")
-    told2, dup2 = await embedded(facts2, "diogo", "loves jazz", "told")
-    assert dup2 == Duplicate(kept=told2, removed=learned2)
-    assert (await fact(sessions, learned2)).replaced_by == told2
-
-
-async def test_other_users_facts_not_compared(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
-    await embedded(facts, "diogo", "allergic to shellfish")
-    _, dup = await embedded(facts, "ana", "allergic to shellfish")
-    assert dup is None
-    assert len(await facts.list("diogo")) == len(await facts.list("ana")) == 1
-
-
-async def test_facts_from_another_model_not_compared(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    old_facts = store(sessions, FakeEmbedder(default=[1.0, 0.0], model="old-model"))
-    await embedded(old_facts, "diogo", "allergic to shellfish")
-    facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
-    _, dup = await embedded(facts, "diogo", "allergic to shellfish")
-    assert dup is None
-    assert len(await facts.list("diogo")) == 2
+    plain, _ = await facts.add("diogo", "not embedded", "told")
+    assert await facts.duplicate_candidates(plain) is None
+    gone = await embedded(facts, "diogo", "gone")
+    await facts.forget("diogo", [gone])
+    assert await facts.duplicate_candidates(gone) is None
 
 
 async def test_embedder_error_leaves_the_fact_unembedded(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     facts = store(sessions, FakeEmbedder([EmbeddingUnreachable("down")]))
-    fid, dup = await embedded(facts, "diogo", "my car is electric", "told")
-    assert dup is None
+    fid, _ = await facts.add("diogo", "my car is electric", "told")
+    assert not await facts.embed(fid)
     row = await fact(sessions, fid)
     assert row.embedding is None and row.removed_at is None
     assert row.embedding_attempts == 1

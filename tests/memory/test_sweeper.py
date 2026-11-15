@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.model import ModelReply, ModelUnreachable
 from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.history import History
+from alfred.memory.duplicates import FactDuplicateJob
 from alfred.memory.embedding import EmbeddingUnreachable
 from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
@@ -490,11 +491,14 @@ def fact_sweeper(
     embedder: FakeEmbedder,
     *,
     queue: Queue | None = None,
+    model: FakeModel | None = None,
 ) -> tuple[Sweeper, FactStore]:
+    """Fact embedding, then the duplicate check with ``model``, as ``serve`` runs them."""
     cfg = make_config(queue=FAST)
     facts = FactStore(cfg, sessions, embedder)
     summaries = Summaries(cfg, sessions, FakeModel(), embedder)
-    return Sweeper(cfg, sessions, summaries, queue=queue, jobs=[FactEmbeddingJob(facts)]), facts
+    jobs = [FactEmbeddingJob(facts), FactDuplicateJob(facts, model or FakeModel())]
+    return Sweeper(cfg, sessions, summaries, queue=queue, jobs=jobs), facts
 
 
 async def _fact_row(sessions: async_sessionmaker[AsyncSession], fact_id: int) -> Fact:
@@ -509,15 +513,19 @@ async def test_fact_added_while_ragman_is_down_is_embedded_later(
 ) -> None:
     down = EmbeddingUnreachable("down")
     embedder = FakeEmbedder([[1.0, 0.0], down, down], default=[0.99, 0.05])
-    mem, facts = fact_sweeper(sessions, embedder)
+    model = FakeModel([text("SAME 1")])
+    mem, facts = fact_sweeper(sessions, embedder, model=model)
     old, _ = await facts.add("diogo", "allergic to shellfish", "learned")
     await facts.embed(old)
+    check = await facts.duplicate_candidates(old)
+    assert check is not None
+    await facts.finish_duplicate_check(check, [])  # alone when it was stored
     new, _ = await facts.add("diogo", "the user is allergic to shellfish", "learned")
     await facts.embed(new)  # ragman down
     assert (await _fact_row(sessions, new)).embedding is None
     task = asyncio.create_task(mem.run_forever())
     try:
-
+        # Embedded once ragman answers, then checked for duplicates by the model.
         async def deduped() -> bool:
             return (await _fact_row(sessions, new)).removed_reason == "duplicate"
 
@@ -525,6 +533,7 @@ async def test_fact_added_while_ragman_is_down_is_embedded_later(
     finally:
         task.cancel()
     assert (await _fact_row(sessions, new)).replaced_by == old
+    assert len(model.requests) == 1
 
 
 async def test_changing_the_embedding_model_reembeds_facts(

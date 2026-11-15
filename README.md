@@ -117,7 +117,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `memory.facts_context_max_chars` | integer | `3000` | Most characters of facts in one system prompt. Told facts go in first, then learned ones, newest first; the rest are only listed by `/memory`. |
 | `memory.fact_max_chars` | integer | `300` | Longest fact, in characters. A longer learned fact is cut; `alfred_remember` refuses a longer one. |
 | `memory.facts_extraction_max_attempts` | integer | `0` | Failed fact extractions of one conversation before alfred gives up on it. `0` never gives up: the conversation is retried with a WARNING on every failure, and its user's later conversations wait for it. |
-| `memory.facts_duplicate_max_distance` | number | `0.1` | Cosine distance, between 0 and 1 (exclusive), within which two of a user's facts are duplicates; one of them is removed (a told fact is kept over a learned one, otherwise the older). |
+| `memory.facts_duplicate_max_distance` | number | `0.2` | Cosine distance, between 0 and 1 (exclusive), within which a new fact and the user's other facts are checked for being duplicates. Distance alone removes nothing: the model decides which are the same, and one of each such pair is removed (a told fact is kept over a learned one, otherwise the older). Up to 5 of the closest facts are checked. |
 | `web.searxng_url` | URL | `"http://oracle.lan"` | SearXNG instance used by web search. alfred queries `{searxng_url}/search?format=json`; the JSON format must be enabled there. |
 | `web.search_results` | integer | `5` | Most results one web search lists. |
 | `web.fetch_page_chars` | integer | `8000` | Characters of page text in one fetch result. The model reads further with a start offset. Not affected by `ai.tool_result_max_chars`. |
@@ -394,14 +394,21 @@ sees them.
   in the background and only while the queue is quiet, for lasting facts
   from it. The model reads only your own messages and alfred's replies to
   them, never service notices, `/ask` prompts or reminders, together with
-  your current facts, and can say that a new fact replaces an old
-  *learned* one ("lives in Porto" replacing "lives in Lisbon"). A user's
+  your current facts. A fact is kept only if it would change how alfred
+  helps you in a later conversation about something else: instructions to
+  alfred (setting or changing reminders and briefings, editing recipes,
+  lookups), how you refer to someone without saying who they are, and what
+  was asked or done in the conversation are not facts. The model can say
+  that a new fact replaces an old *learned* one ("lives in Porto" replacing
+  "lives in Lisbon"), quoting the old fact's text; if the quote doesn't
+  match the fact with that id, nothing is replaced, the new fact is simply
+  added, and the refusal is logged. A user's
   conversations are read in order, oldest first; conversations archived
   before the upgrade are read the same way. Each one logs a line without the
   facts' text:
 
   ```
-  conversation 41 facts: 2 added, 1 replaced; 812 prompt tokens, 24 completion tokens
+  conversation 41 facts: 2 added, 1 replaced, 0 replacements refused; 812 prompt tokens, 24 completion tokens
   ```
 
   A failed extraction logs a WARNING with its attempt count and is retried
@@ -412,12 +419,26 @@ sees them.
   `alfred_remember`, which stores a *told* fact. Told facts are never
   replaced by learned ones. In chat turns the model also has `alfred_forget`
   while facts are in the context, since it then sees the facts' ids.
-- **Duplicates.** Each fact is embedded through the embedding service and
-  compared with the user's other facts. Two within
-  `memory.facts_duplicate_max_distance` of each other are duplicates: the
-  told one, otherwise the older one, is kept, and the log names both ids
-  (`fact 88 duplicate of 12, removed 88`). With the embedding service down,
-  facts are stored anyway and compared once it answers.
+- **Duplicates.** Each fact is embedded through the embedding service, which
+  only picks the user's closest other facts: up to 5 within
+  `memory.facts_duplicate_max_distance`. Distance alone removes nothing,
+  since a related or contradicting fact ("lives in Lisbon" / "lives in
+  Porto") can be as close as a real duplicate. The summary model then says
+  which of those say the same thing, in the background and only while the
+  queue is quiet, like extraction. A fact on the same topic, one that adds
+  detail, or one that contradicts it is kept. Of a real pair, the told one,
+  otherwise the older one, stays, and the log names both ids
+  (`fact 88 duplicate of 12, removed 88`), then the check's counts:
+
+  ```
+  fact 88 duplicate check: 3 compared, 1 duplicate; 240 prompt tokens, 4 completion tokens
+  ```
+
+  A fact with nothing close is checked without a model request. A failed
+  check logs a WARNING with its attempt count and is retried with backoff,
+  never given up; the fact is in use meanwhile. With the embedding service
+  down, facts are stored anyway and checked once it answers. `alfred_remember`
+  always saves the fact; a duplicate of it is removed later in the same way.
 - **Removed facts are kept.** Forgotten, replaced and duplicate facts stay in
   the `facts` table, marked with when, why and what replaced them, for
   audit. They are never shown again.

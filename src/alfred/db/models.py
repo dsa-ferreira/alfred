@@ -336,6 +336,12 @@ class Fact(Base):
             "id",
             postgresql_where=text("removed_at IS NULL"),
         ),
+        # Active facts whose duplicate check is pending (change fix-fact-removals).
+        Index(
+            "ix_facts_duplicate_pending",
+            "id",
+            postgresql_where=text("removed_at IS NULL AND duplicate_checked_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -354,3 +360,7 @@ class Fact(Base):
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     removed_reason: Mapped[str | None] = mapped_column(Text)
     replaced_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("facts.id"))
+    # The model's duplicate check (change fix-fact-removals): null while pending.
+    duplicate_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duplicate_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    duplicate_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

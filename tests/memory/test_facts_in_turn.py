@@ -119,3 +119,17 @@ async def test_no_fact_tools_on_ask_turns(sessions: async_sessionmaker[AsyncSess
     facts = tools(sessions, facts_in_context=True)
     model = await run(sessions, facts, await ask_turn(sessions), facts_in_context=True)
     assert not {REMEMBER, FORGET} & model.tool_names()
+
+
+async def test_remembering_a_near_duplicate_makes_no_extra_request(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """The duplicate check is left to the background (change fix-fact-removals, D6)."""
+    facts = tools(sessions, facts_in_context=True)
+    await facts.facts.add("diogo", "allergic to shellfish", "told")
+    model = FakeModel([calls((REMEMBER, '{"text": "is allergic to shellfish"}')), text("Noted.")])
+    turn = await owner_turn(sessions, "remember I'm allergic to shellfish")
+    await agent(sessions, model, facts=facts, memory_config={"facts_in_context": True}).run(turn)
+    assert len(model.requests) == 2  # the tool call and the answer, nothing else
+    assert model.requests[1][0][-1]["content"] == "Saved as fact 2."
+    assert len(await facts.facts.list("diogo")) == 2

@@ -780,3 +780,56 @@ def test_recurring_downgrade(postgres_url: str) -> None:
         command.check(cfg)
     finally:
         engine.dispose()
+
+
+# --- fact duplicate check (migration 0009) ----------------------------------------------
+
+
+def test_duplicate_check_upgrade_marks_existing_facts_checked(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "fact_duplicates")
+    with _admin("diogo"):
+        command.upgrade(cfg, "0008")
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO facts (id, user_name, text, origin) VALUES "
+                    "(1, 'diogo', 'active', 'told'), (2, 'diogo', 'gone', 'learned')"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE facts SET removed_at = now(), removed_reason = 'duplicate', "
+                    "replaced_by = 1 WHERE id = 2"
+                )
+            )
+        command.upgrade(cfg, "head")
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, duplicate_checked_at IS NOT NULL, duplicate_attempts, "
+                    "duplicate_next_at FROM facts ORDER BY id"
+                )
+            ).all()
+            assert rows == [(1, True, 0, None), (2, True, 0, None)]
+            conn.execute(
+                text(
+                    "INSERT INTO facts (id, user_name, text, origin) "
+                    "VALUES (3, 'diogo', 'n', 'told')"
+                )
+            )
+            assert conn.scalar(text("SELECT duplicate_checked_at FROM facts WHERE id = 3")) is None
+        command.check(cfg)
+
+        command.downgrade(cfg, "0008")
+        columns = {c["name"] for c in inspect(engine).get_columns("facts")}
+        assert not {"duplicate_checked_at", "duplicate_attempts", "duplicate_next_at"} & columns
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT count(*) FROM facts")) == 3
+        command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()

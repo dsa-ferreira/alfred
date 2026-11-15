@@ -103,7 +103,8 @@ async def test_allergy_mentioned_in_passing(sessions: async_sessionmaker[AsyncSe
 async def test_moved_house_replaces_the_learned_fact(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    extract, facts = job(sessions, FakeModel([text("REPLACE 1: diogo lives in Porto.")]))
+    reply = 'REPLACE 1 "diogo lives in Lisbon.": diogo lives in Porto.'
+    extract, facts = job(sessions, FakeModel([text(reply)]))
     lisbon, _ = await facts.add("diogo", "diogo lives in Lisbon.", "learned")
     await archived(sessions, "diogo", *chat("I moved to Porto last week"))
     await run_due(extract)
@@ -117,7 +118,8 @@ async def test_moved_house_replaces_the_learned_fact(
 async def test_replace_of_anything_but_an_own_learned_fact_is_an_addition(
     sessions: async_sessionmaker[AsyncSession], target: str
 ) -> None:
-    extract, facts = job(sessions, FakeModel([text("REPLACE 1: diogo eats fish.")]))
+    # The quote matches: only the id rules refuse it.
+    extract, facts = job(sessions, FakeModel([text('REPLACE 1 "vegetarian": diogo eats fish.')]))
     if target == "told":
         await facts.add("diogo", "vegetarian", "told")
     elif target == "removed":
@@ -314,7 +316,9 @@ async def test_outcome_logged_without_fact_text(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     reply = ModelReply(
-        content="NEW: diogo has two cats.\nREPLACE 1: diogo lives in Porto.",
+        content=(
+            'NEW: diogo has two cats.\nREPLACE 1 "diogo lives in Lisbon.": diogo lives in Porto.'
+        ),
         usage=Usage(prompt_tokens=812, completion_tokens=24),
     )
     extract, facts = job(sessions, FakeModel([reply]))
@@ -326,7 +330,8 @@ async def test_outcome_logged_without_fact_text(
         r.getMessage() for r in caplog.records if f"conversation {cid} facts:" in r.getMessage()
     ]
     assert lines == [
-        f"conversation {cid} facts: 2 added, 1 replaced; 812 prompt tokens, 24 completion tokens"
+        f"conversation {cid} facts: 2 added, 1 replaced, 0 replacements refused; "
+        "812 prompt tokens, 24 completion tokens"
     ]
     assert "cats" not in caplog.text and "Porto" not in caplog.text
 
@@ -363,3 +368,50 @@ async def test_backfill_of_archived_conversations_oldest_first(
     order = [m[1]["content"].split("The chat:\n", 1)[1] for m, _ in fact_model.requests]
     oldest_first = [i for _, i in sorted(zip(ids, range(5), strict=True))]
     assert order == [f"User: chat {i}\nalfred: Very good." for i in oldest_first]
+
+
+# --- REPLACE must quote the fact (change fix-fact-removals, design D4) --------------------
+
+
+async def test_quote_naming_the_fact_more_briefly_replaces_it(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    reply = 'REPLACE 1 "teach lives in Lisbon.": teach lives in Porto, Portugal.'
+    extract, facts = job(sessions, FakeModel([text(reply)]))
+    lisbon, _ = await facts.add("teach", "teach lives in Lisbon, Portugal", "learned")
+    await archived(sessions, "teach", *chat("I moved to Porto"))
+    await run_due(extract)
+    assert [f.text for f in await facts.list("teach")] == ["teach lives in Porto, Portugal."]
+    assert (await fact_row(sessions, lisbon)).removed_reason == "replaced"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        'REPLACE 1 "teach lives in Lisbon": teach lives in Lisbon, Portugal.',  # wrong id
+        "REPLACE 1: teach lives in Lisbon, Portugal.",  # no quote
+    ],
+)
+async def test_wrong_or_missing_quote_is_an_addition(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture, reply: str
+) -> None:
+    model = FakeModel([text(reply)])
+    extract, facts = job(sessions, model)
+    recipes, _ = await facts.add(
+        "teach", "teach is adding low-calorie, high-protein recipes to the cookbook.", "learned"
+    )
+    cid = await archived(sessions, "teach", *chat("I live in Lisbon"))
+    with caplog.at_level(logging.INFO, logger="alfred.memory.extract"):
+        await run_due(extract)
+    assert [f.id for f in await facts.list("teach")][0] == recipes
+    assert len(await facts.list("teach")) == 2
+    assert (await fact_row(sessions, recipes)).removed_at is None
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        m.startswith(f"conversation {cid}: replacement of fact 1 refused (") for m in messages
+    )
+    assert any(
+        m.startswith(f"conversation {cid} facts: 1 added, 0 replaced, 1 replacement refused;")
+        for m in messages
+    )
+    assert "recipes" not in caplog.text and "Lisbon" not in caplog.text

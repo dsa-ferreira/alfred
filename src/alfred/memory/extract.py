@@ -12,9 +12,11 @@ and no attempt counted. A failed request or an unreadable reply logs a
 WARNING with the attempt count and is retried with backoff; with ``[memory]
 facts_extraction_max_attempts`` above 0 it is given up after that many.
 
-Every fact the model returns is stored as ``learned``; ``REPLACE <id>`` only
-removes one of the user's active learned facts, anything else is a plain
-addition.
+Every fact the model returns is stored as ``learned``. ``REPLACE <id>
+"<quote>"`` removes fact <id> only if it was shown to the model, the quote
+matches its text, and it is still one of the user's active learned facts
+(change fix-fact-removals, design D4); anything else is a plain addition,
+and the refusal is logged without either text.
 """
 
 from __future__ import annotations
@@ -34,11 +36,14 @@ from alfred.config import Config
 from alfred.db.models import Conversation
 from alfred.memory.extraction import (
     ExtractionParseError,
+    NewFact,
     extraction_entries,
     extraction_messages,
     parse_facts,
+    quote_matches,
 )
 from alfred.memory.facts import FactStore, insert_fact, lock_user
+from alfred.memory.streaming import complete_unless_preempted
 from alfred.memory.summaries import Model, load_transcript
 from alfred.memory.transcript import cut_middle, render
 
@@ -138,33 +143,19 @@ class FactExtractionJob:
         transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
         known = await self._facts.list(user)
         messages = extraction_messages(user, known, transcript)
-        request = asyncio.ensure_future(self._model.complete_streamed(messages))
         try:
-            if preempt is not None:
-                waiter = asyncio.ensure_future(preempt.wait())
-                try:
-                    await asyncio.wait({request, waiter}, return_when=asyncio.FIRST_COMPLETED)
-                finally:
-                    waiter.cancel()
-                if not request.done():
-                    log.info(
-                        "conversation %s: fact extraction gave way to the queue", conversation_id
-                    )
-                    return
-            reply = await request
+            reply = await complete_unless_preempted(self._model, messages, preempt)
+            if reply is None:
+                log.info("conversation %s: fact extraction gave way to the queue", conversation_id)
+                return
             found = parse_facts(reply.content or "")
         except (ModelError, ExtractionParseError) as exc:
             await self._failed(conversation_id, str(exc))
             return
-        finally:
-            if not request.done():
-                # Preempted, or this task was cancelled: closing the stream
-                # makes the model server stop generating.
-                request.cancel()
-                await asyncio.gather(request, return_exceptions=True)
 
-        shown = {f.id for f in known}
-        added = replaced = 0
+        # Only a fact the model was shown can be replaced; never one stored just now.
+        shown = {f.id: f.text for f in known}
+        added = replaced = refused = 0
         async with self._sessions.begin() as session:
             await lock_user(session, user)
             still_pending = await session.scalar(
@@ -181,24 +172,51 @@ class FactExtractionJob:
                     conversation_id=conversation_id,
                 )
                 added += 1
-                # Only a fact the model was shown; never one stored just now.
-                if fact.replaces in shown:
+                if fact.replaces is None:
+                    continue
+                why = self._refusal(user, fact, shown)
+                if why is None:
                     gone = await self._facts.replace_in(session, user, fact_id, [fact.replaces])
-                    replaced += len(gone)
+                    why = None if gone else "not a learned fact of the user"
+                if why is None:
+                    replaced += 1
+                else:
+                    refused += 1
+                    log.info(
+                        "conversation %s: replacement of fact %s refused (%s); "
+                        "stored as an addition",
+                        conversation_id,
+                        fact.replaces,
+                        why,
+                    )
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conversation_id)
                 .values(facts_outcome="done", facts_attempts=0, facts_next_at=None)
             )
         log.info(
-            "conversation %s facts: %d added, %d replaced; %s",
+            "conversation %s facts: %d added, %d replaced, %d replacement%s refused; %s",
             conversation_id,
             added,
             replaced,
+            refused,
+            "" if refused == 1 else "s",
             token_counts(reply.usage),
         )
         if added:
-            self._facts.changed.set()  # embed and dedupe them now
+            self._facts.changed.set()  # embed them, then check them for duplicates
+
+    @staticmethod
+    def _refusal(user: str, fact: NewFact, shown: dict[int, str]) -> str | None:
+        """Why a replacement can't be applied as asked, or ``None`` if it may be."""
+        assert fact.replaces is not None
+        if fact.replaces not in shown:
+            return "not a fact the model was shown"
+        if fact.quote is None:
+            return "no quote of the fact"
+        if not quote_matches(fact.quote, shown[fact.replaces], user):
+            return "the quote doesn't match the fact"
+        return None
 
     async def _done(self, conversation_id: int) -> None:
         async with self._sessions.begin() as session:

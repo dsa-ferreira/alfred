@@ -12,9 +12,13 @@ and ``/memory forget``. Removal is an UPDATE of an active row, never a
 DELETE, so two removals of the same fact mark it once. Embedding and model
 requests happen outside the lock.
 
-Each fact is embedded and compared with the user's other facts (design D6):
-:meth:`FactStore.embed` does both, for ``alfred_remember`` inline and for the
-sweeper's ``FactEmbeddingJob``.
+Each fact is embedded (:meth:`FactStore.embed`, by ``alfred_remember``
+inline and by the sweeper's ``FactEmbeddingJob``) and then checked for
+duplicates (change fix-fact-removals): embedding distance only picks the
+user's closest other facts (:meth:`FactStore.duplicate_candidates`), and the
+model decides which say the same thing (``alfred.memory.duplicates``).
+Measured distances can't tell a duplicate from a related or contradicting
+fact, so distance alone never removes one.
 """
 
 from __future__ import annotations
@@ -58,6 +62,20 @@ class FactRow:
     text: str
     origin: str
     created_at: datetime
+
+
+# The most facts one duplicate check compares a new fact with (design D2).
+DUPLICATE_CANDIDATES = 5
+
+
+@dataclass(frozen=True)
+class DuplicateCheck:
+    """A fact pending its duplicate check, and the user's facts close enough to compare."""
+
+    fact: FactRow
+    user_name: str
+    # Nearest first.
+    candidates: list[FactRow]
 
 
 @dataclass(frozen=True)
@@ -231,41 +249,38 @@ class FactStore:
         )
         return [f.id for f in removed]
 
-    # --- Embedding and near-duplicates (design D6) ------------------------------------
+    # --- Embedding (design D6 of add-user-facts) ----------------------------------------
 
-    async def embed(self, fact_id: int) -> Duplicate | None:
-        """Embed an active fact and remove a near-duplicate, if any. Never raises.
+    async def embed(self, fact_id: int) -> bool:
+        """Embed an active fact; whether its vector was stored. Never raises.
 
         On an embedding failure the fact keeps no embedding and a retry is
-        scheduled on its row. Returns the duplicate pair found, if any.
+        scheduled on its row. Comparing it is the duplicate check's job.
         """
         try:
             return await self._embed(fact_id)
         except Exception:
             log.exception("fact %s: embedding failed unexpectedly", fact_id)
             await self._retry_later(fact_id, "internal error")
-            return None
+            return False
 
-    async def _embed(self, fact_id: int) -> Duplicate | None:
+    async def _embed(self, fact_id: int) -> bool:
         async with self._sessions() as session:
             found = (
-                await session.execute(
-                    select(Fact.text, Fact.user_name).where(Fact.id == fact_id, _ACTIVE)
-                )
+                await session.execute(select(Fact.text).where(Fact.id == fact_id, _ACTIVE))
             ).first()
         if found is None:
-            return None
-        fact_text, user_name = found
+            return False
+        (fact_text,) = found
         model = self._embedder.model
         try:
             vector = await self._embedder.embed_document(fact_text)
         except EmbeddingError as exc:
             log.warning("fact %s: embedding failed: %s", fact_id, exc)
             await self._retry_later(fact_id, str(exc))
-            return None
+            return False
 
         async with self._sessions.begin() as session:
-            await lock_user(session, user_name)
             stored = await session.scalar(
                 update(Fact)
                 .where(Fact.id == fact_id, _ACTIVE)
@@ -277,31 +292,152 @@ class FactStore:
                 )
                 .returning(Fact.origin)
             )
-            if stored is None:
-                return None  # removed while it was being embedded
-            distance = Fact.embedding.cosine_distance(vector)
-            nearest = (
+        # None: removed while it was being embedded.
+        self.changed.set()  # its duplicate check may be due now
+        return stored is not None
+
+    async def duplicate_candidates(self, fact_id: int) -> DuplicateCheck | None:
+        """The user's other active facts within the duplicate distance, nearest first.
+
+        ``None`` unless the fact is active and embedded with the configured
+        model. Only facts embedded with that model are compared.
+        """
+        model = self._embedder.model
+        async with self._sessions() as session:
+            found = (
                 await session.execute(
-                    select(Fact.id, Fact.origin, distance)
-                    .where(
-                        Fact.user_name == user_name,
-                        _ACTIVE,
-                        Fact.id != fact_id,
-                        Fact.embedding.is_not(None),
-                        Fact.embedding_model == model,
+                    select(Fact.id, Fact.text, Fact.origin, Fact.created_at, Fact.user_name).where(
+                        Fact.id == fact_id, _ACTIVE, Fact.embedding_model == model
                     )
-                    .order_by(distance, Fact.id)
-                    .limit(1)
                 )
             ).first()
-            if nearest is None or nearest[2] > self._config.memory.facts_duplicate_max_distance:
+            if found is None:
                 return None
-            pair = _winner((fact_id, stored), (nearest[0], nearest[1]))
-            await mark_removed(
-                session, user_name, [pair.removed], "duplicate", self._now(), replaced_by=pair.kept
+            fact = FactRow(*found[:4])
+            user_name = found[4]
+            vector = await session.scalar(select(Fact.embedding).where(Fact.id == fact_id))
+            if vector is None:
+                return None
+            distance = Fact.embedding.cosine_distance(vector)
+            rows = await session.execute(
+                select(Fact.id, Fact.text, Fact.origin, Fact.created_at)
+                .where(
+                    Fact.user_name == user_name,
+                    _ACTIVE,
+                    Fact.id != fact_id,
+                    Fact.embedding.is_not(None),
+                    Fact.embedding_model == model,
+                    distance <= self._config.memory.facts_duplicate_max_distance,
+                )
+                .order_by(distance, Fact.id)
+                .limit(DUPLICATE_CANDIDATES)
             )
-        log.info("fact %s duplicate of %s, removed %s", fact_id, nearest[0], pair.removed)
-        return pair
+            return DuplicateCheck(fact, user_name, [FactRow(*r) for r in rows])
+
+    # --- The duplicate check's state (change fix-fact-removals, design D1, D2) ----------
+
+    def _duplicate_pending(self) -> tuple[object, ...]:
+        """Active facts not yet checked, embedded with the configured model."""
+        return (
+            _ACTIVE,
+            Fact.duplicate_checked_at.is_(None),
+            Fact.embedding.is_not(None),
+            Fact.embedding_model == self._embedder.model,
+        )
+
+    async def next_duplicate_check(self) -> int | None:
+        """The oldest fact whose duplicate check is due."""
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(Fact.id)
+                .where(
+                    *self._duplicate_pending(),
+                    or_(Fact.duplicate_next_at.is_(None), Fact.duplicate_next_at <= self._now()),
+                )
+                .order_by(Fact.id)
+                .limit(1)
+            )
+
+    async def seconds_until_duplicate_check(self) -> float | None:
+        """Until the soonest duplicate-check retry, or ``None`` when none is scheduled."""
+        async with self._sessions() as session:
+            soonest = await session.scalar(
+                select(func.min(Fact.duplicate_next_at)).where(*self._duplicate_pending())
+            )
+        if soonest is None:
+            return None
+        return max(0.0, (soonest - self._now()).total_seconds())
+
+    async def finish_duplicate_check(
+        self, check: DuplicateCheck, same: Iterable[int]
+    ) -> list[Duplicate] | None:
+        """Remove the duplicates the model named and mark the fact checked.
+
+        Only candidates still active count. For each, a ``told`` fact stays
+        over a ``learned`` one, otherwise the older; once the checked fact
+        itself is removed, the rest are left alone. ``None`` when the fact
+        was removed or checked meanwhile (nothing changed).
+        """
+        fact_id = check.fact.id
+        allowed = {f.id for f in check.candidates}
+        removed: list[Duplicate] = []
+        async with self._sessions.begin() as session:
+            await lock_user(session, check.user_name)
+            origin = await session.scalar(
+                select(Fact.origin).where(
+                    Fact.id == fact_id, _ACTIVE, Fact.duplicate_checked_at.is_(None)
+                )
+            )
+            if origin is None:
+                return None
+            for other in [i for i in dict.fromkeys(same) if i in allowed]:
+                other_origin = await session.scalar(
+                    select(Fact.origin).where(
+                        Fact.id == other, Fact.user_name == check.user_name, _ACTIVE
+                    )
+                )
+                if other_origin is None:
+                    continue
+                pair = _winner((fact_id, origin), (other, other_origin))
+                await mark_removed(
+                    session,
+                    check.user_name,
+                    [pair.removed],
+                    "duplicate",
+                    self._now(),
+                    replaced_by=pair.kept,
+                )
+                removed.append(pair)
+                log.info("fact %s duplicate of %s, removed %s", fact_id, other, pair.removed)
+                if pair.removed == fact_id:
+                    break
+            await session.execute(
+                update(Fact)
+                .where(Fact.id == fact_id)
+                .values(
+                    duplicate_checked_at=self._now(), duplicate_attempts=0, duplicate_next_at=None
+                )
+            )
+        return removed
+
+    async def duplicate_check_failed(self, fact_id: int) -> tuple[int, float] | None:
+        """Count a failed check and schedule a retry; the attempts and the delay."""
+        async with self._sessions.begin() as session:
+            attempts = await session.scalar(
+                update(Fact)
+                .where(Fact.id == fact_id)
+                .values(duplicate_attempts=Fact.duplicate_attempts + 1)
+                .returning(Fact.duplicate_attempts)
+            )
+            if attempts is None:
+                return None
+            delay = backoff_s(attempts, self._config.queue)
+            await session.execute(
+                update(Fact)
+                .where(Fact.id == fact_id)
+                .values(duplicate_next_at=self._now() + timedelta(seconds=delay))
+            )
+        return attempts, delay
 
     async def next_to_embed(self) -> int | None:
         """The oldest active fact due for an embedding (none, or from another model)."""
@@ -367,7 +503,7 @@ def _winner(new: tuple[int, str], old: tuple[int, str]) -> Duplicate:
 
 
 class FactEmbeddingJob:
-    """The sweeper job that embeds and dedupes facts (design D6).
+    """The sweeper job that embeds facts (design D6; checking them is ``FactDuplicateJob``).
 
     Facts with no embedding, or one from another model, oldest first, each
     after its own ``embedding_next_at``. It needs no chat model, so it never
@@ -510,9 +646,9 @@ class FactTools(LocalToolset):
                 False,
                 f"Error: fact ids not found: {_ids(exc.ids)}. Nothing was saved or replaced.",
             )
-        duplicate = await self.facts.embed(fact_id)
-        if duplicate is not None and duplicate.removed == fact_id:
-            return ToolOutcome(True, f"Already known as fact {duplicate.kept}.")
+        # Embedded now, so its duplicate check is ready once the queue is quiet.
+        # The check itself needs a model request: never inside this turn.
+        await self.facts.embed(fact_id)
         saved = f"Saved as fact {fact_id}."
         if replaced:
             saved += f" Replaced {_ids(f.id for f in replaced)}."

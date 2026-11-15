@@ -40,6 +40,7 @@ from alfred.history import History
 from alfred.idle import IdleCloser
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
+from alfred.memory.duplicates import FactDuplicateJob
 from alfred.memory.embedding import EmbeddingClient
 from alfred.memory.extract import FactExtractionJob
 from alfred.memory.facts import FactEmbeddingJob, FactStore, FactTools
@@ -157,7 +158,7 @@ async def serve(config: Config) -> None:
     )
     history = History(sessions, idle_after=idle_after, on_archive=summaries.changed.set)
     # User facts (change add-user-facts): extraction after the summaries, then
-    # embedding and dedupe, which needs no quiet queue.
+    # embedding, which needs no quiet queue, then the duplicate check.
     facts = FactStore(config, sessions, embedder)
     sweeper = Sweeper(
         config,
@@ -167,6 +168,8 @@ async def serve(config: Config) -> None:
         jobs=[
             FactExtractionJob(config, sessions, summary_model, facts),
             FactEmbeddingJob(facts),
+            # Needs the model, so only while the queue is quiet (change fix-fact-removals).
+            FactDuplicateJob(facts, summary_model),
         ],
     )
     search = ConversationSearch(config, sessions, embedder)

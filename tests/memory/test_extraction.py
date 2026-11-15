@@ -7,11 +7,15 @@ from dataclasses import dataclass
 import pytest
 
 from alfred.memory.extraction import (
+    DuplicateParseError,
     ExtractionParseError,
     NewFact,
+    duplicate_messages,
     extraction_entries,
     extraction_messages,
+    parse_duplicates,
     parse_facts,
+    quote_matches,
 )
 from alfred.memory.transcript import TranscriptEntry, render
 
@@ -99,3 +103,109 @@ def test_reply_without_labels_is_an_error(reply: str) -> None:
 
 def test_unlabelled_lines_ignored() -> None:
     assert parse_facts("Sure!\nNEW: has two cats\nThat's all.") == [NewFact("has two cats")]
+
+
+# --- The duplicate check (change fix-fact-removals, design D3) -----------------------------
+
+
+def test_duplicate_request_lists_candidates_without_origins() -> None:
+    candidates = [Known(12, "ana likes Teach very much.", "told")]
+    system, user = duplicate_messages("ana", "ana has a person she refers to as Teach.", candidates)
+    assert "ana" in system["content"] and "SAME <id>" in system["content"]
+    assert "contradicts" in system["content"] and "adds detail" in system["content"]
+    assert user["content"] == (
+        "New fact: ana has a person she refers to as Teach.\n\n"
+        "Known facts:\n[12] ana likes Teach very much."
+    )
+    assert "told" not in user["content"]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "SAME 12\nSAME 15",
+        "- SAME 12\n- SAME 15",
+        "1. SAME 12\n2. SAME 15",
+        "**SAME** 12\n**SAME 15**",
+        "```\nSAME [12]\nSAME #15\n```",
+        "The same ones:\nsame: 12\nSame 15.\nSAME 12",
+    ],
+)
+def test_parse_duplicates_is_lenient(reply: str) -> None:
+    assert parse_duplicates(reply) == [12, 15]
+
+
+@pytest.mark.parametrize("reply", ["NONE", "**NONE**", "- none.", "```\nNONE\n```"])
+def test_duplicates_none_is_empty(reply: str) -> None:
+    assert parse_duplicates(reply) == []
+
+
+@pytest.mark.parametrize("reply", ["", "They are all different.", "NEW: something", "SAME"])
+def test_duplicate_reply_without_labels_is_an_error(reply: str) -> None:
+    with pytest.raises(DuplicateParseError):
+        parse_duplicates(reply)
+
+
+# --- REPLACE quotes the old fact (change fix-fact-removals, design D4) -------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'REPLACE 7 "lives in Lisbon": lives in Porto',
+        "REPLACE 7 “lives in Lisbon”: lives in Porto",
+        'REPLACE 7 "lives in Lisbon" lives in Porto',
+        '- REPLACE 7 "lives in Lisbon": lives in Porto',
+        '2. REPLACE [7] "lives in Lisbon": lives in Porto',
+        '**REPLACE 7 "lives in Lisbon":** lives in Porto',
+        '**REPLACE 7** "lives in Lisbon": lives in Porto',
+        'replace #7 "lives in Lisbon": "lives in Porto"',
+    ],
+)
+def test_replace_with_a_quote(line: str) -> None:
+    assert parse_facts(line) == [NewFact("lives in Porto", 7, "lives in Lisbon")]
+
+
+def test_replace_without_a_quote() -> None:
+    assert parse_facts("REPLACE 7: lives in Porto") == [NewFact("lives in Porto", 7, None)]
+
+
+def test_quote_may_hold_a_colon_and_apostrophes() -> None:
+    line = 'REPLACE 3 "teach\'s alarm: 06:45": teach wakes at 07:00'
+    assert parse_facts(line) == [NewFact("teach wakes at 07:00", 3, "teach's alarm: 06:45")]
+
+
+def test_prompt_asks_for_the_quote() -> None:
+    system, _ = extraction_messages("diogo", [], "User: hi")
+    assert (
+        'REPLACE <id> "<the text of learned fact <id>, copied exactly>": <the new fact>'
+        in (system["content"])
+    )
+
+
+@pytest.mark.parametrize(
+    ("quote", "fact", "matches"),
+    [
+        ("lives in Lisbon", "lives in Lisbon", True),
+        ("Teach lives in Lisbon.", "teach lives in lisbon", True),
+        ("teach lives in Lisbon.", "teach lives in Lisbon, Portugal", True),  # found inside
+        ("is allergic to shelfish", "is allergic to shellfish", True),  # a typo
+        ("lives in Lisbon", "is adding low-calorie, high-protein recipes to the cookbook", False),
+        ("Lisbon", "teach lives in Lisbon, Portugal, near the river Tagus", False),  # too little
+        ("lives in", "lives in Lisbon, Portugal", False),
+        (None, "lives in Lisbon", False),
+        ("", "lives in Lisbon", False),
+    ],
+)
+def test_quote_matches(quote: str | None, fact: str, matches: bool) -> None:
+    assert quote_matches(quote, fact, "teach") is matches
+
+
+def test_prompt_says_what_isnt_a_fact() -> None:
+    system = extraction_messages("teach", [], "User: hi")[0]["content"]
+    assert "later chat about something else" in system
+    flat = " ".join(system.split())
+    for named in ("reminders and briefings", "recipes", "what to look up"):
+        assert named in flat, named
+    assert "refers to someone as Teach" in system and "Teach is her husband" in system
+    assert "only when the new fact makes it untrue, never one about something else" in flat

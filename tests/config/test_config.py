@@ -838,7 +838,7 @@ def test_fact_defaults(tmp_path: Path) -> None:
     assert memory.facts_context_max_chars == 3000
     assert memory.fact_max_chars == 300
     assert memory.facts_extraction_max_attempts == 0
-    assert memory.facts_duplicate_max_distance == 0.1
+    assert memory.facts_duplicate_max_distance == 0.2
 
 
 def test_fact_settings(tmp_path: Path) -> None:

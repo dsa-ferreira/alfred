@@ -211,8 +211,9 @@ class MemoryConfig(_Section):
     fact_max_chars: PositiveInt = 300
     # Failed extractions of one conversation before giving up. 0: never.
     facts_extraction_max_attempts: NonNegativeInt = 0
-    # Cosine distance within which two of a user's facts are duplicates.
-    facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.1
+    # Cosine distance within which a user's facts are checked for duplicates by
+    # the model (change fix-fact-removals, design D7). Distance alone decides nothing.
+    facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
 class WebConfig(_Section):
