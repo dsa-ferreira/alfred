@@ -129,7 +129,6 @@ async def serve(config: Config) -> None:
     sessions = make_session_factory(engine)
     # A misspelt ALFRED_MIGRATE_ADMIN or a renamed user shows up here (design D9).
     await warn_unknown_users(sessions, config.users.names)
-    history = History(sessions)
     queue = Queue(sessions)
     bot = Bot(config.telegram_bot_token.get_secret_value())
     outbox = TelegramOutbox(bot)
@@ -148,6 +147,15 @@ async def serve(config: Config) -> None:
         query_prefix=config.memory.query_prefix,
     )
     summaries = Summaries(config, sessions, summary_model, embedder)
+    # A conversation with no user message is archived when something new arrives
+    # after the idle close time; the sweeper then summarises it (change
+    # add-recurring-reminders, design D7).
+    idle_after = (
+        timedelta(hours=config.history.idle_close_after_h)
+        if config.history.idle_close_after_h is not None
+        else None
+    )
+    history = History(sessions, idle_after=idle_after, on_archive=summaries.changed.set)
     # User facts (change add-user-facts): extraction after the summaries, then
     # embedding and dedupe, which needs no quiet queue.
     facts = FactStore(config, sessions, embedder)
@@ -258,11 +266,8 @@ async def serve(config: Config) -> None:
         tasks.add(asyncio.create_task(orphans.run_forever(), name="attachments"))
     # Only with [history] idle_close_after_h (change close-idle-conversations, D3).
     if config.history.idle_close_after_h is not None:
-        idle = IdleCloser(
-            history,
-            timedelta(hours=config.history.idle_close_after_h),
-            nudge=summaries.changed.set,
-        )
+        assert idle_after is not None
+        idle = IdleCloser(history, idle_after, nudge=summaries.changed.set)
         tasks.add(asyncio.create_task(idle.run_forever(), name="idle"))
     stopper = asyncio.create_task(stop.wait(), name="stop")
     log.info(

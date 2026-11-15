@@ -219,9 +219,13 @@ def test_reminder_schema(database_url: str) -> None:
         "created_at",
         "fired_at",
         "cancelled_at",
+        "repeat",
+        "repeat_days",
+        "repeat_time",
+        "quiet_ok",
     } == reminder_columns
-    assert "reminder_id" in queue_columns
-    assert "reminder_id" in entry_columns
+    assert {"reminder_id", "reminder_due_at"} <= queue_columns
+    assert {"reminder_id", "reminder_due_at"} <= entry_columns
     assert "ix_reminders_pending_due" in reminder_indexes
 
 
@@ -664,5 +668,115 @@ def test_deleting_a_conversation_keeps_its_facts(database_url: str) -> None:
                 is None
             )
             conn.rollback()
+    finally:
+        engine.dispose()
+
+
+# --- recurring reminders (migration 0008) ----------------------------------------------
+
+
+def test_recurring_upgrade_backfills_due_times(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "recurring")
+    with _admin("diogo"):
+        command.upgrade(cfg, "0007")
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE reminders SET due_at = '2026-11-16 08:00+00' WHERE id = 12"))
+            conn.execute(
+                text(
+                    "INSERT INTO entries (conversation_id, kind, text, reminder_id) "
+                    "VALUES (42, 'reminder', 'x', 12)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO queue_items (id, kind, user_name, text, reminder_id) "
+                    "VALUES (8, 'reminder', 'diogo', 'x', 12)"
+                )
+            )
+        command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            due = conn.scalar(text("SELECT due_at FROM reminders WHERE id = 12"))
+            assert (
+                conn.scalar(text("SELECT reminder_due_at FROM entries WHERE kind = 'reminder'"))
+                == due
+            )
+            assert conn.scalar(text("SELECT reminder_due_at FROM queue_items WHERE id = 8")) == due
+            # Rows that aren't reminders have none.
+            assert conn.scalar(text("SELECT reminder_due_at FROM queue_items WHERE id = 7")) is None
+            assert conn.execute(
+                text("SELECT repeat, repeat_days, repeat_time, quiet_ok FROM reminders")
+            ).all() == [(None, None, None, False)]
+        command.check(cfg)
+    finally:
+        engine.dispose()
+
+
+def test_repeat_rule_checks(database_url: str) -> None:
+    engine = create_engine(database_url)
+    insert = (
+        "INSERT INTO reminders (text, due_at, created_by, repeat, repeat_days, repeat_time) "
+        "VALUES ('x', now(), 'd', {})"
+    )
+    try:
+        with engine.connect() as conn:
+            for rule in ("'daily', 127, '08:00'", "'weekly', 1, '20:00'", "NULL, NULL, NULL"):
+                conn.execute(text(insert.format(rule)))
+            bad = [
+                "'monthly', 127, '08:00'",
+                "'daily', 127, NULL",
+                "'daily', NULL, '08:00'",
+                "NULL, 31, NULL",
+                "'weekly', 0, '08:00'",
+                "'weekly', 128, '08:00'",
+            ]
+            for rule in bad:
+                with pytest.raises(IntegrityError), conn.begin_nested():
+                    conn.execute(text(insert.format(rule)))
+            conn.execute(
+                text(
+                    "INSERT INTO conversations (user_name, ended_at, end_reason) "
+                    "VALUES ('d', now(), 'unattended')"
+                )
+            )
+            conn.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_recurring_downgrade(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "recurring_down")
+    with _admin("diogo"):
+        command.upgrade(cfg, "head")
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO reminders "
+                    "(id, text, due_at, created_by, repeat, repeat_days, repeat_time) "
+                    "VALUES (31, 'brief me', now(), 'diogo', 'weekdays', 31, '08:00')"
+                )
+            )
+            conn.execute(text("UPDATE conversations SET end_reason = 'unattended' WHERE id = 41"))
+        command.downgrade(cfg, "0007")
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT id, status, cancelled_at IS NOT NULL FROM reminders ORDER BY id")
+            ).all() == [(12, "pending", False), (31, "cancelled", True)]
+            assert conn.execute(
+                text(
+                    "SELECT end_reason, marker_sent_at IS NOT NULL FROM conversations WHERE id = 41"
+                )
+            ).one() == ("idle", True)
+        columns = {c["name"] for c in inspect(engine).get_columns("reminders")}
+        assert not {"repeat", "repeat_days", "repeat_time", "quiet_ok"} & columns
+        command.upgrade(cfg, "head")
+        command.check(cfg)
     finally:
         engine.dispose()

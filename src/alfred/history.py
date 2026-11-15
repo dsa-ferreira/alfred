@@ -5,15 +5,21 @@ A user's current conversation is their one row of ``conversations`` with
 created when it is first needed. Each write reads it inside its own
 transaction, so an entry written around a reset lands in whichever
 conversation is current when it commits.
+
+A conversation with no message from its user (only notices, ``/ask`` turns
+and reminders) is never closed for inactivity. Instead, when a new notice,
+``/ask`` prompt or reminder arrives more than the idle close time after its
+newest entry, it is archived as ``unattended`` and the new entry starts a new
+conversation, with no marker (change add-recurring-reminders, design D7).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -32,6 +38,9 @@ EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
 ]
 UTC_ZONE = ZoneInfo("UTC")
+# The first entry of something that arrives without the user: a new one may
+# close a conversation that has no user message (design D7). Never a reply.
+ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
 
 
 @dataclass(frozen=True)
@@ -86,8 +95,18 @@ class LastMessage:
 
 
 class History:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        idle_after: timedelta | None = None,
+        on_archive: Callable[[], None] | None = None,
+    ) -> None:
         self._sessions = sessions
+        # ``[history] idle_close_after_h``; None: unattended conversations stay.
+        self._idle_after = idle_after
+        # Called after a conversation is archived as unattended (the sweeper nudge).
+        self._on_archive = on_archive
 
     async def current_conversation_id(self, user: str) -> int:
         async with self._sessions.begin() as session:
@@ -101,6 +120,7 @@ class History:
         source: str | None = None,
         queue_item_id: int | None = None,
         reminder_id: int | None = None,
+        reminder_due_at: datetime | None = None,
     ) -> int:
         """Add an entry to ``user``'s current conversation. Returns the entry's ID.
 
@@ -108,9 +128,36 @@ class History:
         already exists is kept and nothing is added (a retried turn); its ID
         is returned. A user entry takes the attachments queued with its
         item, in the same transaction (change add-attachments, design D2).
+
+        A notice, ``/ask`` prompt or reminder first archives a current
+        conversation with no user message whose newest entry is older than
+        the idle close time, and starts a new one (design D7).
         """
+        archived = False
         async with self._sessions.begin() as session:
-            conversation_id = await current_id(session, user, lock=True)
+            if queue_item_id is not None:
+                # Before the close check: a retry never closes the conversation
+                # its entry is already in.
+                done = await session.scalar(
+                    select(Entry.id).where(Entry.queue_item_id == queue_item_id, Entry.kind == kind)
+                )
+                if done is not None:
+                    return done
+            if kind in ARRIVALS and self._idle_after is not None:
+                conversation_id = await current_id(session, user, lock=True, exclusive=True)
+                if await _unattended(session, conversation_id, self._idle_after):
+                    await session.execute(
+                        update(Conversation)
+                        .where(Conversation.id == conversation_id)
+                        .values(ended_at=func.now(), end_reason="unattended")
+                    )
+                    new = Conversation(user_name=user)
+                    session.add(new)
+                    await session.flush()
+                    conversation_id = new.id
+                    archived = True
+            else:
+                conversation_id = await current_id(session, user, lock=True)
             entry_id = await session.scalar(
                 insert(Entry)
                 .values(
@@ -120,11 +167,12 @@ class History:
                     text=text_,
                     queue_item_id=queue_item_id,
                     reminder_id=reminder_id,
+                    reminder_due_at=reminder_due_at,
                 )
                 .on_conflict_do_nothing(index_elements=["queue_item_id", "kind"])
                 .returning(Entry.id)
             )
-            if entry_id is None:  # already recorded by an earlier attempt
+            if entry_id is None:  # recorded by an earlier attempt that committed meanwhile
                 entry_id = await session.scalar(
                     select(Entry.id).where(Entry.queue_item_id == queue_item_id, Entry.kind == kind)
                 )
@@ -135,7 +183,9 @@ class History:
                     .where(Attachment.queue_item_id == queue_item_id, Attachment.entry_id.is_(None))
                     .values(entry_id=entry_id)
                 )
-            return entry_id
+        if archived and self._on_archive is not None:
+            self._on_archive()
+        return entry_id
 
     async def recent(self, user: str, limit: int) -> list[HistoryEntry]:
         """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
@@ -152,6 +202,7 @@ class History:
                     Entry.text,
                     Entry.recalled_conversation_id,
                     Entry.reminder_id,
+                    Entry.reminder_due_at,
                     Entry.created_at,
                 )
                 .join(Conversation, Conversation.id == Entry.conversation_id)
@@ -169,7 +220,9 @@ class History:
                     recalled.title,
                     recalled.summary,
                     newest.c.reminder_id,
-                    Reminder.due_at,
+                    # The entry's own occurrence: a repeating reminder's row
+                    # has moved on (change add-recurring-reminders, D7).
+                    newest.c.reminder_due_at,
                     newest.c.created_at,
                     newest.c.id,
                     Reminder.created_by,
@@ -288,15 +341,40 @@ class History:
             return max(ids), await current_id(session, user, lock=False)
 
 
-async def current_id(session: AsyncSession, user: str, *, lock: bool) -> int:
-    """``user``'s current conversation, created if they have none yet."""
+async def _unattended(session: AsyncSession, conversation_id: int, idle_after: timedelta) -> bool:
+    """The conversation has entries, none from its user, the newest older than ``idle_after``."""
+    has_user = await session.scalar(
+        select(Entry.id)
+        .where(Entry.conversation_id == conversation_id, Entry.kind == "user")
+        .limit(1)
+    )
+    if has_user is not None:
+        return False
+    # NULL (no entries yet) is not stale. The database's clock, like created_at.
+    stale = await session.scalar(
+        select(func.max(Entry.created_at) < func.now() - idle_after).where(
+            Entry.conversation_id == conversation_id
+        )
+    )
+    return bool(stale)
+
+
+async def current_id(
+    session: AsyncSession, user: str, *, lock: bool, exclusive: bool = False
+) -> int:
+    """``user``'s current conversation, created if they have none yet.
+
+    ``exclusive`` takes it ``FOR UPDATE`` instead of ``FOR SHARE``, to archive
+    it in the same transaction (design D7); two arrivals for the same user
+    then take turns, so only one of them closes it.
+    """
     query = select(Conversation.id).where(
         Conversation.ended_at.is_(None), Conversation.user_name == user
     )
     if lock:
         # A reset's UPDATE waits for this transaction, so the entry can't land
         # in a conversation that was archived before it committed.
-        query = query.with_for_update(read=True)
+        query = query.with_for_update(read=not exclusive)
     found = await session.scalar(query)
     if found is not None:
         return found

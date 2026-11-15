@@ -40,7 +40,7 @@ def clock() -> Clock:
 
 @pytest.fixture
 def tools(sessions: async_sessionmaker[AsyncSession], clock: Clock) -> ReminderTools:
-    return ReminderTools(Reminders(sessions), LISBON, "09:00", USERS, now=clock)
+    return ReminderTools(Reminders(sessions, LISBON), LISBON, "09:00", USERS, now=clock)
 
 
 def test_definitions(tools: ReminderTools) -> None:
@@ -177,12 +177,40 @@ async def test_bad_json(tools: ReminderTools) -> None:
     assert "not valid JSON" in outcome.text
 
 
-async def test_offered_on_owner_turns_only(tools: ReminderTools) -> None:
+def _names(toolset: object) -> set[str]:
+    return {d["function"]["name"] for d in toolset.definitions}  # type: ignore[attr-defined]
+
+
+async def test_offered_by_turn_kind(tools: ReminderTools) -> None:
     assert await tools.open(TurnInput("chat", "hi", 1, user=DIOGO)) is tools
     assert await tools.open(TurnInput("ask", "93%", 2, "disk-check", user=DIOGO)) is None
-    assert await tools.open(TurnInput("reminder", "call mum", 3, user=DIOGO)) is None
+    reminder_turn = await tools.open(TurnInput("reminder", "brief me", 3, user=DIOGO))
+    assert reminder_turn is not None and _names(reminder_turn) == {REMINDERS_LIST}
+    assert reminder_turn.handles(REMINDERS_LIST)
+    assert not reminder_turn.handles(REMIND_SET) and not reminder_turn.handles(REMINDER_CANCEL)
     assert all(tools.handles(name) for name in NAMES)
     assert not tools.handles("alfred_web_fetch")
+
+
+async def test_reminder_turn_lists_the_recipients_reminders(tools: ReminderTools) -> None:
+    await tools.call(REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
+    await tools.call(REMIND_SET, {"text": "gym", "at": "19:00"}, AS_DIOGO)
+    turn = TurnInput("reminder", "brief me", 3, user=ANA)
+    reminder_turn = await tools.open(turn)
+    assert reminder_turn is not None
+    outcome = await reminder_turn.call(REMINDERS_LIST, {}, AttemptContext(turn))
+    assert outcome.ok and "buy milk" in outcome.text and "gym" not in outcome.text
+    refused = await reminder_turn.call(REMIND_SET, {"text": "x"}, AttemptContext(turn))
+    assert not refused.ok
+
+
+async def test_reminder_turn_respects_the_allow_list(tools: ReminderTools) -> None:
+    from alfred.tools.base import AllowList, Gated
+
+    reminder_turn = await tools.open(TurnInput("reminder", "brief me", 3, user=DIOGO))
+    assert reminder_turn is not None
+    gated = Gated(reminder_turn, AllowList.of("alfred_remind_set", "alfred_web_*"))
+    assert gated.definitions == [] and not gated.handles(REMINDERS_LIST)
 
 
 # --- for: reminding other users (change add-multiple-users) --------------------------
@@ -266,7 +294,17 @@ async def test_cancel_by_a_recipient(tools: ReminderTools) -> None:
     )
     [row] = await tools.store.pending("ana")
     outcome = await tools.call(REMINDER_CANCEL, {"id": row.id}, AS_ANA)
-    assert outcome.ok and "dinner" in outcome.text and "set by diogo" in outcome.text
+    assert outcome.ok and "dinner" in outcome.text and "20:00" in outcome.text
+    assert outcome.text.endswith("it stays set for diogo.")
+    assert await tools.store.pending("ana") == []
+    assert [r.id for r in await tools.store.pending("diogo")] == [row.id]
+
+
+async def test_cancel_by_the_last_recipient(tools: ReminderTools) -> None:
+    await tools.call(REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
+    [row] = await tools.store.pending("ana")
+    outcome = await tools.call(REMINDER_CANCEL, {"id": row.id}, AS_ANA)
+    assert outcome.ok and outcome.text.startswith(f"Reminder #{row.id} cancelled")
     assert await tools.store.pending("diogo") == []
 
 
@@ -276,3 +314,115 @@ async def test_cancel_not_involved_is_unknown(tools: ReminderTools) -> None:
     outcome = await tools.call(REMINDER_CANCEL, {"id": row.id}, AS_DIOGO)
     assert not outcome.ok and outcome.text == f"Error: there is no reminder #{row.id}."
     assert [r.id for r in await tools.store.pending("ana")] == [row.id]
+
+
+# --- Repeating and quiet reminders (change add-recurring-reminders) --------------------
+
+
+def test_repeat_parameters(tools: ReminderTools) -> None:
+    (remind_set,) = [d for d in tools.definitions if d["function"]["name"] == REMIND_SET]
+    function = remind_set["function"]
+    properties = function["parameters"]["properties"]
+    assert properties["repeat"]["enum"] == ["daily", "weekdays", "weekends", "weekly"]
+    assert properties["days"]["items"]["enum"][0] == "mon"
+    assert properties["quiet_ok"]["type"] == "boolean"
+    assert "brief me on the weather" in function["description"]
+    assert "not done now" in function["description"]
+
+
+async def test_set_a_series(tools: ReminderTools, clock: Clock) -> None:
+    clock.now = datetime(2026, 11, 15, 14, 47, tzinfo=LISBON)
+    outcome = await tools.call(
+        REMIND_SET,
+        {"text": "brief me on the weather", "repeat": "weekdays", "at": "08:00"},
+        AS_DIOGO,
+    )
+    assert outcome.ok
+    assert outcome.text.startswith(
+        "Reminder set every weekday at 08:00, starting tomorrow at 08:00: brief me on the weather."
+    )
+    assert "#" not in outcome.text
+    [row] = await tools.store.pending("diogo")
+    assert row.due_at == datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
+    assert row.rule is not None and row.rule.repeat == "weekdays" and not row.quiet_ok
+
+
+async def test_set_a_series_for_others(tools: ReminderTools, clock: Clock) -> None:
+    clock.now = datetime(2026, 11, 17, 21, 0, tzinfo=LISBON)
+    outcome = await tools.call(
+        REMIND_SET,
+        {
+            "text": "take the bins out",
+            "repeat": "weekly",
+            "days": ["tue", "fri"],
+            "at": "20:00",
+            "for": ["ana"],
+        },
+        AS_DIOGO,
+    )
+    assert outcome.ok
+    assert outcome.text.startswith(
+        "Reminder set every Tuesday and Friday at 20:00, starting on Friday at 20:00, "
+        "to remind ana: take the bins out."
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"text": "x", "repeat": "monthly", "at": "08:00"},
+        {"text": "x", "repeat": "weekly", "at": "08:00"},
+        {"text": "x", "repeat": "daily", "at": "2026-11-20 08:00"},
+        {"text": "x", "repeat": "daily", "in_minutes": 60},
+        {"text": "x", "days": ["tue"], "at": "08:00"},
+        {"text": "x", "at": "08:00", "quiet_ok": "maybe"},
+    ],
+)
+async def test_series_errors_store_nothing(
+    tools: ReminderTools, arguments: dict[str, object]
+) -> None:
+    outcome = await tools.call(REMIND_SET, arguments, AS_DIOGO)
+    assert not outcome.ok and outcome.text.startswith("Error:")
+    assert await tools.store.pending("diogo") == []
+
+
+async def test_list_a_quiet_series(tools: ReminderTools, clock: Clock) -> None:
+    clock.now = datetime(2026, 11, 15, 20, 0, tzinfo=LISBON)
+    await tools.call(
+        REMIND_SET,
+        {"text": "brief me", "repeat": "weekdays", "at": "08:00", "quiet_ok": True},
+        AS_DIOGO,
+    )
+    await tools.call(
+        REMIND_SET, {"text": "tell me if Dune is done", "at": "18:00", "quiet_ok": True}, AS_DIOGO
+    )
+    outcome = await tools.call(REMINDERS_LIST, {}, AS_DIOGO)
+    assert outcome.text.splitlines()[1:] == [
+        "#1 Monday 16 November 2026, 08:00 (in 12 h), every weekday at 08:00, may stay quiet: "
+        "brief me",
+        "#2 Monday 16 November 2026, 18:00 (in 22 h), may stay quiet: tell me if Dune is done",
+    ]
+
+
+async def test_list_a_series_after_it_fired(tools: ReminderTools, clock: Clock) -> None:
+    clock.now = datetime(2026, 11, 15, 20, 0, tzinfo=LISBON)
+    await tools.call(
+        REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
+    )
+    await tools.store.claim_due(datetime(2026, 11, 16, 8, 0, tzinfo=LISBON))
+    clock.now = datetime(2026, 11, 16, 9, 0, tzinfo=LISBON)
+    lines = (await tools.call(REMINDERS_LIST, {}, AS_DIOGO)).text.splitlines()[1:]
+    assert lines == [
+        "#1 Tuesday 17 November 2026, 08:00 (in 23 h), every weekday at 08:00: brief me"
+    ]
+
+
+async def test_cancel_a_series(tools: ReminderTools, clock: Clock) -> None:
+    clock.now = datetime(2026, 11, 15, 20, 0, tzinfo=LISBON)
+    await tools.call(
+        REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
+    )
+    outcome = await tools.call(REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
+    assert outcome.ok
+    assert "every weekday at 08:00, next Monday 16 November 2026, 08:00" in outcome.text
+    assert await tools.store.pending("diogo") == []

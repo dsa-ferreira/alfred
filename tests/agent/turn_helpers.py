@@ -202,8 +202,20 @@ async def reminder_turn(
     text_: str = "call mum",
     user: User = DIOGO,
     set_by: str | None = None,
+    *,
+    due_at: datetime = DUE,
+    repeat_label: str | None = None,
+    quiet_ok: bool = False,
 ) -> TurnInput:
     item = await add_queue_item(sessions, "reminder", text_, user=user.name)
     return TurnInput(
-        "reminder", text_, item, reminder_id=reminder_id, due_at=DUE, set_by=set_by, user=user
+        "reminder",
+        text_,
+        item,
+        reminder_id=reminder_id,
+        due_at=due_at,
+        set_by=set_by,
+        repeat_label=repeat_label,
+        quiet_ok=quiet_ok,
+        user=user,
     )

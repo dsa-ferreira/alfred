@@ -682,6 +682,65 @@ async def test_reminder_model_says_no_reply(
     assert [i.status for i in await s.items()] == ["done"]
 
 
+async def quiet_reminder(s: Setup, text_: str = "tell me if Dune is done") -> int:
+    now = datetime.now(UTC)
+    reminder_id = await s.reminders.set(text_, now, "diogo", ["diogo"], quiet_ok=True)
+    assert len(await s.reminders.claim_due(now)) == 1
+    return reminder_id
+
+
+@pytest.mark.parametrize("answer", [NO_REPLY, f"  {NO_REPLY}\n"])
+async def test_quiet_reminder_says_no_reply(
+    sessions: async_sessionmaker[AsyncSession], answer: str
+) -> None:
+    s = Setup(sessions, FakeModel([text(answer)]))
+    await quiet_reminder(s)
+    await s.drain()
+    assert s.outbox.sent == []
+    assert await recorded(s) == []
+    assert [i.status for i in await s.items()] == ["done"]
+    assert NO_REPLY in s.model.requests[0][0][0]["content"]
+
+
+async def test_quiet_reminder_fails(sessions: async_sessionmaker[AsyncSession]) -> None:
+    s = Setup(sessions, FakeModel([ModelFailed("model server answered HTTP 400")]))
+    rid = await quiet_reminder(s)
+    due = (await s.reminders.get(rid)).due_at  # type: ignore[union-attr]
+    await s.drain()
+    assert s.outbox.sent == [reminder_notice(due, "tell me if Dune is done")]
+    assert [k for k, _, _ in await recorded(s)] == ["reminder", "reminder_reply"]
+
+
+async def test_quiet_reminder_with_news(sessions: async_sessionmaker[AsyncSession]) -> None:
+    s = Setup(sessions, FakeModel([text("Dune has finished, sir.")]))
+    rid = await quiet_reminder(s)
+    await s.drain()
+    assert s.outbox.sent == ["Dune has finished, sir."]
+    assert await recorded(s) == [
+        ("reminder", "tell me if Dune is done", rid),
+        ("reminder_reply", "Dune has finished, sir.", rid),
+    ]
+
+
+async def test_repeating_reminder_turn_uses_the_items_due_time(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    from alfred.reminders.when import parse_rule
+
+    s = Setup(sessions, FakeModel([text("Good morning, sir.")]))
+    tuesday = datetime(2026, 11, 17, 8, 0, tzinfo=LISBON)
+    rule = parse_rule(repeat="weekdays", at="08:00")
+    rid = await s.reminders.set("brief me", tuesday, "diogo", ["diogo"], rule=rule)
+    await s.reminders.claim_due(tuesday)
+    row = await s.reminders.get(rid)
+    assert row is not None and row.due_at == datetime(2026, 11, 18, 8, 0, tzinfo=LISBON)
+    await s.drain()
+    last = strip_stamp(s.model.requests[0][0][-1]["content"])
+    assert last.startswith(f"[reminder:#{rid} due Tuesday 17 November 2026, 08:00; now ")
+    assert last.endswith("; every weekday at 08:00] brief me")
+    assert NO_REPLY not in s.model.requests[0][0][0]["content"]
+
+
 async def test_reminder_unexpected_error(sessions: async_sessionmaker[AsyncSession]) -> None:
     class Broken:
         async def run(self, turn):  # type: ignore[no-untyped-def]

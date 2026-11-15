@@ -7,9 +7,10 @@ conversation.
 
 - ``conversations``: at most one per user has ``ended_at IS NULL`` (their
   current one).
-  ``end_reason`` says how an archived one ended (``user`` or ``idle``), and
-  ``marker_sent_at`` when its idle-close marker was handed out (change
-  close-idle-conversations, design D2).
+  ``end_reason`` says how an archived one ended (``user``, ``idle``, or
+  ``unattended`` for one with no user message closed when something new
+  arrived), and ``marker_sent_at`` when its idle-close marker was handed out
+  (change close-idle-conversations, design D2).
   Archived ones get a title, a summary and an embedding of both (memory
   design D1); ``search_tsv`` is generated from title and summary.
 - ``entries``: what was said in a conversation, in order. Entries written by
@@ -20,9 +21,11 @@ conversation.
   reminders), each for one user.
 - ``reminders``: timed reminders a user set (change add-reminders, design
   D3), for the users in ``reminder_recipients``. ``fired`` means handed to
-  the queue, one item per recipient. A reminder queue item and its
+  the queue, one item per recipient. A repeating one (``repeat`` set; change
+  add-recurring-reminders, design D1) stays ``pending`` and its ``due_at``
+  moves to the next occurrence. A reminder queue item and its
   ``reminder``/``reminder_reply`` entries point at the row through
-  ``reminder_id``, never copying its text or due time.
+  ``reminder_id`` and carry the delivered occurrence's ``reminder_due_at``.
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
 - ``attachments``: users' photos, image files and PDFs (change
   add-attachments, design D1). The bytes are in the object store under
@@ -52,8 +55,10 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    SmallInteger,
     String,
     Text,
+    false,
     func,
     text,
 )
@@ -87,7 +92,8 @@ QUEUE_KINDS = ("user", "ask", "reminder")
 REMINDER_STATUSES = ("pending", "fired", "cancelled")
 QUEUE_STATUSES = ("pending", "done", "failed")
 ATTACHMENT_KINDS = ("image", "pdf")
-END_REASONS = ("user", "idle")
+END_REASONS = ("user", "idle", "unattended")
+REPEAT_RULES = ("daily", "weekdays", "weekends", "weekly")
 FACT_ORIGINS = ("told", "learned")
 FACT_REMOVAL_REASONS = ("forgotten", "replaced", "duplicate")
 FACTS_OUTCOMES = ("done", "gave_up")
@@ -180,6 +186,8 @@ class Entry(Base):
     )
     # For ``reminder`` and ``reminder_reply`` entries: the reminder delivered.
     reminder_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("reminders.id"))
+    # For ``reminder`` and ``reminder_reply`` entries: the occurrence's due time.
+    reminder_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -206,6 +214,8 @@ class QueueItem(Base):
     failure_reason: Mapped[str | None] = mapped_column(Text)
     # For ``reminder`` items: the reminder to deliver.
     reminder_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("reminders.id"))
+    # For ``reminder`` items: the due time of the occurrence delivered.
+    reminder_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -214,6 +224,13 @@ class Reminder(Base):
     __tablename__ = "reminders"
     __table_args__ = (
         CheckConstraint(_in("status", REMINDER_STATUSES), name="status"),
+        CheckConstraint(_in("repeat", REPEAT_RULES), name="repeat"),
+        CheckConstraint("repeat_days BETWEEN 1 AND 127", name="repeat_days"),
+        # A one-shot reminder has none of the rule; a repeating one all of it.
+        CheckConstraint(
+            "(repeat IS NULL) = (repeat_days IS NULL) AND (repeat IS NULL) = (repeat_time IS NULL)",
+            name="repeat_rule",
+        ),
         Index(
             "ix_reminders_pending_due",
             "due_at",
@@ -229,6 +246,13 @@ class Reminder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The repeat rule (null for a one-shot): its name, the weekdays as a bitmask
+    # (Monday = bit 0) and the local wall time "HH:MM".
+    repeat: Mapped[str | None] = mapped_column(Text)
+    repeat_days: Mapped[int | None] = mapped_column(SmallInteger)
+    repeat_time: Mapped[str | None] = mapped_column(Text)
+    # The reminder turn may answer NO_REPLY.
+    quiet_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
 
 class ReminderRecipient(Base):

@@ -5,16 +5,17 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from mcp.server import MCPServer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.model import ModelUnreachable
-from alfred.agent.prompts import ASK_RULE, NO_REPLY, REMINDER_RULE
+from alfred.agent.prompts import ASK_RULE, NO_REPLY, REMINDER_ALWAYS, REMINDER_RULE
 from alfred.agent.turn import TurnFailed
 from alfred.config import Users
 from alfred.history import History
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
-from alfred.reminders.tools import REMIND_SET, ReminderTools
+from alfred.reminders.tools import REMIND_SET, REMINDERS_LIST, ReminderTools
 from alfred.tools.base import TurnInput
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
@@ -30,7 +31,18 @@ from tests.agent.turn_helpers import (
     reminder_turn,
     tool_rows,
 )
-from tests.helpers import ANA, DIOGO, FakeModel, add_queue_item, calls, text
+from tests.helpers import (
+    ANA,
+    DIOGO,
+    FakeModel,
+    add_queue_item,
+    calls,
+    make_agent,
+    make_config,
+    text,
+)
+from tests.mcp.servers import config as server_config
+from tests.mcp.servers import in_process, make_mcparr
 
 # --- reminders -----------------------------------------------------------------
 
@@ -55,9 +67,9 @@ async def test_reminder_tools_not_offered_in_ask_turns(
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await a.run(TurnInput("ask", "93%", item, "disk-check", user=DIOGO))
     assert not REMINDER_TOOLS & model.tool_names(0)
-    # Called anyway (from a reminder turn): refused, nothing stored.
+    # A reminder turn gets only the list; setting is refused, nothing stored.
     await a.run(await reminder_turn(sessions))
-    assert not REMINDER_TOOLS & model.tool_names(1)
+    assert REMINDER_TOOLS & model.tool_names(1) == {REMINDERS_LIST}
     assert "unknown tool" in model.requests[2][0][-1]["content"].lower()
     assert await Reminders(sessions).pending("diogo") == []
 
@@ -90,7 +102,7 @@ async def test_reminder_turn_on_time(sessions: async_sessionmaker[AsyncSession])
     assert result.reply == "Your call to mum is due, sir."
     messages = model.requests[0][0]
     system = messages[0]["content"]
-    assert system.endswith(REMINDER_RULE)
+    assert system.endswith(f"{REMINDER_RULE} {REMINDER_ALWAYS}")
     assert ASK_RULE not in system and NO_REPLY not in system
     assert contents(messages[1:]) == [
         "earlier",
@@ -99,7 +111,7 @@ async def test_reminder_turn_on_time(sessions: async_sessionmaker[AsyncSession])
     ]
 
 
-async def test_reminder_turn_gets_the_ask_tool_set(
+async def test_reminder_turn_gets_the_ask_tool_set_and_the_list(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     clock = Clock(DUE)
@@ -117,7 +129,7 @@ async def test_reminder_turn_gets_the_ask_tool_set(
     await agent(sessions, ask_model, reminders=tools, now=clock).run(
         TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
     )
-    assert reminder_model.tool_names() == ask_model.tool_names()
+    assert reminder_model.tool_names() == ask_model.tool_names() | {REMINDERS_LIST}
     assert END_CONVERSATION not in reminder_model.tool_names()
     assert reminder_model.tool_names() < owner_model.tool_names()
 
@@ -192,3 +204,93 @@ async def test_reminder_set_by_someone_else(sessions: async_sessionmaker[AsyncSe
     system = messages[0]["content"]
     assert "You are chatting over Telegram with ana, the user." in system
     assert 'Address the user as "madam"' in system
+
+
+# --- Scheduled briefings (change add-recurring-reminders) -------------------------------
+
+
+def make_weather() -> MCPServer:
+    server = MCPServer("weather")
+
+    @server.tool()
+    def forecast() -> str:
+        """Today's forecast."""
+        return "Lisbon: sunny, 18 degrees"
+
+    return server
+
+
+async def test_morning_briefing_uses_the_tools(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    from alfred.queue import Queue, Worker
+    from alfred.reminders.when import parse_rule
+    from tests.test_queue import FakeOutbox
+
+    monday = datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
+    cfg = make_config(
+        mcp_servers=[server_config("weather"), server_config("mcparr")],
+        queue={"retry_initial_s": 0.01},
+    )
+    store = Reminders(sessions, LISBON)
+    tools = ReminderTools(store, LISBON, "09:00", cfg.users, now=lambda: monday)
+    history = History(sessions)
+    model = FakeModel(
+        [
+            calls(
+                ("weather_forecast", "{}"), ("mcparr_get_downloads", "{}"), (REMINDERS_LIST, "{}")
+            ),
+            text("Good morning, sir. Sunny, 18 degrees; Dune is half done; the dentist at 17:00."),
+        ]
+    )
+    connect = in_process({"weather": make_weather(), "mcparr": make_mcparr()})
+    a = make_agent(cfg, model, history, sessions, connect, reminders=tools, now=lambda: monday)
+    queue, outbox = Queue(sessions), FakeOutbox()
+    worker = Worker(
+        queue, a, history, outbox, cfg.queue, users=cfg.users, reminders=store, zone=LISBON
+    )
+    rule = parse_rule(repeat="weekdays", at="08:00")
+    briefing = await store.set(
+        "brief me on the weather, what's downloading and my reminders for today",
+        monday,
+        "diogo",
+        ["diogo"],
+        rule=rule,
+    )
+    await store.set("dentist", monday.replace(hour=17), "diogo", ["diogo"])
+    await store.claim_due(monday)
+    while await worker.step():
+        pass
+
+    reply = "Good morning, sir. Sunny, 18 degrees; Dune is half done; the dentist at 17:00."
+    assert outbox.sent == [reply]
+    tool_results = [m["content"] for m in model.requests[1][0] if m["role"] == "tool"]
+    assert "sunny, 18 degrees" in tool_results[0]
+    assert "Dune" in tool_results[1]
+    assert "dentist" in tool_results[2] and "every weekday at 08:00" in tool_results[2]
+    assert [(e.kind, e.reminder_id, e.text) for e in await history.recent("diogo", 10)] == [
+        (
+            "reminder",
+            briefing,
+            "brief me on the weather, what's downloading and my reminders for today",
+        ),
+        ("reminder_reply", briefing, reply),
+    ]
+    assert [r.ok for r in await tool_rows(sessions)] == [True, True, True]
+
+
+async def test_scheduled_briefing_is_set_not_done(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    sunday = datetime(2026, 11, 15, 14, 47, tzinfo=LISBON)
+    clock = Clock(sunday)
+    arguments = '{"text": "brief me on the weather", "repeat": "weekdays", "at": "08:00"}'
+    model = FakeModel([calls((REMIND_SET, arguments)), text("Very good. Each weekday at eight.")])
+    a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
+    await a.run(await owner_turn(sessions, "every weekday at 8, brief me on the weather"))
+    system = model.requests[0][0][0]["content"]
+    assert "every weekday at 8, brief me on the weather" in system.replace("\n", " ").lower()
+    [row] = await Reminders(sessions).pending("diogo")
+    assert row.rule is not None and row.rule.label() == "every weekday at 08:00"
+    assert row.due_at == datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
+    assert [r.tool for r in await tool_rows(sessions)] == [REMIND_SET]

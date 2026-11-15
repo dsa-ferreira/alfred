@@ -164,3 +164,46 @@ async def test_memory_command_is_not_a_user_message(
     clock.now += timedelta(hours=1, seconds=1)
     await closer(sessions, clock).close_once()
     assert await ended(sessions, cid) == "idle"
+
+
+# --- unattended conversations (change add-recurring-reminders, design D7) -------------
+
+
+async def test_unattended_conversation_is_summarised_without_fact_requests(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    from alfred.memory.extract import FactExtractionJob
+    from alfred.memory.facts import FactStore
+    from alfred.memory.summaries import Summaries
+    from alfred.memory.sweeper import Sweeper
+    from tests.helpers import FakeEmbedder, FakeModel, make_config, text
+    from tests.memory.test_sweeper import until
+
+    cfg = make_config(queue={"retry_initial_s": 30, "retry_max_s": 900})
+    summary_model = FakeModel([text("Title: Morning briefing\nSummary: Sunny, Dune at 50%.")])
+    fact_model = FakeModel()
+    embedder = FakeEmbedder(default=[1.0])
+    summaries = Summaries(cfg, sessions, summary_model, embedder)
+    facts = FactStore(cfg, sessions, embedder)
+    sweeper = Sweeper(
+        cfg, sessions, summaries, jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)]
+    )
+    history = History(sessions, idle_after=SIX_HOURS, on_archive=summaries.changed.set)
+    old = await wrote(sessions, "diogo", datetime.now(UTC) - timedelta(hours=25), kind="reminder")
+    await history.append("diogo", "reminder", "brief me")
+    assert await ended(sessions, old) == "unattended"
+
+    task = asyncio.create_task(sweeper.run_forever())
+    try:
+
+        async def finished() -> bool:
+            async with sessions() as session:
+                row = await session.get(Conversation, old)
+            assert row is not None
+            return row.summary is not None and row.facts_outcome == "done"
+
+        await until(finished)
+    finally:
+        task.cancel()
+    assert len(summary_model.requests) == 1
+    assert fact_model.requests == []

@@ -26,7 +26,9 @@ from tests.agent.turn_helpers import (
     BAD_MODEL,
     COOKBOOK,
     COOKBOOK_SECTION,
+    DUE,
     GEMMA,
+    LISBON,
     MCPARR,
     NOW,
     RULES,
@@ -36,6 +38,7 @@ from tests.agent.turn_helpers import (
     memory,
     owner_turn,
     reminder_tools,
+    reminder_turn,
     tool_rows,
     two_brains,
     web_tools,
@@ -559,3 +562,39 @@ async def test_tool_result_without_images_stays_text(
     await a.run(await owner_turn(sessions, "look"))
     assert model.requests[1][0][-1]["content"] == "Here it is."
     assert (await tool_rows(sessions))[0].result_excerpt == "Here it is."
+
+
+# --- Repeating reminder turns (change add-recurring-reminders, design D6) ---------------
+
+
+async def test_repeating_reminder_input(sessions: async_sessionmaker[AsyncSession]) -> None:
+    tuesday = datetime(2026, 11, 17, 8, 0, tzinfo=LISBON)
+    model = FakeModel([text("Good morning, sir. Sunny, 18 degrees.")])
+    turn = await reminder_turn(
+        sessions, 31, "brief me", due_at=tuesday, repeat_label="every weekday at 08:00"
+    )
+    await agent(sessions, model, now=tuesday).run(turn)
+    assert model.requests[0][0][-1]["content"] == (
+        "[reminder:#31 due Tuesday 17 November 2026, 08:00; now 08:00; every weekday at 08:00]"
+        " brief me"
+    )
+
+
+async def test_one_shot_reminder_input_unchanged(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("Your call to mum is due, sir.")])
+    await agent(sessions, model, now=DUE).run(await reminder_turn(sessions))
+    assert model.requests[0][0][-1]["content"] == (
+        "[reminder:#12 due Monday 9 November 2026, 17:00; now 17:00] call mum"
+    )
+
+
+async def test_quiet_reminder_turn_is_told_about_no_reply(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    loud, quiet = FakeModel([text("ok")]), FakeModel([text("ok")])
+    await agent(sessions, loud, now=DUE).run(await reminder_turn(sessions))
+    await agent(sessions, quiet, now=DUE).run(await reminder_turn(sessions, quiet_ok=True))
+    assert NO_REPLY not in loud.requests[0][0][0]["content"]
+    assert NO_REPLY in quiet.requests[0][0][0]["content"]

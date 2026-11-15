@@ -10,8 +10,12 @@ from alfred.reminders.when import (
     format_day_time,
     format_in,
     format_now,
+    format_rule,
     format_when,
+    latest_occurrence,
+    next_occurrence,
     parse_date,
+    parse_rule,
     parse_text,
     resolve,
 )
@@ -266,3 +270,112 @@ def test_bad_dates(value: object, message: str) -> None:
     with pytest.raises(WhenError) as caught:
         parse_date(value, now=datetime(2026, 11, 9, tzinfo=UTC), zone=LISBON)
     assert str(caught.value) == message
+
+
+# --- Repeating reminders (change add-recurring-reminders) ------------------------------
+
+
+def first(now: datetime, **arguments: object) -> datetime:
+    rule = parse_rule(**arguments)
+    assert rule is not None
+    return next_occurrence(rule.days, rule.clock, now, LISBON)
+
+
+def test_every_weekday_from_sunday() -> None:
+    sunday = at_lisbon(2026, 11, 15, 14, 47)
+    assert first(sunday, repeat="weekdays", at="08:00") == at_lisbon(2026, 11, 16, 8, 0)
+
+
+def test_weekly_on_given_days() -> None:
+    tuesday = at_lisbon(2026, 11, 17, 21, 0)
+    rule = parse_rule(repeat="weekly", days=["tue", "fri"], at="20:00")
+    assert rule is not None
+    friday = next_occurrence(rule.days, rule.clock, tuesday, LISBON)
+    assert friday == at_lisbon(2026, 11, 20, 20, 0)
+    assert next_occurrence(rule.days, rule.clock, friday, LISBON) == at_lisbon(2026, 11, 24, 20, 0)
+
+
+def test_today_still_ahead() -> None:
+    monday = at_lisbon(2026, 11, 16, 7, 30)
+    assert first(monday, repeat="daily", at="08:00") == at_lisbon(2026, 11, 16, 8, 0)
+
+
+def test_weekly_only_day_is_today_and_passed() -> None:
+    tuesday = at_lisbon(2026, 11, 17, 21, 0)
+    assert first(tuesday, repeat="weekly", days=["tue"], at="20:00") == at_lisbon(
+        2026, 11, 24, 20, 0
+    )
+
+
+def test_across_the_autumn_change() -> None:
+    fired = at_lisbon(2026, 10, 24, 8, 0)
+    following = first(fired, repeat="daily", at="08:00")
+    assert following == at_lisbon(2026, 10, 25, 8, 0)
+    assert following.astimezone(LISBON).hour == 8
+    # Summer time on Saturday, winter time on Sunday: 25 hours apart.
+    assert following - fired == timedelta(hours=25)
+
+
+def test_in_the_spring_gap() -> None:
+    # Lisbon jumps from 01:00 to 02:00 on Sunday 28 March 2027.
+    rule = parse_rule(repeat="daily", at="01:30")
+    assert rule is not None
+    occurrence = next_occurrence(rule.days, rule.clock, at_lisbon(2027, 3, 27, 12, 0), LISBON)
+    assert f"{occurrence.astimezone(LISBON):%Y-%m-%d %H:%M}" == "2027-03-28 02:30"
+
+
+def test_latest_missed_occurrence() -> None:
+    rule = parse_rule(repeat="weekdays", at="08:00")
+    assert rule is not None
+    monday = at_lisbon(2026, 11, 16, 8, 0)
+    on_time = latest_occurrence(rule.days, rule.clock, monday, monday, LISBON)
+    assert on_time == monday
+    wednesday = latest_occurrence(
+        rule.days, rule.clock, monday, at_lisbon(2026, 11, 18, 10, 0), LISBON
+    )
+    assert wednesday == at_lisbon(2026, 11, 18, 8, 0)
+
+
+def test_one_shot_has_no_rule() -> None:
+    assert parse_rule(at="17:00") is None
+    assert parse_rule(in_minutes=20) is None
+
+
+@pytest.mark.parametrize("day", ["Tue", "tuesday", "tue", " TUESDAY "])
+def test_day_names(day: str) -> None:
+    rule = parse_rule(repeat="weekly", days=[day], at="20:00")
+    assert rule is not None and rule.days == 0b10
+
+
+@pytest.mark.parametrize(
+    ("arguments", "says"),
+    [
+        ({"repeat": "monthly", "at": "08:00"}, "daily, weekdays, weekends, weekly"),
+        ({"repeat": "weekly", "at": "08:00"}, "weekly needs days"),
+        ({"repeat": "weekly", "days": ["tue", "someday"], "at": "08:00"}, "'someday' is not a day"),
+        ({"days": ["tue"], "at": "08:00"}, "days needs repeat weekly"),
+        ({"repeat": "daily", "days": ["tue"], "at": "08:00"}, "only for repeat weekly"),
+        ({"repeat": "daily", "at": "2026-11-20 08:00"}, 'takes at as "HH:MM"'),
+        ({"repeat": "daily"}, 'takes at as "HH:MM"'),
+        ({"repeat": "daily", "in_minutes": 60}, "not in_minutes"),
+        ({"repeat": "daily", "at": "25:00"}, "not a valid 24-hour time"),
+    ],
+)
+def test_repeat_rule_errors(arguments: dict[str, object], says: str) -> None:
+    with pytest.raises(WhenError) as caught:
+        parse_rule(**arguments)
+    assert says in str(caught.value)
+
+
+def test_format_rule() -> None:
+    eight = parse_rule(repeat="daily", at="08:00")
+    assert eight is not None
+    assert format_rule("daily", 127, eight.clock) == "every day at 08:00"
+    assert format_rule("weekdays", 31, eight.clock) == "every weekday at 08:00"
+    assert format_rule("weekends", 96, eight.clock) == "every weekend day at 08:00"
+    bins = parse_rule(repeat="weekly", days=["fri", "tue"], at="20:00")
+    assert bins is not None
+    assert bins.label() == "every Tuesday and Friday at 20:00"
+    three = parse_rule(repeat="weekly", days=["mon", "wed", "fri"], at="07:05")
+    assert three is not None
+    assert three.label() == "every Monday, Wednesday and Friday at 07:05"

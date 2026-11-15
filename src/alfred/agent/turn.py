@@ -282,6 +282,7 @@ class Agent:
                     address=user.address,
                     ask=turn.kind == "ask",
                     reminder=turn.kind == "reminder",
+                    reminder_quiet=turn.quiet_ok,
                     today=now.astimezone(self._zone).date(),
                     tools=this.offered,
                     others=[u.name for u in cfg.users if u.name != user.name],
@@ -344,13 +345,15 @@ class Agent:
     def _reminder_input(self, turn: TurnInput, now: datetime) -> str:
         """``[reminder:#12 due Monday 9 November 2026, 17:00; now 17:12] call mum``.
 
+        ``; every weekday at 08:00`` after the time when it repeats, and
         ``; set by diogo`` before the ``]`` when someone else set it.
         """
         due = turn.due_at or now
+        rule = f"; {turn.repeat_label}" if turn.repeat_label else ""
         set_by = f"; set by {turn.set_by}" if turn.set_by else ""
         return (
             f"[reminder:#{turn.reminder_id} due {format_when(due, self._zone)}; "
-            f"now {format_now(now, due, self._zone)}{set_by}] {turn.text}"
+            f"now {format_now(now, due, self._zone)}{rule}{set_by}] {turn.text}"
         )
 
     async def _ask_model(self, state: _State, definitions: list[dict[str, Any]]) -> ModelReply:

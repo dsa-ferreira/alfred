@@ -100,7 +100,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `ai.persona` | string | built-in butler | alfred's voice. Replaces only the built-in butler persona; the built-in operating rules (tools, service notices, `/ask`) are always sent after it. Sent as written. |
 | `ai.timezone` | string | `"Europe/Lisbon"` | Your IANA timezone. Today's date in the system prompt, the times on history messages, `alfred_date` and the dates of conversation search use it. An unknown name stops alfred at startup. |
 | `history.max_entries` | integer | `30` | Most recent entries of the current conversation (the user's messages, replies, notices, recalled conversations) sent to the model. Only the newest recall is sent in full; older ones as their summary. |
-| `history.idle_close_after_h` | number | none | Hours after a user's last own message before alfred archives their conversation and starts a new one. Notices, `/ask` turns and reminders don't count, and a conversation with no message from its user is never closed. The user sees `— #41 closed after inactivity —` before the reply to their next message. Unset: never closed for inactivity. |
+| `history.idle_close_after_h` | number | none | Hours after a user's last own message before alfred archives their conversation and starts a new one. Notices, `/ask` turns and reminders don't count. The user sees `— #41 closed after inactivity —` before the reply to their next message. A conversation with no message from its user (only notices, `/ask` turns and reminders, such as an unanswered daily briefing) is archived without any marker when a new notice, `/ask` or reminder arrives this long after its last entry, and the new one starts a new conversation. Unset: never closed for inactivity. |
 | `queue.retry_initial_s` | number | `30` | First retry delay while the AI is unreachable, in seconds. Doubles on each attempt. |
 | `queue.retry_max_s` | number | `900` | Longest retry delay, in seconds. Retries never give up. |
 | `memory.summary_model` | string | `ai.model` | Model that writes the title and summary of an ended conversation, on `ai.base_url`. |
@@ -187,7 +187,8 @@ Messages from anyone else, and from group chats, are ignored without a reply.
   on someone else's turn.
 - **Reminders.** "Remind ana to buy milk at six" or "remind us" sets a
   reminder for other users. Each recipient gets it in their own chat, told
-  who set it; the creator and any recipient can list and cancel it.
+  who set it; the creator and any recipient can list it. The creator cancels
+  it for everyone; a recipient who cancels only stops it for themselves.
 - **Per-user MCP tokens.** `mcp_tokens` names a variable per server with that
   user's bearer token, so a server can tell users apart. Without one, the
   server's own `token_env` is used.
@@ -492,15 +493,19 @@ the turn continues. Fetches and refusals are logged at INFO with the URL.
 alfred keeps timed reminders itself and messages you in the Telegram chat
 when one comes due. In chat turns the model has three tools (subject to the user's allow-list):
 `alfred_remind_set`, `alfred_reminders_list` and `alfred_reminder_cancel`
-(to move a reminder, it cancels and sets it again). They are not offered in
-`/ask` or reminder turns.
+(to move a reminder, it cancels and sets it again). Reminder turns get only
+`alfred_reminders_list`, so a briefing can include today's reminders; `/ask`
+turns get none.
 
 **Reminder or to-do?** The operating rules route requests:
 
 - "task" or "todo" in the request goes to your to-do list tools (an MCP
   server such as Trello), even with a time: "add a task to call mum at five".
 - Any other request with a time or date is a reminder: "remind me to call my
-  mother at five", "in 20 minutes", "on Friday".
+  mother at five", "in 20 minutes", "on Friday". So is a request to do
+  something later or on a schedule, even without "remind": "every weekday at
+  8, brief me on the weather" is set as a reminder, and nothing is looked up
+  now.
 - Any other "remind me" goes to the to-do list: "remind me to buy groceries".
 
 **Times.** The model passes the time as you said it and alfred works it out
@@ -512,6 +517,15 @@ in `ai.timezone`; the model never does date arithmetic.
 | `at: "17:00"` | The next 17:00: today if still ahead, otherwise tomorrow. |
 | `at: "2026-11-13 09:30"` | That date and time. |
 | `at: "2026-11-13"` | That date at `reminders.default_time`. |
+
+**Repeating reminders.** `repeat` makes one reminder a series, with `at` as
+`HH:MM`: `daily`, `weekdays` (Monday to Friday), `weekends`, or `weekly`
+with `days` (`["tue", "fri"]`). Each occurrence is worked out from the rule
+in `ai.timezone`, so 08:00 stays 08:00 across DST changes. One number covers
+the series; it is listed once, at its next time, with its rule ("every
+weekday at 08:00"). There are no monthly or interval rules, no cron strings
+and no pause: cancelling stops the whole series, and setting it again starts
+it again.
 
 A time that has passed or can't be read is refused. A local time that a DST
 change skips moves forward by the gap; one that happens twice uses the first.
@@ -528,20 +542,36 @@ within it) alfred moves due reminders into the message queue, in due order,
 without any AI request, so a reminder is queued at second `:00` of its
 minute. It reaches you once the model has written it: a few seconds later,
 longer if the AI has to wake up or another turn is running. The model writes the
-message, seeing `[reminder:#12 due …; now …]`, so it can say when it is late.
+message, seeing `[reminder:#12 due …; now …]` (with the rule when it
+repeats), so it can say when it is late. When the reminder asks it to find
+out, check or sum up something ("brief me on the weather, what's downloading
+and my reminders for today"), the model does that with the recipient's tools
+first, so a repeating reminder works as a scheduled briefing. A reminder set
+by someone else runs with the recipient's allow-list.
 It waits its turn behind other queue items and, while the AI is unreachable,
 is retried like any item. Reminders that came due while alfred was down are
-sent when it starts, however late. A reminder always reaches you: if the
-model answers `NO_REPLY` or nothing, or the turn fails, alfred sends a fixed
-notice instead:
+sent when it starts, however late; a repeating one is sent once, for its most
+recent missed occurrence, and then moves on. A reminder always reaches you:
+if the model answers `NO_REPLY` or nothing, or the turn fails, alfred sends a
+fixed notice instead:
 
 ```
 Your reminder, due at 17:00: "call mum". My apologies for the plain delivery, sir.
 ```
 
-A delivered reminder and what you were told are kept in the conversation, so
-you can answer it: "snooze 15 minutes" sets a new reminder with the same
-text. Recurring reminders aren't supported.
+**Quiet reminders.** "Only if …" or "tell me if …" sets `quiet_ok`
+("every evening at 9, tell me if anything is downloading"). Only then may the
+model answer `NO_REPLY` when there is nothing to tell: nothing is sent and
+nothing is recorded. A quiet reminder whose turn fails still gets the fixed
+notice.
+
+**Cancelling.** The creator cancels a reminder for all its recipients. A
+recipient who didn't set it cancels it only for themselves; it stays set for
+the others and ends when its last recipient leaves.
+
+A delivered reminder and what you were told are kept in the conversation,
+labelled with the due time of that occurrence, so you can answer it: "snooze
+15 minutes" sets a new reminder with the same text.
 
 ## Attachments
 

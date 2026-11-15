@@ -99,11 +99,17 @@ the to-do tools (such as Trello), even when it has a time ("add a task to call m
 at five"); use the time as a due date if those tools take one. Otherwise, a request \
 with a time or date ("remind me to call my mother at five", "in 20 minutes", "on \
 Friday") is a reminder: call alfred_remind_set with the time as the user said it, \
-as in_minutes or at (HH:MM, YYYY-MM-DD HH:MM or YYYY-MM-DD). Never work out times \
-yourself, and confirm the reminder in your own words with the time the tool \
-returns. Never mention reminder numbers to the user, except when listing \
-reminders. Any other request to be reminded \
-("remind me to buy groceries") goes to the to-do list."""
+as in_minutes or at (HH:MM, YYYY-MM-DD HH:MM or YYYY-MM-DD). A request to do \
+something later or on a schedule is a reminder too, even without the word \
+"remind": set it, don't do it now. "Every weekday at 8, brief me on the weather" \
+is a reminder with repeat weekdays and at "08:00", whose text says what to do; \
+don't look up the weather now. "Every …" takes repeat (daily, weekdays, weekends, \
+or weekly with days) with at as HH:MM. "Only if …" or "tell me if …" takes \
+quiet_ok: "every evening at 9, tell me if anything is downloading" is a daily \
+reminder at "21:00" with quiet_ok. Never work out times yourself, and confirm the \
+reminder in your own words with the time the tool returns. Never mention reminder \
+numbers to the user, except when listing reminders. Any other request to be \
+reminded ("remind me to buy groceries") goes to the to-do list."""
 
 REMIND_OTHERS_RULE = """\
 To remind someone else, or several people, pass for with their user names: \
@@ -140,13 +146,23 @@ and nothing else. Otherwise write the short message the user should receive; it 
 will be sent to them as is."""
 
 
+# The reminder turn's rule (change add-recurring-reminders, design D6), then
+# one of the two endings: only a quiet reminder may stay silent.
 REMINDER_RULE = """\
 This turn was started by a reminder set earlier, by the user or by the user named \
 after "set by", shown in the last message with when it was due and the time now. \
-Write the short message that reminds the user of it; it will be sent to them as \
-is. If it is late, say how late. If someone else set it, say who. Don't mention \
-the reminder's number. Only write the message: don't act on the reminder with \
-tools. Always write a message, however small the reminder: the user must receive it."""
+If the reminder asks you to find out, check or sum up something, do it now with \
+your tools, then write the message; otherwise just remind the user. It will be \
+sent to them as is. If it is late, say how late. If someone else set it, say who. \
+Don't mention the reminder's number."""
+REMINDER_ALWAYS = "Always write a message: the user must receive it."
+REMINDER_QUIET = f"""\
+If there is nothing worth telling, answer exactly {NO_REPLY} and nothing else."""
+
+
+def reminder_rule(quiet: bool) -> str:
+    """The reminder turn's rule with its ending: ``quiet`` for a ``quiet_ok`` reminder."""
+    return f"{REMINDER_RULE} {REMINDER_QUIET if quiet else REMINDER_ALWAYS}"
 
 
 def operating_rules(name: str, tools: Collection[str] = (), others: Sequence[str] = ()) -> str:
@@ -203,6 +219,7 @@ def system_prompt(
     ask: bool,
     today: date,
     reminder: bool = False,
+    reminder_quiet: bool = False,
     tools: Collection[str] = (),
     others: Sequence[str] = (),
     notes: Sequence[str] = (),
@@ -214,7 +231,8 @@ def system_prompt(
     ``name`` and ``address`` are the turn's user's, ``tools`` the names
     offered on the turn, ``others`` the other users' names. ``brain`` is a
     :func:`brain_line`; it sits with the operating rules, so a custom
-    persona can't drop it. ``facts`` is the user's :class:`FactsBlock` text,
+    persona can't drop it. ``reminder_quiet`` lets a reminder turn answer
+    ``NO_REPLY`` (a ``quiet_ok`` reminder). ``facts`` is the user's :class:`FactsBlock` text,
     always last, so a change to the facts only changes the prompt's end
     (change add-user-facts, design D9).
     """
@@ -229,7 +247,7 @@ def system_prompt(
     if ask:
         parts.append(ASK_RULE)
     elif reminder:
-        parts.append(REMINDER_RULE)
+        parts.append(reminder_rule(reminder_quiet))
     if facts:
         parts.append(facts)
     return "\n\n".join(parts)

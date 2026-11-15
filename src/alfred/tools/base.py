@@ -90,11 +90,15 @@ class TurnInput:
     text: str
     queue_item_id: int
     source: str | None = None  # the service, for ask turns
-    # For reminder turns: the reminder's number and when it was due.
+    # For reminder turns: the reminder's number and when this occurrence was due.
     reminder_id: int | None = None
     due_at: datetime | None = None
     # For reminder turns: who set it, when not the recipient.
     set_by: str | None = None
+    # For reminder turns: its repeat rule as shown ("every weekday at 08:00"),
+    # and whether the turn may answer NO_REPLY (change add-recurring-reminders).
+    repeat_label: str | None = None
+    quiet_ok: bool = False
     user: User = field(kw_only=True)
 
 

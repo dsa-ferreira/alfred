@@ -4,13 +4,14 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.db.engine import make_engine, make_session_factory
-from alfred.db.models import Conversation, Entry, QueueItem
+from alfred.db.models import Conversation, Entry, QueueItem, Reminder
 from alfred.history import STAMP, History, HistoryEntry, Inline, strip_stamp, to_messages
 from alfred.reminders.store import Reminders
 from alfred.tools.base import ModelImage
@@ -201,7 +202,9 @@ DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
 async def test_reply_to_a_reminder(sessions: async_sessionmaker[AsyncSession]) -> None:
     reminder_id = await Reminders(sessions).set("call mum", DUE, "diogo", ["diogo"])
     history = History(sessions)
-    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder", "call mum", reminder_id=reminder_id, reminder_due_at=DUE
+    )
     await history.append(
         "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
     )
@@ -222,7 +225,9 @@ async def test_reminder_due_in_the_owners_timezone(
 ) -> None:
     reminder_id = await Reminders(sessions).set("call mum", DUE, "diogo", ["diogo"])
     history = History(sessions)
-    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder", "call mum", reminder_id=reminder_id, reminder_due_at=DUE
+    )
     [message] = unstamped(to_messages(await history.recent("diogo", 30), ZoneInfo("Asia/Tokyo")))
     label = f"[reminder:#{reminder_id} due Tuesday 10 November 2026, 02:00]"
     assert message["content"] == f"{label} call mum"
@@ -238,7 +243,9 @@ async def test_reminder_set_in_an_archived_conversation(
     reset = await history.reset("diogo")
     assert reset.archived_id == set_in
 
-    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder", "call mum", reminder_id=reminder_id, reminder_due_at=DUE
+    )
     await history.append(
         "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
     )
@@ -249,6 +256,61 @@ async def test_reminder_set_in_an_archived_conversation(
             )
         ).all()
     assert sorted(rows) == [(reset.new_id, "reminder"), (reset.new_id, "reminder_reply")]
+
+
+async def test_each_delivery_keeps_its_own_due_time(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    from alfred.reminders.when import parse_rule
+
+    store = Reminders(sessions, LISBON)
+    monday = datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
+    tuesday = datetime(2026, 11, 17, 8, 0, tzinfo=LISBON)
+    rule = parse_rule(repeat="weekdays", at="08:00")
+    reminder_id = await store.set("brief me", monday, "diogo", ["diogo"], rule=rule)
+    history = History(sessions)
+    for due in (monday, tuesday):
+        await store.claim_due(due)
+        await history.append(
+            "diogo", "reminder", "brief me", reminder_id=reminder_id, reminder_due_at=due
+        )
+        await history.append(
+            "diogo", "reminder_reply", "Sunny.", reminder_id=reminder_id, reminder_due_at=due
+        )
+    row = await store.get(reminder_id)
+    assert row is not None and row.due_at == datetime(2026, 11, 18, 8, 0, tzinfo=LISBON)
+    labels = [
+        m["content"]
+        for m in unstamped(to_messages(await history.recent("diogo", 30), LISBON))
+        if m["role"] == "user"
+    ]
+    assert labels == [
+        f"[reminder:#{reminder_id} due Monday 16 November 2026, 08:00] brief me",
+        f"[reminder:#{reminder_id} due Tuesday 17 November 2026, 08:00] brief me",
+    ]
+
+
+async def test_entry_from_before_0008_keeps_its_label(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    # Migration 0008 copied each existing reminder's due_at onto its entries; a
+    # later change to the row doesn't move the label.
+    reminder_id = await Reminders(sessions).set("call mum", DUE, "diogo", ["diogo"])
+    history = History(sessions)
+    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    async with sessions.begin() as session:
+        await session.execute(
+            update(Entry).where(Entry.reminder_id == reminder_id).values(reminder_due_at=DUE)
+        )
+        await session.execute(
+            update(Reminder)
+            .where(Reminder.id == reminder_id)
+            .values(due_at=DUE + timedelta(days=1))
+        )
+    [message] = unstamped(to_messages(await history.recent("diogo", 30), LISBON))
+    assert message["content"].startswith(
+        f"[reminder:#{reminder_id} due Monday 9 November 2026, 17:00]"
+    )
 
 
 # --- message times (change add-utility-tools) --------------------------------------
@@ -463,7 +525,9 @@ async def test_reminder_set_by_someone_else(sessions: async_sessionmaker[AsyncSe
     reminder_id = await Reminders(sessions).set("buy milk", DUE, "diogo", ["ana", "diogo"])
     history = History(sessions)
     for user in ("ana", "diogo"):
-        await history.append(user, "reminder", "buy milk", reminder_id=reminder_id)
+        await history.append(
+            user, "reminder", "buy milk", reminder_id=reminder_id, reminder_due_at=DUE
+        )
     ana = unstamped(to_messages(await history.recent("ana", 30), LISBON))
     diogo = unstamped(to_messages(await history.recent("diogo", 30), LISBON))
     assert ana[0]["content"].startswith(f"[reminder:#{reminder_id} due ")
@@ -638,3 +702,163 @@ async def test_no_idle_marker_after_a_user_reset_or_before_the_upgrade(
             insert(Conversation).values(user_name="diogo", ended_at=func.now(), end_reason=None)
         )
     assert await history.take_idle_marker("diogo") is None
+
+
+# --- conversations without user messages (change add-recurring-reminders, D7) -------
+
+SIX = timedelta(hours=6)
+
+
+async def backdate(
+    sessions: async_sessionmaker[AsyncSession], entry_id: int, ago: timedelta
+) -> None:
+    async with sessions.begin() as session:
+        await session.execute(
+            update(Entry).where(Entry.id == entry_id).values(created_at=func.now() - ago)
+        )
+
+
+async def conversation_of(sessions: async_sessionmaker[AsyncSession], entry_id: int) -> int:
+    async with sessions() as session:
+        found = await session.scalar(select(Entry.conversation_id).where(Entry.id == entry_id))
+    assert found is not None
+    return found
+
+
+async def end_reason(sessions: async_sessionmaker[AsyncSession], cid: int) -> str | None:
+    async with sessions() as session:
+        row = await session.get(Conversation, cid)
+    assert row is not None
+    return row.end_reason
+
+
+def unattended_history(
+    sessions: async_sessionmaker[AsyncSession], archives: list[int] | None = None
+) -> History:
+    return History(
+        sessions,
+        idle_after=SIX,
+        on_archive=(lambda: archives.append(1)) if archives is not None else None,
+    )
+
+
+async def briefing(
+    history: History, sessions: async_sessionmaker[AsyncSession], ago: timedelta
+) -> int:
+    """Yesterday's briefing, as the worker records it, ``ago`` in the past."""
+    item = await add_queue_item(sessions, "reminder", "brief me")
+    first = await history.append("diogo", "reminder", "brief me", queue_item_id=item)
+    second = await history.append("diogo", "reminder_reply", "Sunny.", queue_item_id=item)
+    await backdate(sessions, first, ago)
+    await backdate(sessions, second, ago)
+    return await conversation_of(sessions, first)
+
+
+async def test_unanswered_daily_briefing(sessions: async_sessionmaker[AsyncSession]) -> None:
+    archives: list[int] = []
+    history = unattended_history(sessions, archives)
+    tuesday = await briefing(history, sessions, timedelta(hours=24))
+
+    item = await add_queue_item(sessions, "reminder", "brief me")
+    reminder = await history.append("diogo", "reminder", "brief me", queue_item_id=item)
+    reply = await history.append("diogo", "reminder_reply", "Rain.", queue_item_id=item)
+    wednesday = await conversation_of(sessions, reminder)
+    assert wednesday != tuesday
+    # The reply stays with its reminder, in the new conversation.
+    assert await conversation_of(sessions, reply) == wednesday
+    assert await history.current_conversation_id("diogo") == wednesday
+    assert await end_reason(sessions, tuesday) == "unattended"
+    assert archives == [1]
+    # No marker, now or later.
+    assert await history.take_idle_marker("diogo") is None
+
+
+async def test_late_reply_keeps_the_briefing(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = unattended_history(sessions)
+    cid = await briefing(history, sessions, timedelta(hours=7))
+    entry = await history.append("diogo", "user", "more about the second download?")
+    assert await conversation_of(sessions, entry) == cid
+    assert [e.kind for e in await history.recent("diogo", 30)] == [
+        "reminder",
+        "reminder_reply",
+        "user",
+    ]
+
+
+async def test_burst_of_notices(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = unattended_history(sessions)
+    first = await history.append("diogo", "notice", "backup started", source="backup")
+    await backdate(sessions, first, timedelta(minutes=10))
+    second = await history.append("diogo", "notice", "backup done", source="backup")
+    assert await conversation_of(sessions, first) == await conversation_of(sessions, second)
+
+
+async def test_ask_prompt_closes_an_old_notice_only_conversation(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = unattended_history(sessions)
+    notice = await history.append("diogo", "notice", "backup done", source="backup")
+    await backdate(sessions, notice, timedelta(days=2))
+    ask = await history.append("diogo", "ask_prompt", "disk at 93%", source="disk-check")
+    assert await conversation_of(sessions, ask) != await conversation_of(sessions, notice)
+    assert await end_reason(sessions, await conversation_of(sessions, notice)) == "unattended"
+
+
+@pytest.mark.parametrize("ago", [timedelta(hours=3), timedelta(days=3)])
+async def test_conversation_with_a_user_message_is_not_closed_this_way(
+    sessions: async_sessionmaker[AsyncSession], ago: timedelta
+) -> None:
+    archives: list[int] = []
+    history = unattended_history(sessions, archives)
+    said = await history.append("diogo", "user", "hello")
+    await backdate(sessions, said, ago)
+    item = await add_queue_item(sessions, "reminder", "call mum")
+    reminder = await history.append("diogo", "reminder", "call mum", queue_item_id=item)
+    assert await conversation_of(sessions, reminder) == await conversation_of(sessions, said)
+    assert archives == []
+
+
+async def test_marker_for_an_earlier_conversation(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = unattended_history(sessions)
+    said = await history.append("diogo", "user", "goodnight")
+    await backdate(sessions, said, timedelta(hours=30))
+    c41 = await conversation_of(sessions, said)
+    reset = await history.close_idle(c41, datetime.now(UTC) - SIX)
+    assert reset is not None
+    c42 = await briefing(history, sessions, timedelta(hours=7))
+    assert c42 == reset.new_id
+    item = await add_queue_item(sessions, "reminder", "brief me")
+    c43 = await conversation_of(
+        sessions, await history.append("diogo", "reminder", "brief me", queue_item_id=item)
+    )
+    assert c43 != c42 and await end_reason(sessions, c42) == "unattended"
+    assert await history.take_idle_marker("diogo") == (c41, c43)
+    assert await history.take_idle_marker("diogo") is None
+
+
+async def test_idle_close_off_keeps_the_conversation(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions)
+    notice = await history.append("diogo", "notice", "backup done", source="backup")
+    await backdate(sessions, notice, timedelta(days=30))
+    later = await history.append("diogo", "notice", "backup done", source="backup")
+    assert await conversation_of(sessions, later) == await conversation_of(sessions, notice)
+
+
+async def test_retried_reminder_stays_where_it_was_recorded(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    archives: list[int] = []
+    history = unattended_history(sessions, archives)
+    item = await add_queue_item(sessions, "reminder", "brief me")
+    first = await history.append("diogo", "reminder", "brief me", queue_item_id=item)
+    await backdate(sessions, first, timedelta(hours=7))
+    # The worker crashed before the reply and retries the item later.
+    again = await history.append("diogo", "reminder", "brief me", queue_item_id=item)
+    reply = await history.append("diogo", "reminder_reply", "Sunny.", queue_item_id=item)
+    assert again == first
+    assert await conversation_of(sessions, reply) == await conversation_of(sessions, first)
+    assert archives == []

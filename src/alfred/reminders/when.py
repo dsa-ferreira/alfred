@@ -12,12 +12,20 @@ checks on the minute.
 Local times are built with ``fold=0``. A time in a DST gap (it does not
 exist) is moved forward by the gap through a round trip via UTC; an
 ambiguous time (the autumn repeat) takes its first occurrence.
+
+A repeating reminder (change add-recurring-reminders, design D2) has a
+:class:`Rule`: the weekdays it falls on, as a bitmask (Monday = bit 0), and a
+local wall time. Each occurrence is worked out from the rule in the zone
+(:func:`next_occurrence`), never by adding 24 hours, so 08:00 stays 08:00
+across DST changes.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -151,6 +159,136 @@ def _date(year: str, month: str, day: str) -> date:
 def _local(day: date, clock: time, zone: ZoneInfo) -> datetime:
     """That wall-clock time in ``zone``, as UTC; a time in a DST gap moves forward by it."""
     return datetime.combine(day, clock, tzinfo=zone).astimezone(UTC)
+
+
+# --- repeat rules (change add-recurring-reminders, design D2) ------------------
+
+REPEATS = ("daily", "weekdays", "weekends", "weekly")
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+DAY_NAMES = tuple(d[:3] for d in WEEKDAYS)  # "mon" ... "sun", as the tool offers them
+ALL_DAYS = 0b1111111
+_MASKS = {"daily": ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
+REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
+
+
+@dataclass(frozen=True)
+class Rule:
+    """When a reminder repeats: ``repeat`` names it, ``days`` is the weekday mask."""
+
+    repeat: str
+    days: int
+    clock: time
+
+    @property
+    def clock_text(self) -> str:
+        """``08:00``, as stored in ``repeat_time``."""
+        return f"{self.clock:%H:%M}"
+
+    @classmethod
+    def stored(cls, repeat: str, days: int, clock_text: str) -> Rule:
+        """The rule from a reminder row's ``repeat``, ``repeat_days`` and ``repeat_time``."""
+        hour, minute = clock_text.split(":")
+        return cls(repeat, days, time(int(hour), int(minute)))
+
+    def label(self) -> str:
+        return format_rule(self.repeat, self.days, self.clock)
+
+
+def parse_rule(
+    *, repeat: Any = None, days: Any = None, at: Any = None, in_minutes: Any = None
+) -> Rule | None:
+    """The repeat rule of an ``alfred_remind_set`` call, or ``None`` for a one-shot.
+
+    Raises :class:`WhenError` with a message for the model naming the
+    accepted forms.
+    """
+    if repeat is None or repeat == "":
+        if days not in (None, "", []):
+            raise WhenError('Error: days needs repeat weekly, e.g. repeat weekly, days ["tue"].')
+        return None
+    if not isinstance(repeat, str) or repeat.strip().lower() not in REPEATS:
+        raise WhenError(f"Error: repeat must be one of {', '.join(REPEATS)}.")
+    name = repeat.strip().lower()
+    if in_minutes is not None:
+        raise WhenError(
+            "Error: a repeating reminder takes at as HH:MM, not in_minutes. "
+            "For a one-off reminder, leave repeat out."
+        )
+    if not isinstance(at, str) or not (match := _CLOCK.fullmatch(at.strip())):
+        raise WhenError('Error: a repeating reminder takes at as "HH:MM" (24-hour), e.g. "08:00".')
+    clock = _clock(match.group(1), match.group(2))
+    if name == "weekly":
+        mask = _days_mask(days)
+    elif days not in (None, "", []):
+        raise WhenError(f"Error: days is only for repeat weekly; {name} already says which days.")
+    else:
+        mask = _MASKS[name]
+    return Rule(name, mask, clock)
+
+
+def _days_mask(value: Any) -> int:
+    if isinstance(value, str):
+        value = [value]
+    if not value:
+        raise WhenError(
+            'Error: repeat weekly needs days, e.g. ["tue", "fri"]. '
+            f"Days are {', '.join(DAY_NAMES)}."
+        )
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise WhenError('Error: days must be a list of day names, e.g. ["tue", "fri"].')
+    mask = 0
+    for raw in value:
+        day = raw.strip().lower()
+        index = next((i for i, d in enumerate(WEEKDAYS) if day in (d, d[:3])), None)
+        if index is None:
+            raise WhenError(f"Error: {raw!r} is not a day. Days are {', '.join(DAY_NAMES)}.")
+        mask |= 1 << index
+    return mask
+
+
+def next_occurrence(days: int, clock: time, after: datetime, zone: ZoneInfo) -> datetime:
+    """The first occurrence of the rule strictly after ``after``, in UTC.
+
+    Eight days covers a weekly rule whose only day is today and has passed.
+    """
+    start = after.astimezone(zone).date()
+    for offset in range(8):
+        day = start + timedelta(days=offset)
+        if days & (1 << day.weekday()):
+            candidate = _local(day, clock, zone)
+            if candidate > after:
+                return candidate
+    raise ValueError(f"no occurrence for the day mask {days}")
+
+
+def latest_occurrence(
+    days: int, clock: time, due: datetime, now: datetime, zone: ZoneInfo
+) -> datetime:
+    """The latest occurrence at or before ``now``, stepping on from ``due`` (design D3).
+
+    On time it is ``due`` itself; after an outage, the most recent missed one.
+    """
+    latest = due
+    while (following := next_occurrence(days, clock, latest, zone)) <= now:
+        latest = following
+    return latest
+
+
+def format_rule(repeat: str, days: int, clock: time) -> str:
+    """``every weekday at 08:00``, ``every Tuesday and Friday at 20:00``."""
+    at = f"at {clock:%H:%M}"
+    if days == ALL_DAYS:
+        return f"every day {at}"
+    if days == _MASKS["weekdays"]:
+        return f"every weekday {at}"
+    if days == _MASKS["weekends"]:
+        return f"every weekend day {at}"
+    names = [WEEKDAYS[i].capitalize() for i in range(7) if days & (1 << i)]
+    return f"every {_and(names)} {at}"
+
+
+def _and(items: Sequence[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 # --- formatting ------------------------------------------------------------------

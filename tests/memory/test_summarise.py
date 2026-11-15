@@ -215,7 +215,9 @@ async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSess
 
     reminder_id = await Reminders(sessions).set("call mum", NOW, "diogo", ["diogo"])
     history = History(sessions)
-    await history.append("diogo", "reminder", "call mum", reminder_id=reminder_id)
+    await history.append(
+        "diogo", "reminder", "call mum", reminder_id=reminder_id, reminder_due_at=NOW
+    )
     await history.append(
         "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
     )

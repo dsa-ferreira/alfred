@@ -21,7 +21,10 @@ the sweeper when items arrive and finish (``QueueActivity``, design D5).
 
 A reminder always reaches its recipient (change add-reminders, design D6): a
 blank or ``NO_REPLY`` answer, or a turn that fails for good, is replaced by
-the fixed reminder notice.
+the fixed reminder notice. The exception is a quiet reminder (``quiet_ok``)
+answered ``NO_REPLY``: nothing is sent or recorded (change
+add-recurring-reminders, design D6). A quiet reminder whose turn fails still
+gets the notice, so a broken AI doesn't look like "nothing to report".
 """
 
 from __future__ import annotations
@@ -319,7 +322,13 @@ class Worker:
         await self._complete(item, turn, result)
 
     async def _reminder_turn(self, item: QueueItem, user: User) -> TurnInput:
-        """The reminder's text, due time and creator, read through ``reminder_id``."""
+        """The reminder's text, rule, quietness and creator, read through ``reminder_id``.
+
+        The due time is the item's own: a repeating reminder's row has
+        already moved on to its next occurrence (change
+        add-recurring-reminders, design D6).
+        """
+        due_at = item.reminder_due_at
         reminder = None
         if self._reminders is not None and item.reminder_id is not None:
             reminder = await self._reminders.get(item.reminder_id)
@@ -330,7 +339,7 @@ class Worker:
                 item.text,
                 item.id,
                 reminder_id=item.reminder_id,
-                due_at=item.created_at,
+                due_at=due_at or item.created_at,
                 user=user,
             )
         return TurnInput(
@@ -338,8 +347,12 @@ class Worker:
             reminder.text,
             item.id,
             reminder_id=reminder.id,
-            due_at=reminder.due_at,
+            # Items queued before migration 0008 were backfilled; the row's
+            # time is only a last resort.
+            due_at=due_at or reminder.due_at,
             set_by=reminder.created_by if reminder.created_by != user.name else None,
+            repeat_label=reminder.rule.label() if reminder.rule else None,
+            quiet_ok=reminder.quiet_ok,
             user=user,
         )
 
@@ -352,7 +365,12 @@ class Worker:
         """Record the reminder and what the recipient was told, then send it."""
         user = turn.user
         await self._history.append(
-            user.name, "reminder", turn.text, queue_item_id=item.id, reminder_id=turn.reminder_id
+            user.name,
+            "reminder",
+            turn.text,
+            queue_item_id=item.id,
+            reminder_id=turn.reminder_id,
+            reminder_due_at=turn.due_at,
         )
         await self._history.append(
             user.name,
@@ -360,6 +378,7 @@ class Worker:
             message,
             queue_item_id=item.id,
             reminder_id=turn.reminder_id,
+            reminder_due_at=turn.due_at,
         )
         await self._send(item, user, message)
 
@@ -404,10 +423,20 @@ class Worker:
             await self._send(item, user, result.reply)
         elif item.kind == "reminder":
             reply = result.reply
-            if not reply.strip() or is_no_reply(reply):
-                log.warning("reminder item %s: the model gave no message; plain notice", item.id)
-                reply = self._reminder_notice(turn)
-            await self._deliver_reminder(item, turn, reply)
+            if turn.quiet_ok and is_no_reply(reply):
+                log.info(
+                    "reminder item %s (#%s): NO_REPLY, %s not notified",
+                    item.id,
+                    turn.reminder_id,
+                    user.name,
+                )
+            else:
+                if not reply.strip() or is_no_reply(reply):
+                    log.warning(
+                        "reminder item %s: the model gave no message; plain notice", item.id
+                    )
+                    reply = self._reminder_notice(turn)
+                await self._deliver_reminder(item, turn, reply)
         elif is_no_reply(result.reply):
             log.info("ask %s from %s: NO_REPLY, %s not notified", item.id, item.source, user.name)
         else:

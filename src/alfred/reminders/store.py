@@ -3,12 +3,17 @@
 A reminder has a creator and one or more recipients (change
 add-multiple-users, design D7). Listing and cancelling are for the users
 involved, its creator or a recipient; to anyone else the reminder doesn't
-exist. Cancelling cancels it for every recipient.
+exist. The creator cancels it for every recipient; a recipient who didn't
+set it only leaves it, and the last one leaving cancels it (change
+add-recurring-reminders, design D5).
 
 ``claim_due`` marks due reminders ``fired`` and inserts one queue item per
 recipient in one transaction, so each recipient's item is queued exactly
 once: a crash leaves the reminder either pending (claimed again after
-restart) or queued (the queue survives restarts).
+restart) or queued (the queue survives restarts). A repeating reminder
+stays ``pending`` and moves on to its next occurrence instead; after an
+outage only its latest missed occurrence is queued (design D3). Each item
+carries the due time of the occurrence it delivers.
 """
 
 from __future__ import annotations
@@ -17,13 +22,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import delete, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import QueueItem, Reminder, ReminderRecipient
+from alfred.reminders.when import Rule, latest_occurrence, next_occurrence
 
-CancelOutcome = Literal["cancelled", "unknown", "fired", "cancelled_before"]
+UTC_ZONE = ZoneInfo("UTC")
+
+# ``left``: a recipient who didn't set it was removed; it stays set for the others.
+CancelOutcome = Literal["cancelled", "left", "unknown", "fired", "cancelled_before"]
 
 
 @dataclass(frozen=True)
@@ -35,6 +45,10 @@ class ReminderRow:
     created_by: str
     # In name order.
     recipients: tuple[str, ...]
+    # The repeat rule; None for a one-shot reminder.
+    rule: Rule | None = None
+    # The reminder turn may answer NO_REPLY.
+    quiet_ok: bool = False
 
     def only_for(self, user: str) -> bool:
         """Set by ``user`` for ``user`` alone."""
@@ -54,9 +68,24 @@ async def _rows(session: AsyncSession, reminders: Sequence[Reminder]) -> list[Re
         for reminder_id, name in found:
             recipients[reminder_id].append(name)
     return [
-        ReminderRow(r.id, r.text, r.due_at, r.status, r.created_by, tuple(recipients[r.id]))
+        ReminderRow(
+            r.id,
+            r.text,
+            r.due_at,
+            r.status,
+            r.created_by,
+            tuple(recipients[r.id]),
+            _rule(r),
+            r.quiet_ok,
+        )
         for r in reminders
     ]
+
+
+def _rule(reminder: Reminder) -> Rule | None:
+    if reminder.repeat is None or reminder.repeat_days is None or reminder.repeat_time is None:
+        return None
+    return Rule.stored(reminder.repeat, reminder.repeat_days, reminder.repeat_time)
 
 
 def _involves(user: str):  # noqa: ANN202 - a SQLAlchemy condition
@@ -70,18 +99,40 @@ def _involves(user: str):  # noqa: ANN202 - a SQLAlchemy condition
 
 
 class Reminders:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], zone: ZoneInfo = UTC_ZONE
+    ) -> None:
         self._sessions = sessions
+        # Where repeating reminders' wall times are (alfred's timezone).
+        self._zone = zone
 
     async def set(
-        self, text: str, due_at: datetime, created_by: str, recipients: Sequence[str]
+        self,
+        text: str,
+        due_at: datetime,
+        created_by: str,
+        recipients: Sequence[str],
+        *,
+        rule: Rule | None = None,
+        quiet_ok: bool = False,
     ) -> int:
-        """Store a reminder ``created_by`` set for ``recipients`` (at least one)."""
+        """Store a reminder ``created_by`` set for ``recipients`` (at least one).
+
+        With a ``rule``, ``due_at`` is its first occurrence.
+        """
         names = list(dict.fromkeys(recipients))
         if not names:
             raise ValueError("a reminder needs at least one recipient")
         async with self._sessions.begin() as session:
-            reminder = Reminder(text=text, due_at=due_at, created_by=created_by)
+            reminder = Reminder(
+                text=text,
+                due_at=due_at,
+                created_by=created_by,
+                repeat=rule.repeat if rule else None,
+                repeat_days=rule.days if rule else None,
+                repeat_time=rule.clock_text if rule else None,
+                quiet_ok=quiet_ok,
+            )
             session.add(reminder)
             await session.flush()
             session.add_all(ReminderRecipient(reminder_id=reminder.id, user_name=n) for n in names)
@@ -105,10 +156,13 @@ class Reminders:
     async def cancel(
         self, reminder_id: int, now: datetime, user: str
     ) -> tuple[CancelOutcome, ReminderRow | None]:
-        """Cancel a pending reminder involving ``user``, for everyone it is for.
+        """Cancel a pending reminder involving ``user``.
 
-        One that doesn't involve ``user`` is ``unknown``, as if it didn't
-        exist. Anything else is left as it is.
+        Its creator cancels it for everyone. A recipient who didn't set it is
+        removed from it (``left``; the row's recipients are those remaining),
+        and when none remain it is cancelled. Items already queued are left
+        alone. One that doesn't involve ``user`` is ``unknown``, as if it
+        didn't exist. Anything else is left as it is.
         """
         async with self._sessions.begin() as session:
             reminder = await session.scalar(
@@ -122,6 +176,20 @@ class Reminders:
                 return "fired", (await _rows(session, [reminder]))[0]
             if reminder.status == "cancelled":
                 return "cancelled_before", (await _rows(session, [reminder]))[0]
+            if reminder.created_by != user:
+                await session.execute(
+                    delete(ReminderRecipient).where(
+                        ReminderRecipient.reminder_id == reminder.id,
+                        ReminderRecipient.user_name == user,
+                    )
+                )
+                row = (await _rows(session, [reminder]))[0]
+                if row.recipients:
+                    return "left", row
+                # The last recipient left: nobody is reminded any more.
+                reminder.status = "cancelled"
+                reminder.cancelled_at = now
+                return "cancelled", row
             reminder.status = "cancelled"
             reminder.cancelled_at = now
             return "cancelled", (await _rows(session, [reminder]))[0]
@@ -129,7 +197,9 @@ class Reminders:
     async def claim_due(self, now: datetime) -> list[int]:
         """Queue every pending reminder due by ``now``, one item per recipient.
 
-        In due order, then recipient name. Returns the queue item IDs.
+        In due order, then recipient name. A one-shot reminder is marked
+        ``fired``; a repeating one queues its latest occurrence by ``now`` and
+        moves on to its next one after ``now``. Returns the queue item IDs.
         """
         async with self._sessions.begin() as session:
             due = list(
@@ -143,11 +213,21 @@ class Reminders:
             ids: list[int] = []
             for row in await _rows(session, due):
                 reminder = next(r for r in due if r.id == row.id)
-                reminder.status = "fired"
                 reminder.fired_at = now
+                occurrence = reminder.due_at
+                if row.rule is None:
+                    reminder.status = "fired"
+                else:
+                    days, clock = row.rule.days, row.rule.clock
+                    occurrence = latest_occurrence(days, clock, reminder.due_at, now, self._zone)
+                    reminder.due_at = next_occurrence(days, clock, now, self._zone)
                 for name in row.recipients:
                     item = QueueItem(
-                        kind="reminder", user_name=name, text=row.text, reminder_id=row.id
+                        kind="reminder",
+                        user_name=name,
+                        text=row.text,
+                        reminder_id=row.id,
+                        reminder_due_at=occurrence,
                     )
                     session.add(item)
                     # One by one, so queue item IDs (the queue's order) follow due order.

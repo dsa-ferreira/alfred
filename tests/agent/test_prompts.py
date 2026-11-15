@@ -183,8 +183,11 @@ def test_date_follows_the_rules() -> None:
 
 
 def test_no_time_of_day() -> None:
-    # The rules show a fixed example stamp; nothing else may look like a time.
-    text = make_prompt(None, address="sir", ask=False).replace("[Mon 9 Nov 14:05]", "")
+    # The rules show a fixed example stamp and example reminder times; nothing
+    # else may look like a time.
+    text = make_prompt(None, address="sir", ask=False)
+    for example in ("[Mon 9 Nov 14:05]", 'at "08:00"', 'at "21:00"'):
+        text = text.replace(example, "")
     assert not re.search(r"\d{1,2}:\d{2}", text)
 
 
@@ -277,16 +280,42 @@ def test_reminder_messages_explained_with_custom_persona() -> None:
 
 
 def test_reminder_turn_rule() -> None:
-    from alfred.agent.prompts import ASK_RULE, REMINDER_RULE
+    from alfred.agent.prompts import ASK_RULE, REMINDER_ALWAYS, REMINDER_RULE
 
     for persona in (None, "Be terse."):
         prompt = make_prompt(persona, address="sir", ask=False, reminder=True)
-        assert prompt.endswith(REMINDER_RULE)
+        assert prompt.endswith(f"{REMINDER_RULE} {REMINDER_ALWAYS}")
         assert ASK_RULE not in prompt
         assert NO_REPLY not in prompt
-    assert "If it is late, say how late" in _flat(REMINDER_RULE)
-    assert "Don't mention the reminder's number" in _flat(REMINDER_RULE)
+    rule = _flat(REMINDER_RULE)
+    assert "If it is late, say how late" in rule
+    assert "Don't mention the reminder's number" in rule
+    # It may act: what the reminder asks for is looked up with the tools.
+    assert "don't act" not in rule.lower() and "don't use" not in rule.lower()
+    assert "find out, check or sum up something, do it now with your tools" in rule
     assert REMINDER_RULE not in make_prompt(None, address="sir", ask=False)
+
+
+def test_quiet_reminder_turn_rule() -> None:
+    from alfred.agent.prompts import REMINDER_ALWAYS, REMINDER_QUIET, REMINDER_RULE
+
+    prompt = make_prompt(None, address="sir", ask=False, reminder=True, reminder_quiet=True)
+    assert prompt.endswith(f"{REMINDER_RULE} {REMINDER_QUIET}")
+    assert f"answer exactly {NO_REPLY} and nothing else" in _flat(REMINDER_QUIET)
+    assert REMINDER_ALWAYS not in prompt
+    # Only a reminder turn is told: a chat turn ignores the flag.
+    assert NO_REPLY not in make_prompt(None, address="sir", ask=False, reminder_quiet=True)
+
+
+def test_scheduled_requests_are_reminders() -> None:
+    prompt = _flat(make_prompt(None, address="sir", ask=False))
+    assert "to do something later or on a schedule is a reminder too" in prompt
+    assert '"Every weekday at 8, brief me on the weather" is a reminder with repeat weekdays' in (
+        prompt
+    )
+    assert 'at "08:00"' in prompt and "don't look up the weather now" in prompt
+    assert '"every evening at 9, tell me if anything is downloading" is a daily' in prompt
+    assert "with quiet_ok" in prompt
 
 
 def test_message_times_explained() -> None:
@@ -350,6 +379,7 @@ def test_no_reminder_rules_without_remind_set() -> None:
     prompt = _flat(make_prompt(None, ask=False, tools=ALL - {REMIND_SET}, others=["ana"]))
     assert "alfred_remind_set" not in prompt
     assert "remind me to call my mother" not in prompt
+    assert "brief me on the weather" not in prompt and "quiet_ok" not in prompt
     assert "can be reminded" not in prompt
     # Delivered reminders are still explained: others can set them for this user.
     assert "[reminder:#<id> ...] is a reminder alfred delivered" in prompt
