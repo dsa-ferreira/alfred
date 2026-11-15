@@ -18,7 +18,7 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, and the number of search results, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, the idle close time, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, the number of search results, and the quiet period before summaries, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
 - **WHEN** the file sets only one user, the model, services and MCP servers
@@ -91,6 +91,22 @@ Every non-secret setting SHALL be settable in the config file, including the use
 #### Scenario: Size limit above Telegram's
 - **WHEN** `[attachments] max_bytes` is set to 50000000
 - **THEN** alfred exits at startup with an error naming `attachments.max_bytes` and the 20 MB maximum
+
+#### Scenario: Idle close off by default
+- **WHEN** the file does not set `[history] idle_close_after_h`
+- **THEN** conversations are never closed for inactivity
+
+#### Scenario: Set the idle close time
+- **WHEN** `[history] idle_close_after_h` is set to 6 and alfred restarts
+- **THEN** a conversation is closed for inactivity 6 hours after its user's last message
+
+#### Scenario: Invalid idle close time
+- **WHEN** `[history] idle_close_after_h` is set to 0
+- **THEN** alfred exits at startup with an error naming `history.idle_close_after_h`
+
+#### Scenario: Default quiet period
+- **WHEN** the file does not set `[memory] summary_quiet_s`
+- **THEN** summaries start only after the queue has been quiet for 60 seconds
 
 ### Requirement: Secrets only from the environment
 Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), the object store key (`ALFRED_S3_ACCESS_KEY_ID` and `ALFRED_S3_SECRET_ACCESS_KEY`, required only when `[attachments]` is set), the tokens of services and MCP servers, and users' MCP tokens. Services and MCP servers SHALL name their secret's variable with `token_env`, and a user SHALL name a per-server variable in `mcp_tokens`.
