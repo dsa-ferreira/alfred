@@ -29,11 +29,19 @@ alfred SHALL accept messages only from configured users' Telegram user IDs, each
 - **THEN** the message is ignored
 
 ### Requirement: No bot commands
-alfred SHALL NOT define bot commands. Every text message from the owner, including one starting with `/`, SHALL be sent to the AI as written.
+alfred SHALL define exactly one bot command, `/memory` (see `user-facts`). Every other text message from the owner, including one starting with `/`, SHALL be sent to the AI as written.
 
 #### Scenario: Slash-prefixed text
 - **WHEN** the owner sends "/start"
 - **THEN** it is queued for the AI as the text "/start"
+
+#### Scenario: Memory command
+- **WHEN** the owner sends "/memory"
+- **THEN** it is answered without the AI and is not queued
+
+#### Scenario: Text that only starts like the command
+- **WHEN** the owner sends "/memorybank ideas"
+- **THEN** it is queued for the AI as written
 
 ### Requirement: Supported message types
 alfred SHALL handle owner text messages, and, when attachments are configured, photos, image files and PDF files (see `attachments`). For any other owner message type (voice, video, sticker, other files), and for photos and files when attachments are not configured, it SHALL reply with a short fixed notice naming what it can read, and SHALL NOT queue anything.

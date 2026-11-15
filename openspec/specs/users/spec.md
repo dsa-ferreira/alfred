@@ -56,11 +56,15 @@ An allow-list entry SHALL start with `alfred_` or with a configured MCP server's
 - **THEN** alfred starts and logs a warning naming the user, mcparr and `mcparr_add_medai` when mcparr's tools are listed
 
 ### Requirement: Users don't see each other's data
-A user's turns SHALL NOT see another user's conversations, history, archived conversations, attachments or reminders, except reminders on which that user is the creator or a recipient.
+A user's turns and commands SHALL NOT see another user's conversations, history, archived conversations, attachments, facts or reminders, except reminders on which that user is the creator or a recipient.
 
 #### Scenario: Searching memory
 - **WHEN** `ana` asks "what did we talk about yesterday?"
 - **THEN** only `ana`'s archived conversations can be returned
+
+#### Scenario: Facts
+- **WHEN** `diogo` has facts and `ana`'s turn runs, or `ana` sends `/memory`
+- **THEN** none of `diogo`'s facts are in `ana`'s prompt, tool results or `/memory` replies
 
 ### Requirement: The model knows who it is talking to
 The system prompt of every turn SHALL name the user whose turn it is. When that user is offered `alfred_remind_set`, it SHALL also name the other users that can be reminded.
