@@ -31,7 +31,7 @@ async def test_crash_between_upload_and_record(
     await put_at(store, clock, "attachments/orphan", NOW - timedelta(days=2))
     await put_at(store, clock, "attachments/kept", NOW - timedelta(days=2))
     await ChatIntake(sessions, Queue(sessions)).enqueue_user(
-        "diogo", "total?", None, [image_file("attachments/kept")]
+        "diogo", "total?", [image_file("attachments/kept")]
     )
     clock.now = NOW
     assert await OrphanSweeper(store, sessions, now=clock)._sweep_once() == 1

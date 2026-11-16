@@ -50,7 +50,7 @@ def intake(
 async def rows(sessions: async_sessionmaker[AsyncSession]) -> tuple[list, list, list]:
     async with sessions() as session:
         items = list(await session.scalars(select(QueueItem).order_by(QueueItem.id)))
-        attachments = list(await session.scalars(select(Attachment).order_by(Attachment.position)))
+        attachments = list(await session.scalars(select(Attachment).order_by(Attachment.id)))
         pages = list(
             await session.scalars(
                 select(AttachmentPage).order_by(AttachmentPage.attachment_id, AttachmentPage.page)
@@ -66,16 +66,20 @@ async def test_photo_with_caption(sessions: async_sessionmaker[AsyncSession]) ->
     )
     assert received.notices == []
     items, (attachment,), pages = await rows(sessions)
-    assert [(i.id, i.kind, i.text, i.telegram_message_id) for i in items] == [
-        (received.item_id, "user", "what's the total?", 77)
+    assert [(i.id, i.kind, i.payload) for i in items] == [
+        (
+            received.item_id,
+            "chat",
+            {"text": "what's the total?", "attachment_ids": [attachment.id]},
+        )
     ]
-    assert (attachment.queue_item_id, attachment.kind, attachment.mime) == (
-        received.item_id,
+    assert (attachment.user_name, attachment.kind, attachment.mime) == (
+        "diogo",
         "image",
         "image/jpeg",
     )
     assert (attachment.width, attachment.height, attachment.size_bytes) == (800, 600, len(RECEIPT))
-    assert attachment.entry_id is None and attachment.file_name is None
+    assert attachment.file_name is None
     assert attachment.object_key.startswith("attachments/")
     assert store.objects[attachment.object_key][:2] == (RECEIPT, "image/jpeg")
     assert pages == []
@@ -87,7 +91,7 @@ async def test_pdf_without_caption(sessions: async_sessionmaker[AsyncSession]) -
         DIOGO, "", [IncomingFile("pdf", "d1", len(INVOICE), "invoice.pdf")]
     )
     (item,), (attachment,), pages = await rows(sessions)
-    assert (item.id, item.text) == (received.item_id, "")
+    assert (item.id, item.payload["text"]) == (received.item_id, "")
     assert (attachment.kind, attachment.mime, attachment.file_name, attachment.page_count) == (
         "pdf",
         "application/pdf",
@@ -181,6 +185,9 @@ async def test_refused_part_notified_and_the_rest_queued(
     )
     assert received.notices == [notices.unreadable("sir", "image")]
     (item,), attachments, _ = await rows(sessions)
-    assert item.text == "which is cheapest?"
-    assert [(a.position, a.kind) for a in attachments] == [(0, "image"), (1, "pdf")]
+    assert item.payload == {
+        "text": "which is cheapest?",
+        "attachment_ids": [a.id for a in attachments],
+    }
+    assert [a.kind for a in attachments] == ["image", "pdf"]
     assert len(store.objects) == 2

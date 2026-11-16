@@ -34,7 +34,9 @@ from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeStore, make_config
 async def _rows(sessions: async_sessionmaker[AsyncSession]) -> None:
     async with sessions.begin() as session:
         session.add(Conversation(user_name="diogo"))
-        session.add(QueueItem(kind="user", user_name="ana", text="hi"))
+        session.add(
+            QueueItem(kind="chat", user_name="ana", payload={"text": "hi", "attachment_ids": []})
+        )
         reminder = Reminder(text="x", due_at=datetime.now(UTC), created_by="ana")
         session.add(reminder)
         await session.flush()

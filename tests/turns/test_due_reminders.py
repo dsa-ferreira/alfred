@@ -11,6 +11,7 @@ from alfred.reminders.store import Reminders
 from alfred.turns.due_reminders import run_due_loop
 from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
+from tests.helpers import reminder_of
 
 DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
 
@@ -66,7 +67,7 @@ async def test_reminder_comes_due(sessions: async_sessionmaker[AsyncSession]) ->
 
         fired = await session.get(Reminder, rid)
         assert fired is not None and fired.fired_at == DUE  # queued at 17:00:00 exactly
-    assert (item.kind, item.reminder_id, item.status) == ("reminder", rid, "pending")
+    assert (item.kind, reminder_of(item).reminder_id, item.status) == ("reminder", rid, "pending")
     assert item.created_at is not None
     assert signal.is_set()
     assert await store.pending("diogo") == []
@@ -92,7 +93,7 @@ async def test_alfred_down_at_the_due_time(sessions: async_sessionmaker[AsyncSes
     clock = FakeClock(DUE + timedelta(hours=2, minutes=40), passes=1)
     await run(store, signal, clock)
     [item] = await queue_items(sessions)
-    assert item.reminder_id == rid
+    assert reminder_of(item).reminder_id == rid
     assert signal.is_set()
 
 
@@ -102,7 +103,7 @@ async def test_days_late(sessions: async_sessionmaker[AsyncSession]) -> None:
     first = await store.set("call mum", DUE - timedelta(days=3), "diogo", ["diogo"])
     signal = asyncio.Event()
     await run(store, signal, FakeClock(DUE, passes=1))
-    assert [i.reminder_id for i in await queue_items(sessions)] == [first, later]
+    assert [reminder_of(i).reminder_id for i in await queue_items(sessions)] == [first, later]
 
 
 async def test_failure_does_not_stop_the_loop(

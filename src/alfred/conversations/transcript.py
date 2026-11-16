@@ -12,18 +12,40 @@ conversation's files can be opened again; never image data or PDF text.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
-from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
-from alfred.conversations.tables import Conversation, Entry
+from alfred.attachments.handles import AttachmentRef, handle, with_handles
+from alfred.conversations.entry_files import refs_by_entry
+from alfred.conversations.tables import Entry, EntryOrigin
 
 _QUOTES = "\"'“”‘’`"
+
+
+@dataclass(frozen=True)
+class Recalled:
+    """An archived conversation's title and summary, as far as ``archive`` has them."""
+
+    title: str | None = None
+    summary: str | None = None
+
+
+class RecalledLookup(Protocol):
+    """The titles and summaries of archived conversations: ``archive.summaries.recalled``.
+
+    Read in the caller's session. ``archive`` ranks above this package, so
+    ``app`` hands its implementation in.
+    """
+
+    async def __call__(
+        self, session: AsyncSession, conversation_ids: Collection[int]
+    ) -> dict[int, Recalled]: ...
 
 
 @dataclass(frozen=True)
@@ -78,28 +100,52 @@ def date_span(started: datetime, ended: datetime | None, zone: ZoneInfo) -> str:
     return f"{start} to {end}"
 
 
-async def load_transcript(session: AsyncSession, conversation_id: int) -> list[TranscriptEntry]:
-    recalled = aliased(Conversation)
+async def load_transcript(
+    session: AsyncSession, conversation_id: int, recalled: RecalledLookup | None = None
+) -> list[TranscriptEntry]:
+    """The conversation's entries, oldest first, with recalled conversations' titles
+    (none without ``recalled``) and user entries' files."""
     rows = await session.execute(
         select(
             Entry.kind,
             Entry.source,
             Entry.text,
             Entry.recalled_conversation_id,
-            recalled.title,
-            Entry.reminder_id,
+            Entry.origin,
             Entry.id,
         )
-        .outerjoin(recalled, recalled.id == Entry.recalled_conversation_id)
         .where(Entry.conversation_id == conversation_id)
         .order_by(Entry.id)
     )
-    entries = [TranscriptEntry(*row) for row in rows]
+    rows = list(rows)
+    titles = await recalled_of(session, recalled, (row[3] for row in rows))
+    entries = [
+        TranscriptEntry(
+            kind,
+            source,
+            text_,
+            recalled_id,
+            titles[recalled_id].title if recalled_id in titles else None,
+            EntryOrigin.from_json(origin).reminder_id if origin is not None else None,
+            entry_id,
+        )
+        for kind, source, text_, recalled_id, origin, entry_id in rows
+    ]
     refs = await refs_by_entry(session, (e.entry_id for e in entries if e.kind == "user"))
     return [
         dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
         for e in entries
     ]
+
+
+async def recalled_of(
+    session: AsyncSession, lookup: RecalledLookup | None, ids: Iterable[int | None]
+) -> dict[int, Recalled]:
+    """``lookup``'s answer for the conversations ``ids`` (``None`` skipped); empty without one."""
+    wanted = {i for i in ids if i is not None}
+    if lookup is None or not wanted:
+        return {}
+    return await lookup(session, wanted)
 
 
 def _line(e: TranscriptEntry) -> str:

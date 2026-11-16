@@ -214,17 +214,12 @@ class AttachmentTools(LocalToolset):
         async with self._sessions() as session:
             row = (
                 await session.execute(
-                    ref_query()
-                    .add_columns(Attachment.entry_id)
-                    .where(Attachment.id == attachment_id, Attachment.user_name == user)
+                    ref_query().where(Attachment.id == attachment_id, Attachment.user_name == user)
                 )
             ).first()
-        if row is None:
+        if row is None or not await self._scope.reaches(user, attachment_id):
             return None
-        *ref, entry_id = row
-        if entry_id is None or not await self._scope.reaches(user, entry_id):
-            return None
-        return AttachmentRef(*ref)
+        return AttachmentRef(*row)
 
     async def _view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
         if not self._brains.current.vision:
@@ -368,9 +363,9 @@ def _parse_pages(value: Any, count: int) -> tuple[int, int] | None:
 class _ConversationScope(Protocol):
     """Which messages a user's turn can reach."""
 
-    async def reaches(self, user: str, entry_id: int) -> bool:
-        """Whether the entry is in ``user``'s current conversation or in one
-        recalled into it. Recall only brings back the handles in its transcript,
-        so a conversation recalled inside a recalled one is reachable only when
-        it is itself recalled."""
+    async def reaches(self, user: str, attachment_id: int) -> bool:
+        """Whether the attachment was sent with an entry of ``user``'s current
+        conversation or of one recalled into it. Recall only brings back the
+        handles in its transcript, so a conversation recalled inside a recalled
+        one is reachable only when it is itself recalled."""
         ...

@@ -52,7 +52,7 @@ async def test_recall_by_id(sessions: async_sessionmaker[AsyncSession]) -> None:
     assert entry.conversation_id == current
     assert entry.recalled_conversation_id == 41
     assert entry.text == TRANSCRIPT
-    assert entry.queue_item_id is None
+    assert entry.turn_id is None
 
 
 async def test_id_given_as_text(sessions: async_sessionmaker[AsyncSession]) -> None:

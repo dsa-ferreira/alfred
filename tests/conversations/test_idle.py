@@ -9,9 +9,11 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.tables import ConversationSummary
 from alfred.conversations.idle import IdleCloser
 from alfred.conversations.store import History
 from alfred.conversations.tables import Conversation, Entry
+from alfred.facts.tables import FactExtraction
 from alfred.turns.queue import busy
 from alfred.turns.tables import QueueItem
 from tests.fakes import QuietQueue, ignore
@@ -214,9 +216,14 @@ async def test_unattended_conversation_is_summarised_without_fact_requests(
 
         async def finished() -> bool:
             async with sessions() as session:
-                row = await session.get(Conversation, old)
-            assert row is not None
-            return row.summary is not None and row.facts_outcome == "done"
+                summary = await session.get(ConversationSummary, old)
+                extraction = await session.get(FactExtraction, old)
+            return (
+                summary is not None
+                and summary.summary is not None
+                and extraction is not None
+                and extraction.outcome == "done"
+            )
 
         await until(finished)
     finally:

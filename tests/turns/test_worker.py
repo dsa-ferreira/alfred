@@ -23,7 +23,7 @@ from alfred.backoff import backoff_s
 from alfred.brains.registry import Brains
 from alfred.conversations.notices import reset_marker
 from alfred.conversations.store import History
-from alfred.conversations.tables import Entry
+from alfred.conversations.tables import Entry, EntryAttachment
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
@@ -38,7 +38,7 @@ from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue, busy
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
-from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
+from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
 from tests.helpers import (
     ANA,
     DIOGO,
@@ -111,7 +111,6 @@ class Setup:
             cfg.queue,
             users=cfg.users,
             nudge=self._nudge,
-            reminders=self.reminders,
             zone=LISBON,
             parking=Parking(NoInputRequests(), NoQuestions()),
             typing=no_typing,
@@ -141,8 +140,8 @@ async def test_two_messages_in_quick_succession(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Setup(sessions, FakeModel([text("Added Dune."), text("Nothing.")]))
-    await s.chat.enqueue_user("diogo", "add Dune Part Three", 1)
-    await s.chat.enqueue_user("diogo", "and what's downloading?", 2)
+    await s.chat.enqueue_user("diogo", "add Dune Part Three")
+    await s.chat.enqueue_user("diogo", "and what's downloading?")
     await s.drain()
     assert s.outbox.sent == ["Added Dune.", "Nothing."]
     # The second turn sees the first turn in its context.
@@ -188,7 +187,6 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
         QueueConfig(**FAST),
         users=Users((DIOGO,)),
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
     )
@@ -267,7 +265,6 @@ async def test_head_of_line_waits_for_retry(sessions: async_sessionmaker[AsyncSe
         QueueConfig(retry_initial_s=0.3, retry_max_s=1),
         users=Users((DIOGO,)),
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
     )
@@ -349,7 +346,6 @@ async def test_unexpected_error_fails_item(sessions: async_sessionmaker[AsyncSes
         QueueConfig(**FAST),
         users=Users((dataclasses.replace(DIOGO, address="Mr. Ferreira"),)),
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
     )
@@ -532,7 +528,6 @@ def typing_worker(s: Setup, events: list[str], queue: QueueConfig | None = None)
         users=Users((DIOGO,)),
         typing=RecordingTyping(events),
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         nudge=ignore,
     )
 
@@ -868,19 +863,26 @@ async def test_retried_turn_links_attachments_once(
     s = Setup(sessions, FakeModel([down, text("A receipt for 12.40 EUR.")]))
     photo = NewAttachment("image", "image/jpeg", 1000, "attachments/a", width=10, height=10)
     pdf = NewAttachment("pdf", "application/pdf", 2000, "attachments/b", "x.pdf", pages=["p1"])
-    item_id = await s.chat.enqueue_user("diogo", "what are these?", 5, [photo, pdf])
+    item_id = await s.chat.enqueue_user("diogo", "what are these?", [photo, pdf])
 
     assert await s.worker._step()  # attempt 1: the owner entry is recorded, the AI is down
     await s.drain()
 
     async with sessions() as session:
-        entries = list(await session.scalars(select(Entry).where(Entry.queue_item_id == item_id)))
-        attachments = list(await session.scalars(select(Attachment).order_by(Attachment.position)))
+        entries = list(await session.scalars(select(Entry).where(Entry.turn_id == item_id)))
+        attachments = list(await session.scalars(select(Attachment).order_by(Attachment.id)))
+        links = list(
+            await session.execute(
+                select(EntryAttachment.entry_id, EntryAttachment.attachment_id).order_by(
+                    EntryAttachment.position
+                )
+            )
+        )
     owner = [e for e in entries if e.kind == "user"]
     assert len(owner) == 1
-    assert [(a.queue_item_id, a.entry_id) for a in attachments] == [
-        (item_id, owner[0].id),
-        (item_id, owner[0].id),
+    assert [tuple(link) for link in links] == [
+        (owner[0].id, attachments[0].id),
+        (owner[0].id, attachments[1].id),
     ]
     assert s.outbox.sent == ["A receipt for 12.40 EUR."]
 
@@ -890,8 +892,8 @@ async def test_append_returns_the_entry_id_on_a_retry(
 ) -> None:
     history = History(sessions)
     item = await ChatIntake(sessions, Queue(sessions)).enqueue_user("diogo", "hi")
-    first = await history.append("diogo", "user", "hi", queue_item_id=item)
-    assert await history.append("diogo", "user", "hi", queue_item_id=item) == first
+    first = await history.append("diogo", "user", "hi", turn_id=item)
+    assert await history.append("diogo", "user", "hi", turn_id=item) == first
 
 
 # --- Users (change add-multiple-users) ---------------------------------------------
@@ -993,7 +995,6 @@ async def test_typing_in_the_users_own_chat(sessions: async_sessionmaker[AsyncSe
         users=Users((DIOGO, ANA)),
         typing=RecordingTyping(events),
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         nudge=ignore,
     )
     await s.chat.enqueue_user("ana", "hi")

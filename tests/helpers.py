@@ -39,7 +39,8 @@ from alfred.turns.call_log import ToolCallLog
 from alfred.turns.config import QueueConfig
 from alfred.turns.due_reminders import _claim_once
 from alfred.turns.intake import ChatIntake
-from alfred.turns.queue import Queue
+from alfred.turns.payloads import AskPayload, ChatPayload, Payload, ReminderPayload
+from alfred.turns.queue import Queue, read_item
 from alfred.turns.tables import QueueItem
 from alfred.web.config import WebConfig
 from alfred.web.tools import WebTools
@@ -137,16 +138,31 @@ class FakeModel:
 
 async def add_queue_item(
     sessions: async_sessionmaker[AsyncSession],
-    kind: str = "user",
+    kind: str = "chat",
     text_: str = "hi",
     source: str | None = None,
     user: str = "diogo",
+    *,
+    reminder_id: int = 1,
+    due_at: datetime | None = None,
+    created_by: str | None = None,
 ) -> int:
+    """A pending queue item of ``kind`` for ``user``; its text is the message, prompt or
+    reminder. Reminder items are a snapshot of reminder ``reminder_id``, due now."""
+    payload: Payload
+    match kind:
+        case "chat":
+            payload = ChatPayload(text_)
+        case "ask":
+            payload = AskPayload(source or "backup", text_)
+        case "reminder":
+            payload = ReminderPayload(
+                reminder_id, due_at or datetime.now(UTC), text_, created_by or user
+            )
+        case _:
+            raise ValueError(f"no queue kind {kind!r}")
     async with sessions.begin() as session:
-        item = QueueItem(kind=kind, user_name=user, text=text_, source=source)
-        session.add(item)
-        await session.flush()
-        return item.id
+        return await Queue(sessions).add(session, user, payload)
 
 
 class FakeEmbedder:
@@ -297,8 +313,13 @@ async def owner_with_files(
     for file, body in zip(files, data, strict=False):
         assert store is not None
         await store.put(file.object_key, body, file.mime)
-    item = await ChatIntake(sessions, Queue(sessions)).enqueue_user(user, text_, None, files)
-    entry = await History(sessions).append(user, "user", text_, queue_item_id=item)
+    item = await ChatIntake(sessions, Queue(sessions)).enqueue_user(user, text_, files)
+    async with sessions() as session:
+        queued = await read_item(session, item)
+    assert queued is not None and isinstance(queued.payload, ChatPayload)
+    entry = await History(sessions).append(
+        user, "user", text_, turn_id=item, attachment_ids=queued.payload.attachment_ids
+    )
     return item, entry
 
 
@@ -338,3 +359,9 @@ async def claim_due(reminders: Reminders, now: datetime) -> list[int]:
     """Queue the reminders due by ``now``, as the due loop does; the queue item IDs."""
     sessions = reminders._sessions
     return await _claim_once(sessions, reminders, Queue(sessions), now)
+
+
+def reminder_of(item: QueueItem) -> ReminderPayload:
+    """A reminder queue item's payload."""
+    assert item.kind == "reminder", item.kind
+    return ReminderPayload.from_json(item.payload)

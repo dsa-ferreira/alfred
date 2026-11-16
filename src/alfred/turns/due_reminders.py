@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.reminders.store import Reminders
 from alfred.times import seconds_to_next_check
+from alfred.turns.payloads import ReminderPayload
 from alfred.turns.queue import Queue
 
 log = logging.getLogger(__name__)
@@ -65,17 +66,17 @@ async def _claim_once(
     async with sessions.begin() as session:
         for occurrence in await reminders.claim_due(session, now):
             reminder = occurrence.reminder
+            # A snapshot: what the reminder says never changes once it is set.
+            payload = ReminderPayload(
+                reminder.id,
+                occurrence.due_at,
+                reminder.text,
+                reminder.created_by,
+                reminder.rule.label() if reminder.rule else None,
+                reminder.quiet_ok,
+            )
             for name in reminder.recipients:
-                ids.append(
-                    await queue.add(
-                        session,
-                        name,
-                        "reminder",
-                        text=reminder.text,
-                        reminder_id=reminder.id,
-                        reminder_due_at=occurrence.due_at,
-                    )
-                )
+                ids.append(await queue.add(session, name, payload))
     if ids:
         log.info("%d due reminder(s) queued as item(s) %s", len(ids), ids)
         queue.notify()

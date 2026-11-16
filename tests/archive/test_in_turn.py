@@ -90,9 +90,7 @@ async def test_search_then_recall_then_follow_up(
     ]
 
     # The recall stays in the conversation: the next turn still sees it.
-    await History(sessions).append(
-        "diogo", "assistant", result.reply, queue_item_id=turn.queue_item_id
-    )
+    await History(sessions).append("diogo", "assistant", result.reply, turn_id=turn.queue_item_id)
     await agent(sessions, model, memory=mem).run(
         await owner_turn(sessions, "and how long in the oven?")
     )

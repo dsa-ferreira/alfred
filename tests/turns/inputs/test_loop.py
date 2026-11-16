@@ -41,8 +41,8 @@ async def waiting(
     sessions: async_sessionmaker[AsyncSession], expires_in: timedelta, message_id: int = 800
 ) -> tuple[InputRequests, int]:
     history = History(sessions)
-    item = await add_queue_item(sessions, "user", "add Dune", user="ana")
-    await history.append("ana", "user", "add Dune", queue_item_id=item)
+    item = await add_queue_item(sessions, "chat", "add Dune", user="ana")
+    await history.append("ana", "user", "add Dune", turn_id=item)
     requests = InputRequests(sessions, history, USERS)
     request = await requests.park(
         item, "ana", tool="mcparr_add_media", arguments={"title": "Dune"}, question=QUESTION,

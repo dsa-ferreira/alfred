@@ -6,6 +6,7 @@ registers them on :data:`metadata`.
 
 from __future__ import annotations
 
+from alfred.archive import tables as _archive  # noqa: F401  (registers its tables)
 from alfred.attachments.tables import Attachment
 from alfred.conversations.tables import Conversation
 from alfred.db.base import Base

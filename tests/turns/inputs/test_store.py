@@ -34,14 +34,15 @@ def store(sessions: async_sessionmaker[AsyncSession]) -> InputRequests:
 async def parked(
     sessions: async_sessionmaker[AsyncSession],
     user: str = "ana",
-    kind: str = "user",
+    kind: str = "chat",
     *,
     expires_at: datetime = LATER,
     text_: str = "add Dune",
     source: str | None = None,
+    due_at: datetime | None = None,
 ) -> tuple[int, int]:
     """A parked item of ``kind`` for ``user`` with its open request: (item id, request id)."""
-    item = await add_queue_item(sessions, kind, text_, source=source, user=user)
+    item = await add_queue_item(sessions, kind, text_, source=source, user=user, due_at=due_at)
     request = await store(sessions).park(
         item,
         user,
@@ -199,7 +200,7 @@ async def test_chat_ending_is_an_assistant_entry(
 ) -> None:
     history = History(sessions)
     item, _ = await parked(sessions)
-    await history.append("ana", "user", "add Dune", queue_item_id=item)
+    await history.append("ana", "user", "add Dune", turn_id=item)
     await store(sessions).cancel_for("ana", "new_message")
     entries = await history.recent("ana", 30)
     assert [(e.kind, e.text) for e in entries] == [
@@ -233,12 +234,8 @@ async def test_ask_ending_records_the_prompt_and_the_reply(
 async def test_reminder_ending_is_its_delivered_message(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    item, _ = await parked(sessions, "diogo", "reminder", text_="call mum", expires_at=EARLIER)
     due = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
-    async with sessions.begin() as session:
-        await session.execute(
-            update(QueueItem).where(QueueItem.id == item).values(reminder_due_at=due)
-        )
+    await parked(sessions, "diogo", "reminder", text_="call mum", expires_at=EARLIER, due_at=due)
     await store(sessions).expire_due()
     entries = await History(sessions).recent("diogo", 30)
     assert [(e.kind, e.text, e.reminder_due_at) for e in entries] == [

@@ -46,6 +46,7 @@ def _cmd_migrate() -> int:
 
     try:
         url = load_database_url()
+        assert url is not None  # missing: raised above
     except ConfigError as exc:
         print(f"alfred: {exc}", file=sys.stderr)
         return 2

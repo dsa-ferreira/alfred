@@ -18,6 +18,7 @@ from alfred.agent.prompts import _CALCULATE, _DATE, _operating_rules
 from alfred.agent.results import TurnResult
 from alfred.agent.turn import Agent
 from alfred.archive.search import ConversationSearch
+from alfred.archive.summaries import recalled
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
 from alfred.config import _MemoryConfig
@@ -101,7 +102,7 @@ def agent(
     return make_agent(
         cfg,
         model,
-        History(sessions),
+        History(sessions, recalled=recalled),
         sessions,
         connect,
         memory=memory,
@@ -124,8 +125,8 @@ async def owner_turn(
     sessions: async_sessionmaker[AsyncSession], message: str, user: User = DIOGO
 ) -> TurnInput:
     """``user``'s chat message, queued and recorded as the worker does."""
-    item = await add_queue_item(sessions, "user", message, user=user.name)
-    await History(sessions).append(user.name, "user", message, queue_item_id=item)
+    item = await add_queue_item(sessions, "chat", message, user=user.name)
+    await History(sessions).append(user.name, "user", message, turn_id=item)
     return ChatTurn(message, item, user=user)
 
 

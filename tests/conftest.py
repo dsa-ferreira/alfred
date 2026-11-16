@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Iterator
 
 import httpx
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alfred.db.engine import make_engine, make_session_factory
@@ -27,8 +27,9 @@ from alfred.web.fetch import make_http_client
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 TABLES = (
-    "input_requests, attachment_pages, attachments, turn_tool_calls, entries, conversations, "
-    "queue_items, reminder_recipients, reminders, facts"
+    "input_requests, entry_attachments, attachment_pages, attachments, turn_tool_calls, "
+    "entries, conversation_summaries, fact_extractions, conversations, queue_items, "
+    "reminder_recipients, reminders, facts"
 )
 POSTGRES_IMAGE = "docker.io/pgvector/pgvector:0.8.7-pg17-trixie"
 
@@ -72,6 +73,23 @@ async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
         await conn.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
     yield engine
     await engine.dispose()
+
+
+@pytest.fixture
+def conn(database_url: str) -> Iterator[Connection]:
+    """A plain connection to the emptied database, in a transaction rolled back afterwards.
+
+    For the table tests, which check constraints with SQL.
+    """
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            outer = connection.begin()
+            connection.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
+            yield connection
+            outer.rollback()
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture

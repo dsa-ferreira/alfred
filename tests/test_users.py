@@ -86,7 +86,6 @@ class House:
             self.outbox,
             cfg.queue,
             users=cfg.users,
-            reminders=self.reminders,
             zone=LISBON,
             parking=Parking(NoInputRequests(), NoQuestions()),
             typing=no_typing,

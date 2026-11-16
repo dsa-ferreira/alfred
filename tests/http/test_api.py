@@ -22,7 +22,7 @@ from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
-from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
+from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeModel, make_agent, make_config, text
 from tests.mcp.servers import in_process
 from tests.telegram.fake_bot import make_bot
@@ -143,7 +143,6 @@ async def test_notify_while_ai_busy(env: Env) -> None:
         make_config().queue,
         users=USERS,
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
     )
@@ -183,8 +182,11 @@ async def test_ask_accepted(env: Env) -> None:
     assert response.status_code == 202
     (item,) = await env.items()
     assert response.json() == {"id": item.id}
-    assert (item.kind, item.source, item.status) == ("ask", "disk-check", "pending")
-    assert item.text == "/mnt/data is at 93%, was 80% yesterday"
+    assert (item.kind, item.status) == ("ask", "pending")
+    assert item.payload == {
+        "source": "disk-check",
+        "prompt": "/mnt/data is at 93%, was 80% yesterday",
+    }
 
 
 @pytest.mark.parametrize("body", [{}, {"prompt": ""}, {"prompt": " \n"}])
@@ -208,7 +210,6 @@ async def run_ask(env: Env, answer: str) -> None:
         cfg.queue,
         users=USERS,
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
     )
@@ -268,7 +269,7 @@ async def test_ask_for_a_named_user(env: Env) -> None:
     )
     assert response.status_code == 202
     (item,) = await env.items()
-    assert (item.kind, item.user_name, item.source) == ("ask", "ana", "disk-check")
+    assert (item.kind, item.user_name, item.payload["source"]) == ("ask", "ana", "disk-check")
 
 
 async def test_ask_without_a_user_is_for_the_admin(env: Env) -> None:

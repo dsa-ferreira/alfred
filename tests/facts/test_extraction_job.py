@@ -12,10 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
-from alfred.conversations.tables import Conversation
 from alfred.facts.extraction_job import FactExtractionJob
 from alfred.facts.store import FactStore
-from alfred.facts.tables import Fact
+from alfred.facts.tables import Fact, FactExtraction
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from tests.fakes import QuietQueue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, make_sweeper, text
@@ -71,11 +70,11 @@ def chat(user_says: str, alfred_says: str = "Very good.") -> tuple[tuple[str, st
     return (("user", user_says), ("assistant", alfred_says))
 
 
-async def conversation(sessions: async_sessionmaker[AsyncSession], cid: int) -> Conversation:
+async def conversation(sessions: async_sessionmaker[AsyncSession], cid: int) -> FactExtraction:
+    """The conversation's extraction row; a blank one (pending, no attempts) while it has none."""
     async with sessions() as session:
-        found = await session.get(Conversation, cid)
-    assert found is not None
-    return found
+        found = await session.get(FactExtraction, cid)
+    return found or FactExtraction(conversation_id=cid, attempts=0)
 
 
 async def fact_row(sessions: async_sessionmaker[AsyncSession], fid: int) -> Fact:
@@ -101,7 +100,7 @@ async def test_allergy_mentioned_in_passing(sessions: async_sessionmaker[AsyncSe
     [found] = await facts.list("diogo")
     assert (found.text, found.origin) == ("diogo is allergic to shellfish.", "learned")
     assert (await fact_row(sessions, found.id)).conversation_id == cid
-    assert (await conversation(sessions, cid)).facts_outcome == "done"
+    assert (await conversation(sessions, cid)).outcome == "done"
     assert await facts.list("ana") == []
     # The request went to the summary model with the transcript.
     request = model.requests[0][0]
@@ -166,7 +165,7 @@ async def test_nothing_durable(sessions: async_sessionmaker[AsyncSession]) -> No
     cid = await archived(sessions, "diogo", *chat("what time is it?", "Ten past two, sir."))
     await run_due(extract)
     assert await facts.list("diogo") == []
-    assert (await conversation(sessions, cid)).facts_outcome == "done"
+    assert (await conversation(sessions, cid)).outcome == "done"
 
 
 async def test_notice_only_conversation_needs_no_model(
@@ -183,7 +182,7 @@ async def test_notice_only_conversation_needs_no_model(
     )
     await run_due(extract)
     assert model.requests == []
-    assert (await conversation(sessions, cid)).facts_outcome == "done"
+    assert (await conversation(sessions, cid)).outcome == "done"
     assert await facts.list("diogo") == []
 
 
@@ -259,7 +258,7 @@ async def test_preempted_request_records_nothing(
     await running
     assert model.cancelled
     row = await conversation(sessions, cid)
-    assert (row.facts_outcome, row.facts_attempts, row.facts_next_at) == (None, 0, None)
+    assert (row.outcome, row.attempts, row.next_at) == (None, 0, None)
     assert await facts.list("diogo") == []
     assert await extract.next_due(True) == cid
 
@@ -284,7 +283,7 @@ async def test_each_failure_logs_a_warning_with_its_attempt(
     for attempt, line in enumerate(found, 1):
         assert line.startswith(f"conversation {cid}: fact extraction failed (attempt {attempt}):")
     row = await conversation(sessions, cid)
-    assert row.facts_outcome is None and row.facts_attempts == 3
+    assert row.outcome is None and row.attempts == 3
 
 
 async def test_never_giving_up_by_default(
@@ -298,8 +297,8 @@ async def test_never_giving_up_by_default(
         await extract.run(first, None)
         clock.now += timedelta(hours=1)
     row = await conversation(sessions, first)
-    assert (row.facts_outcome, row.facts_attempts) == (None, 10)
-    assert row.facts_next_at is not None  # retried again
+    assert (row.outcome, row.attempts) == (None, 10)
+    assert row.next_at is not None  # retried again
     assert await extract.next_due(True) == first  # and the later one still waits
     assert not any("gave up" in w for w in warnings(caplog))
 
@@ -316,7 +315,7 @@ async def test_giving_up_after_the_maximum(
         for _ in range(5):
             await extract.run(first, None)
             clock.now += timedelta(hours=1)
-    assert (await conversation(sessions, first)).facts_outcome == "gave_up"
+    assert (await conversation(sessions, first)).outcome == "gave_up"
     assert f"conversation {first}: gave up fact extraction after 5 attempts" in warnings(caplog)
     assert await extract.next_due(True) == second
 
@@ -377,7 +376,7 @@ async def test_backfill_of_archived_conversations_oldest_first(
     try:
         for _ in range(500):
             rows = [await conversation(sessions, cid) for cid in ids]
-            if all(r.facts_outcome == "done" for r in rows):
+            if all(r.outcome == "done" for r in rows):
                 break
             await asyncio.sleep(0.01)
         else:

@@ -21,17 +21,20 @@ def photo(key: str) -> NewAttachment:
 async def test_items_carry_their_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     queue = Queue(sessions)
     await ChatIntake(sessions, queue).enqueue_user(
-        "ana", "what's this?", 5, [photo("attachments/a")]
+        "ana", "what's this?", [photo("attachments/a"), photo("attachments/b")]
     )
     await queue.enqueue_ask("mcparr", "Dune finished", "ana")
     async with sessions() as session:
         items = list(await session.scalars(select(QueueItem).order_by(QueueItem.id)))
-        (attachment,) = await session.scalars(select(Attachment))
-    assert [(i.kind, i.user_name, i.source) for i in items] == [
-        ("user", "ana", None),
-        ("ask", "ana", "mcparr"),
+        attachments = list(await session.scalars(select(Attachment).order_by(Attachment.id)))
+    assert [(i.kind, i.user_name, i.payload) for i in items] == [
+        ("chat", "ana", {"text": "what's this?", "attachment_ids": [a.id for a in attachments]}),
+        ("ask", "ana", {"source": "mcparr", "prompt": "Dune finished"}),
     ]
-    assert attachment.user_name == "ana"
+    assert [(a.user_name, a.object_key) for a in attachments] == [
+        ("ana", "attachments/a"),
+        ("ana", "attachments/b"),
+    ]
 
 
 async def test_cancels_waiting_turns_first(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -53,9 +56,7 @@ async def test_failing_insert_leaves_neither_item_nor_files(
     chat = ChatIntake(sessions, queue)
     # Two files with one object key: the second insert breaks the unique key.
     with pytest.raises(IntegrityError):
-        await chat.enqueue_user(
-            "ana", "both", None, [photo("attachments/x"), photo("attachments/x")]
-        )
+        await chat.enqueue_user("ana", "both", [photo("attachments/x"), photo("attachments/x")])
     async with sessions() as session:
         assert list(await session.scalars(select(QueueItem))) == []
         assert list(await session.scalars(select(Attachment))) == []

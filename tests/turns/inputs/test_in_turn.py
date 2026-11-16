@@ -102,7 +102,6 @@ class Alfred:
             outbox,
             QueueConfig(retry_initial_s=0.01, retry_max_s=0.04),
             users=users,
-            reminders=self.reminders,
             zone=LISBON,
             parking=Parking(self.requests, outbox),
             typing=no_typing,

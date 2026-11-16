@@ -38,7 +38,8 @@ from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
 from alfred.turns.inputs.titles import title
 from alfred.turns.intake import ChatIntake
-from alfred.turns.queue import Queue
+from alfred.turns.payloads import ChatPayload
+from alfred.turns.queue import Item, Queue, read_item
 from alfred.turns.tables import QueueItem
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
@@ -46,7 +47,6 @@ from tests.fakes import (
     NoInputRequests,
     NoMemoryCommand,
     NoQuestions,
-    NoReminders,
     ignore,
     no_taps,
     no_typing,
@@ -58,9 +58,16 @@ PDF = "application/pdf"
 USERS = Users((DIOGO, ANA))
 
 
-async def queued(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
+async def queued(sessions: async_sessionmaker[AsyncSession]) -> list[Item]:
     async with sessions() as session:
-        return list(await session.scalars(select(QueueItem).order_by(QueueItem.id)))
+        ids = list(await session.scalars(select(QueueItem.id).order_by(QueueItem.id)))
+        found = [await read_item(session, item_id) for item_id in ids]
+    return [item for item in found if item is not None]
+
+
+def text_of(item: Item) -> str:
+    assert isinstance(item.payload, ChatPayload)
+    return item.payload.text
 
 
 # --- Owner-only access ---------------------------------------------------------
@@ -78,12 +85,7 @@ async def test_owner_message_is_queued(sessions: async_sessionmaker[AsyncSession
     update = message_update(text="what's downloading?")
     await dispatcher.feed_update(bot, update)
     (item,) = await queued(sessions)
-    assert (item.kind, item.user_name, item.text, item.telegram_message_id) == (
-        "user",
-        "diogo",
-        "what's downloading?",
-        update.message.message_id,
-    )
+    assert (item.kind, item.user_name, text_of(item)) == ("chat", "diogo", "what's downloading?")
     assert session.sent() == []
 
 
@@ -136,7 +138,7 @@ async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSe
         bot,
         message_update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}]),
     )
-    assert [i.text for i in await queued(sessions)] == ["/start"]
+    assert [text_of(i) for i in await queued(sessions)] == ["/start"]
 
 
 # --- Text only, without attachments configured ------------------------------------
@@ -208,11 +210,7 @@ def files_dispatcher(
 
 async def attachments_of(sessions: async_sessionmaker[AsyncSession]) -> list[Attachment]:
     async with sessions() as session:
-        return list(
-            await session.scalars(
-                select(Attachment).order_by(Attachment.queue_item_id, Attachment.position)
-            )
-        )
+        return list(await session.scalars(select(Attachment).order_by(Attachment.id)))
 
 
 def photo(file_id: str, **extra: Any) -> dict[str, Any]:
@@ -267,7 +265,7 @@ async def test_photo_with_caption_is_queued(sessions: async_sessionmaker[AsyncSe
     update = message_update(**photo("p1", caption="what's the total?"))
     await dispatcher.feed_update(bot, update)
     (item,) = await queued(sessions)
-    assert (item.text, item.telegram_message_id) == ("what's the total?", update.message.message_id)
+    assert text_of(item) == "what's the total?"
     (attachment,) = await attachments_of(sessions)
     assert (attachment.kind, attachment.width) == ("image", 800)  # the largest size
     assert session.sent() == []
@@ -279,7 +277,7 @@ async def test_pdf_and_image_files_are_queued(sessions: async_sessionmaker[Async
     dispatcher = files_dispatcher(sessions, files, FakeStore())
     await dispatcher.feed_update(bot, message_update(**document("d1", "invoice.pdf", PDF)))
     await dispatcher.feed_update(bot, message_update(**document("d2", "rack.png", "image/png")))
-    assert [i.text for i in await queued(sessions)] == ["", ""]
+    assert [text_of(i) for i in await queued(sessions)] == ["", ""]
     assert [(a.kind, a.file_name) for a in await attachments_of(sessions)] == [
         ("pdf", "invoice.pdf"),
         ("image", "rack.png"),
@@ -310,15 +308,11 @@ async def test_three_photos_in_one_album(sessions: async_sessionmaker[AsyncSessi
     await dispatcher["albums"]._drain()
 
     (item,) = await queued(sessions)
-    assert (item.text, item.telegram_message_id) == (
-        "which is cheapest?",
-        parts[0].message.message_id,
-    )
-    assert [(a.position, a.width) for a in await attachments_of(sessions)] == [
-        (0, 100),
-        (1, 200),
-        (2, 300),
-    ]
+    assert text_of(item) == "which is cheapest?"
+    attachments = await attachments_of(sessions)
+    assert [a.width for a in attachments] == [100, 200, 300]
+    assert isinstance(item.payload, ChatPayload)
+    assert item.payload.attachment_ids == tuple(a.id for a in attachments)
     assert session.sent() == []
 
 
@@ -333,7 +327,7 @@ async def test_album_with_a_refused_part(sessions: async_sessionmaker[AsyncSessi
         )
     await dispatcher["albums"]._drain()
     (item,) = await queued(sessions)
-    assert item.text == "compare"
+    assert text_of(item) == "compare"
     assert [a.width for a in await attachments_of(sessions)] == [100, 300]
     assert [m.text for m in session.sent()] == [attachments_notices.unreadable("sir", "image")]
 
@@ -356,7 +350,7 @@ async def test_text_is_still_queued_with_attachments(
     bot, _ = make_bot()
     dispatcher = files_dispatcher(sessions, {}, FakeStore())
     await dispatcher.feed_update(bot, message_update(text="hello"))
-    assert [i.text for i in await queued(sessions)] == ["hello"]
+    assert [text_of(i) for i in await queued(sessions)] == ["hello"]
 
 
 async def test_downloader_reads_the_file() -> None:
@@ -450,7 +444,6 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
         cfg.queue,
         users=cfg.users,
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
     )
@@ -545,7 +538,7 @@ async def test_second_user_message_is_queued_as_hers(
     )
     await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, text="what's for dinner?"))
     (item,) = await queued(sessions)
-    assert (item.kind, item.user_name, item.text) == ("user", "ana", "what's for dinner?")
+    assert (item.kind, item.user_name, text_of(item)) == ("chat", "ana", "what's for dinner?")
     assert session.sent() == []
 
 
@@ -704,7 +697,7 @@ async def test_other_slash_text_still_queued(
     dispatcher, _ = memory_dispatcher(sessions)
     bot, session = make_bot()
     await dispatcher.feed_update(bot, message_update(text=text))
-    assert [i.text for i in await queued(sessions)] == [text]
+    assert [text_of(i) for i in await queued(sessions)] == [text]
     assert session.sent() == []
 
 
@@ -905,7 +898,7 @@ async def tap_setup(
         intake=None,
         memory=NoMemoryCommand(),
     )
-    item = await add_queue_item(sessions, "user", "add Dune", user="ana")
+    item = await add_queue_item(sessions, "chat", "add Dune", user="ana")
     request = await requests.park(
         item, "ana", tool="mcparr_add_media", arguments={"title": "Dune"},
         question=titled(DUNE), state={"via": "confirm"}, turn={},
@@ -1010,7 +1003,7 @@ async def waiting_for_diogo(
         Queue(sessions),
         before_message=cancel_on_new_message(requests, TelegramOutbox(bot), USERS),
     )
-    item = await add_queue_item(sessions, "user", "add Dune")
+    item = await add_queue_item(sessions, "chat", "add Dune")
     request = await requests.park(
         item, "diogo", tool="mcparr_add_media", arguments={"title": "Dune"},
         question=titled(DUNE), state={"via": "confirm"}, turn={},
@@ -1033,7 +1026,7 @@ async def test_text_message_cancels_the_waiting_turn(
     (edit,) = edits(session)
     assert edit.message_id == 700
     assert edit.text.endswith("<i>Cancelled: you sent a new message.</i>")
-    assert [i.text for i in await queued(sessions)] == ["add Dune", "never mind"]
+    assert [text_of(i) for i in await queued(sessions)] == ["add Dune", "never mind"]
 
 
 async def test_attachment_message_cancels_the_waiting_turn(

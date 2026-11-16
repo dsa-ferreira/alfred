@@ -12,7 +12,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import and_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from alfred.attachments.tables import Attachment, AttachmentPage
 
@@ -36,8 +35,6 @@ class AttachmentRef:
     file_name: str | None = None
     page_count: int | None = None
     first_page: str | None = None  # a PDF's page 1 text
-    entry_id: int | None = None
-    position: int = 0
 
     @property
     def first_page_has_text(self) -> bool:
@@ -70,26 +67,6 @@ def ref_query():  # noqa: ANN201 - a SQLAlchemy Select
     )
 
 
-async def refs_by_entry(
-    session: AsyncSession, entry_ids: Iterable[int]
-) -> dict[int, tuple[AttachmentRef, ...]]:
-    """Each entry's attachments, in message order (one query)."""
-    ids = list(entry_ids)
-    if not ids:
-        return {}
-    rows = await session.execute(
-        ref_query()
-        .where(Attachment.entry_id.in_(ids))
-        .order_by(Attachment.entry_id, Attachment.position)
-    )
-    found: dict[int, list[AttachmentRef]] = {}
-    for row in rows:
-        ref = AttachmentRef(*row)
-        assert ref.entry_id is not None
-        found.setdefault(ref.entry_id, []).append(ref)
-    return {entry_id: tuple(refs) for entry_id, refs in found.items()}
-
-
 def _ref_columns() -> tuple:
     return (
         Attachment.id,
@@ -99,6 +76,4 @@ def _ref_columns() -> tuple:
         Attachment.file_name,
         Attachment.page_count,
         AttachmentPage.text,
-        Attachment.entry_id,
-        Attachment.position,
     )

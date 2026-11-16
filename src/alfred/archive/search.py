@@ -16,14 +16,17 @@ from datetime import date, datetime, time, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, and_, exists, select, text
+from sqlalchemy import ColumnElement, Select, and_, exists, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.config import ArchiveConfig
+from alfred.archive.summaries import recalled
+from alfred.archive.tables import ConversationSummary
 from alfred.conversations.current import current_id
 from alfred.conversations.store import append_recall
 from alfred.conversations.tables import Conversation, Entry
 from alfred.conversations.transcript import (
+    Recalled,
     TranscriptEntry,
     date_span,
     load_transcript,
@@ -64,20 +67,22 @@ hits AS (
     GROUP BY e.conversation_id
 )
 SELECT c.id
-FROM conversations c CROSS JOIN q LEFT JOIN hits h ON h.conversation_id = c.id
+FROM conversations c CROSS JOIN q
+    LEFT JOIN conversation_summaries s ON s.conversation_id = c.id
+    LEFT JOIN hits h ON h.conversation_id = c.id
 WHERE c.ended_at IS NOT NULL
   AND c.user_name = :user
-  AND (c.search_tsv @@ q.tsq OR h.conversation_id IS NOT NULL)
+  AND (s.search_tsv @@ q.tsq OR h.conversation_id IS NOT NULL)
   {dates}
-ORDER BY greatest(ts_rank(c.search_tsv, q.tsq), coalesce(h.rank, 0)) DESC, c.id DESC
+ORDER BY greatest(coalesce(ts_rank(s.search_tsv, q.tsq), 0), coalesce(h.rank, 0)) DESC, c.id DESC
 LIMIT :limit
 """
 
 
 _FOUND_COLUMNS = (
     Conversation.id,
-    Conversation.title,
-    Conversation.summary,
+    ConversationSummary.title,
+    ConversationSummary.summary,
     Conversation.started_at,
     Conversation.ended_at,
 )
@@ -126,7 +131,7 @@ class ConversationSearch:
         if query is None:
             async with self._sessions() as session:
                 rows = await session.execute(
-                    select(*_FOUND_COLUMNS)
+                    _found_query()
                     .where(Conversation.ended_at.is_not(None), *dates)
                     .order_by(Conversation.ended_at.desc(), Conversation.id.desc())
                     .limit(limit)
@@ -189,8 +194,9 @@ class ConversationSearch:
                 return ToolOutcome(False, f"Error: there is no conversation #{cid}.")
             if await self._already_recalled(session, current, cid):
                 return ToolOutcome(False, _already(cid))
-            entries = await load_transcript(session, cid)
-            recalled_text = self._recall_text(target, entries)
+            entries = await load_transcript(session, cid, recalled)
+            known = (await recalled(session, [cid])).get(cid, Recalled())
+            recalled_text = self._recall_text(target, known, entries)
             if not await append_recall(session, current, cid, recalled_text):
                 return ToolOutcome(False, _already(cid))
         log.info("conversation %s recalled into %s", cid, current)
@@ -202,13 +208,16 @@ class ConversationSearch:
         async with self._sessions() as session:
             rows = await session.scalars(
                 select(Conversation.id)
+                .join(ConversationSummary, ConversationSummary.conversation_id == Conversation.id)
                 .where(
                     Conversation.ended_at.is_not(None),
-                    Conversation.embedding.is_not(None),
-                    Conversation.embedding_model == self._embedder.model,
+                    ConversationSummary.embedding.is_not(None),
+                    ConversationSummary.embedding_model == self._embedder.model,
                     *dates,
                 )
-                .order_by(Conversation.embedding.cosine_distance(vector), Conversation.id.desc())
+                .order_by(
+                    ConversationSummary.embedding.cosine_distance(vector), Conversation.id.desc()
+                )
                 .limit(limit)
             )
             return list(rows)
@@ -232,7 +241,7 @@ class ConversationSearch:
         if not ids:
             return {}
         async with self._sessions() as session:
-            rows = await session.execute(select(*_FOUND_COLUMNS).where(Conversation.id.in_(ids)))
+            rows = await session.execute(_found_query().where(Conversation.id.in_(ids)))
             return {r.id: _Found(*r) for r in rows}
 
     def _day_start(self, value: Any, name: str, *, next_day: bool = False) -> datetime | None:
@@ -270,7 +279,9 @@ class ConversationSearch:
         )
         return bool(found)
 
-    def _recall_text(self, target: Conversation, entries: list[TranscriptEntry]) -> str:
+    def _recall_text(
+        self, target: Conversation, known: Recalled, entries: list[TranscriptEntry]
+    ) -> str:
         """Header and transcript, at most ``recall_max_chars``.
 
         Too long: the summary, an omission marker, then the end of the
@@ -278,14 +289,14 @@ class ConversationSearch:
         """
         cap = self._memory.recall_max_chars
         header = (
-            f"{recall_label(target.id, target.title)}, "
+            f"{recall_label(target.id, known.title)}, "
             f"{date_span(target.started_at, target.ended_at, self._zone)}"
         )
         body = render(entries)
         full = f"{header}\n{body}"
         if len(full) <= cap:
             return full
-        prefix = f"{header}\nSummary: {target.summary or '(no summary yet)'}\n{_OMITTED}\n"
+        prefix = f"{header}\nSummary: {known.summary or '(no summary yet)'}\n{_OMITTED}\n"
         if len(prefix) >= cap:  # a tiny cap: the summary doesn't fit either
             prefix = f"{header}\n{_OMITTED}\n"
         room = cap - len(prefix)
@@ -320,6 +331,15 @@ def _count(n: int) -> str:
 def _already(cid: int) -> str:
     return (
         f"Error: #{cid} is already in this conversation (recalled earlier); use what it says there."
+    )
+
+
+def _found_query() -> Select[Any]:
+    """Archived conversations as search results: with their title and summary, if any."""
+    return (
+        select(*_FOUND_COLUMNS)
+        .select_from(Conversation)
+        .outerjoin(ConversationSummary, ConversationSummary.conversation_id == Conversation.id)
     )
 
 

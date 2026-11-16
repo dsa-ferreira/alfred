@@ -101,7 +101,6 @@ class Waits(Setup):
             EventOutbox(events) if events is not None else self.outbox,
             QueueConfig(**FAST),
             users=self.users,
-            reminders=self.reminders,
             zone=LISBON,
             typing=typing or no_typing,
             parking=Parking(self.requests, self.questions),

@@ -10,7 +10,7 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tables import Reminder
 from alfred.reminders.when import parse_rule
 from alfred.turns.tables import QueueItem
-from tests.helpers import claim_due
+from tests.helpers import claim_due, reminder_of
 
 NOW = datetime(2026, 11, 9, 16, 47, tzinfo=UTC)
 
@@ -77,7 +77,7 @@ async def test_claim_due_in_due_order(sessions: async_sessionmaker[AsyncSession]
     ids = await claim_due(store, NOW)
     assert len(ids) == 3
     items = await queue_items(sessions)
-    assert [(i.kind, i.reminder_id, i.text, i.status) for i in items] == [
+    assert [(i.kind, reminder_of(i).reminder_id, reminder_of(i).text, i.status) for i in items] == [
         ("reminder", first, "first", "pending"),
         ("reminder", second, "second", "pending"),
         ("reminder", exactly_now, "now", "pending"),
@@ -202,7 +202,7 @@ async def test_shared_reminder_queues_one_item_per_recipient(
     ids = await claim_due(store, NOW)
     items = await queue_items(sessions)
     assert [i.id for i in items] == ids
-    assert [(i.kind, i.reminder_id, i.user_name) for i in items] == [
+    assert [(i.kind, reminder_of(i).reminder_id, i.user_name) for i in items] == [
         ("reminder", early, "ana"),
         ("reminder", shared, "ana"),
         ("reminder", shared, "diogo"),
@@ -251,7 +251,7 @@ async def test_repeating_reminder_moves_on(sessions: async_sessionmaker[AsyncSes
     ids = await claim_due(store, friday)
     items = await queue_items(sessions)
     assert [i.id for i in items] == ids
-    assert [(i.user_name, i.reminder_id, i.reminder_due_at) for i in items] == [
+    assert [(i.user_name, reminder_of(i).reminder_id, reminder_of(i).due_at) for i in items] == [
         ("ana", rid, friday),
         ("diogo", rid, friday),
     ]
@@ -271,7 +271,7 @@ async def test_repeating_reminder_after_an_outage(
     rid = await weekday_briefing(store, lisbon(2026, 11, 16, 8, 0), ["diogo"])
     await claim_due(store, lisbon(2026, 11, 18, 10, 0))
     items = await queue_items(sessions)
-    assert [i.reminder_due_at for i in items] == [lisbon(2026, 11, 18, 8, 0)]
+    assert [reminder_of(i).due_at for i in items] == [lisbon(2026, 11, 18, 8, 0)]
     row = await store.get(rid)
     assert row is not None and row.due_at == lisbon(2026, 11, 19, 8, 0)
 
@@ -283,7 +283,9 @@ async def test_one_shot_items_carry_their_due_time(
     due = NOW - timedelta(hours=2)
     rid = await store.set("call mum", due, "diogo", ["diogo"])
     await claim_due(store, NOW)
-    assert [(i.reminder_id, i.reminder_due_at) for i in await queue_items(sessions)] == [(rid, due)]
+    assert [
+        (reminder_of(i).reminder_id, reminder_of(i).due_at) for i in await queue_items(sessions)
+    ] == [(rid, due)]
     row = await store.get(rid)
     assert row is not None and row.status == "fired"
 

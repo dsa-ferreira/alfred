@@ -195,7 +195,7 @@ def make_dispatcher(
                 for text in await memory.answer(user, command.group(1)):
                     await message.answer(text, parse_mode=None)
                 return
-            item_id = await chat.enqueue_user(user.name, message.text, message.message_id)
+            item_id = await chat.enqueue_user(user.name, message.text)
             log.info("queued %s's message %s as item %s", user.name, message.message_id, item_id)
             return
         if intake is None:

@@ -10,19 +10,15 @@ from alfred.attachments import NewAttachment
 from alfred.attachments.tables import Attachment, AttachmentPage
 
 
-async def add(
-    session: AsyncSession, user: str, files: Sequence[NewAttachment], *, queue_item_id: int
-) -> list[int]:
+async def add(session: AsyncSession, user: str, files: Sequence[NewAttachment]) -> list[int]:
     """Record ``user``'s ``files``, in message order, in the caller's transaction; their ids.
 
     The files must already be in the object store.
     """
     ids: list[int] = []
-    for position, new in enumerate(files):
+    for new in files:
         row = Attachment(
-            queue_item_id=queue_item_id,
             user_name=user,
-            position=position,
             kind=new.kind,
             mime=new.mime,
             file_name=new.file_name,

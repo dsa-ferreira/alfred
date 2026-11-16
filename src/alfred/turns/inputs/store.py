@@ -30,10 +30,12 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.conversations.store import History
+from alfred.conversations.tables import EntryOrigin
 from alfred.kernel.questions import Question
 from alfred.kernel.users import Users
 from alfred.turns.inputs import notices
-from alfred.turns.queue import turn_kind
+from alfred.turns.payloads import AskPayload, ChatPayload, ReminderPayload
+from alfred.turns.queue import read_item
 from alfred.turns.tables import InputRequest, QueueItem
 
 log = logging.getLogger(__name__)
@@ -295,7 +297,7 @@ class InputRequests:
 
     async def _record_ending(self, request: RequestRow) -> None:
         async with self._sessions() as session:
-            item = await session.get(QueueItem, request.queue_item_id)
+            item = await read_item(session, request.queue_item_id)
         if item is None:
             return
         user = self._users.get(request.user_name)
@@ -309,25 +311,22 @@ class InputRequests:
             name,
             request.cancel_reason,
         )
-        match turn_kind(item):
-            case "chat":
-                await history.append(name, "assistant", text, queue_item_id=item.id)
-            case "ask":
-                await history.append(
-                    name, "ask_prompt", item.text, source=item.source, queue_item_id=item.id
-                )
-                await history.append(
-                    name, "ask_reply", text, source=item.source, queue_item_id=item.id
-                )
-            case "reminder":
-                for kind, entry_text in (("reminder", item.text), ("reminder_reply", text)):
+        payload = item.payload
+        match payload:
+            case ChatPayload():
+                await history.append(name, "assistant", text, turn_id=item.id)
+            case AskPayload(source=source, prompt=prompt):
+                await history.append(name, "ask_prompt", prompt, source=source, turn_id=item.id)
+                await history.append(name, "ask_reply", text, source=source, turn_id=item.id)
+            case ReminderPayload():
+                origin = EntryOrigin(payload.reminder_id, payload.due_at, payload.created_by)
+                for kind, entry_text in (("reminder", payload.text), ("reminder_reply", text)):
                     await history.append(
                         name,
                         kind,  # type: ignore[arg-type]
                         entry_text,
-                        queue_item_id=item.id,
-                        reminder_id=item.reminder_id,
-                        reminder_due_at=item.reminder_due_at,
+                        turn_id=item.id,
+                        origin=origin,
                     )
 
 

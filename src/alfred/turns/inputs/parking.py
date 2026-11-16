@@ -30,7 +30,7 @@ from alfred.kernel.users import User
 from alfred.llm.chat import ToolCall
 from alfred.turns.inputs.store import EndReason, RequestRow
 from alfred.turns.inputs.titles import reminder_label, title
-from alfred.turns.tables import QueueItem
+from alfred.turns.queue import Item
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class Parking:
         """The resumed turn ended, however it ended: its request is ``done``."""
         await self._requests.finish(request.id, request.user_name)
 
-    async def park(self, item: QueueItem, turn: TurnInput, waiting: _Parked) -> None:
+    async def park(self, item: Item, turn: TurnInput, waiting: _Parked) -> None:
         """The turn waits for its user: store the request, then send the question."""
         user = turn.user
         call = waiting.checkpoint.call

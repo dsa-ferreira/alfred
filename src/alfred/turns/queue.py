@@ -19,21 +19,33 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.turns.payloads import AskPayload, Payload, TurnKind, payload_from_json
 from alfred.turns.tables import QueueItem
 
 log = logging.getLogger(__name__)
 
-TurnKind = Literal["chat", "ask", "reminder"]
 
-# How queue_items.kind stores a chat message: "user", its name from before
-# turns had kinds. Only this module knows; the rest of alfred says "chat".
-_STORED_CHAT = "user"
+@dataclass(frozen=True)
+class Item:
+    """A queue item as the worker and its kinds read it: its payload typed."""
+
+    id: int
+    # Whose turn it is: the sender, the /ask target or the reminder's recipient.
+    user_name: str
+    payload: Payload
+    attempts: int
+    next_attempt_at: datetime
+    created_at: datetime
+
+    @property
+    def kind(self) -> TurnKind:
+        return self.payload.kind
 
 
 class QueueActivity:
@@ -87,31 +99,13 @@ class Queue:
             )
         return found is not None
 
-    async def add(
-        self,
-        session: AsyncSession,
-        user: str,
-        kind: TurnKind,
-        *,
-        text: str,
-        source: str | None = None,
-        telegram_message_id: int | None = None,
-        reminder_id: int | None = None,
-        reminder_due_at: datetime | None = None,
-    ) -> int:
-        """Queue a ``kind`` turn for ``user`` in the caller's transaction; the item's id.
+    async def add(self, session: AsyncSession, user: str, payload: Payload) -> int:
+        """Queue a turn for ``user`` in the caller's transaction; the item's id.
 
-        Nothing is told: the caller calls :meth:`notify` once it has committed.
+        The kind is the payload's. Nothing is told: the caller calls
+        :meth:`notify` once it has committed.
         """
-        item = QueueItem(
-            kind=_STORED_CHAT if kind == "chat" else kind,
-            user_name=user,
-            source=source,
-            text=text,
-            telegram_message_id=telegram_message_id,
-            reminder_id=reminder_id,
-            reminder_due_at=reminder_due_at,
-        )
+        item = QueueItem(kind=payload.kind, user_name=user, payload=payload.to_json())
         session.add(item)
         await session.flush()
         return item.id
@@ -123,19 +117,20 @@ class Queue:
     async def enqueue_ask(self, source: str, prompt: str, user: str) -> int:
         """Queue ``source``'s ``/ask`` prompt as a turn for ``user``."""
         async with self._sessions.begin() as session:
-            item_id = await self.add(session, user, "ask", text=prompt, source=source)
+            item_id = await self.add(session, user, AskPayload(source, prompt))
         self.notify()
         return item_id
 
-    async def head(self) -> QueueItem | None:
+    async def head(self) -> Item | None:
         """The oldest pending item, which must finish before any other starts."""
         async with self._sessions() as session:
-            return await session.scalar(
+            row = await session.scalar(
                 select(QueueItem)
                 .where(QueueItem.status == "pending")
                 .order_by(QueueItem.id)
                 .limit(1)
             )
+        return _item(row) if row is not None else None
 
     async def retry_later(self, item_id: int, attempts: int, at: datetime, reason: str) -> None:
         async with self._sessions.begin() as session:
@@ -167,6 +162,18 @@ async def busy(session: AsyncSession, user: str) -> bool:
     return found is not None
 
 
-def turn_kind(item: QueueItem) -> TurnKind:
-    """The kind of turn ``item`` asks for."""
-    return "chat" if item.kind == _STORED_CHAT else cast(TurnKind, item.kind)
+async def read_item(session: AsyncSession, item_id: int) -> Item | None:
+    """The queue item ``item_id``, read in the caller's transaction."""
+    row = await session.get(QueueItem, item_id)
+    return _item(row) if row is not None else None
+
+
+def _item(row: QueueItem) -> Item:
+    return Item(
+        row.id,
+        row.user_name,
+        payload_from_json(row.kind, row.payload),
+        row.attempts,
+        row.next_attempt_at,
+        row.created_at,
+    )

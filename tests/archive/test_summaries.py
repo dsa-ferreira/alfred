@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.prompts import _SUMMARY_PROMPT
 from alfred.archive.summaries import Summaries
+from alfred.archive.tables import ConversationSummary
 from alfred.conversations.store import History
-from alfred.conversations.tables import Conversation
+from alfred.conversations.tables import EntryOrigin
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.llm.embedding import _EmbeddingUnreachable
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
@@ -44,11 +45,13 @@ async def archived(sessions: async_sessionmaker[AsyncSession], *lines: str) -> i
     return reset.archived_id
 
 
-async def row(sessions: async_sessionmaker[AsyncSession], conversation_id: int) -> Conversation:
+async def row(
+    sessions: async_sessionmaker[AsyncSession], conversation_id: int
+) -> ConversationSummary:
+    """The conversation's summary row; a blank one (no attempts) while it has none."""
     async with sessions() as session:
-        found = await session.get(Conversation, conversation_id)
-    assert found is not None
-    return found
+        found = await session.get(ConversationSummary, conversation_id)
+    return found or ConversationSummary(conversation_id=conversation_id, attempts=0)
 
 
 async def test_summary_and_embedding_stored(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -72,7 +75,7 @@ async def test_summary_and_embedding_stored(sessions: async_sessionmaker[AsyncSe
     assert stored.summarised_at == NOW
     assert [round(x, 3) for x in stored.embedding] == [0.1, 0.2, 0.3]
     assert stored.embedding_model == "nomic-embed-text:v1.5"
-    assert stored.summary_attempts == 0 and stored.summary_next_at is None
+    assert stored.attempts == 0 and stored.next_at is None
 
 
 async def test_embedding_failure_keeps_title_and_summary(
@@ -84,8 +87,8 @@ async def test_embedding_failure_keeps_title_and_summary(
     stored = await row(sessions, cid)
     assert stored.title == "Chicken thighs recipe" and stored.summary is not None
     assert stored.embedding is None and stored.embedding_model is None
-    assert stored.summary_attempts == 1
-    assert stored.summary_next_at == NOW + timedelta(seconds=30)
+    assert stored.attempts == 1
+    assert stored.next_at == NOW + timedelta(seconds=30)
     assert mem.changed.is_set()
 
 
@@ -96,8 +99,8 @@ async def test_model_failure_schedules_retry(sessions: async_sessionmaker[AsyncS
     assert await mem.summarise(cid) is None
     stored = await row(sessions, cid)
     assert stored.title is None and stored.summary is None and stored.embedding is None
-    assert stored.summary_attempts == 1
-    assert stored.summary_next_at == NOW + timedelta(seconds=30)
+    assert stored.attempts == 1
+    assert stored.next_at == NOW + timedelta(seconds=30)
     assert embedder.documents == []
     assert mem.changed.is_set()
 
@@ -108,15 +111,15 @@ async def test_backoff_grows_with_attempts(sessions: async_sessionmaker[AsyncSes
     for _ in range(3):
         await mem.summarise(cid)
     stored = await row(sessions, cid)
-    assert stored.summary_attempts == 3
-    assert stored.summary_next_at == NOW + timedelta(seconds=120)
+    assert stored.attempts == 3
+    assert stored.next_at == NOW + timedelta(seconds=120)
 
 
 async def test_unusable_reply_schedules_retry(sessions: async_sessionmaker[AsyncSession]) -> None:
     cid = await archived(sessions, "chicken?", "Lemon.")
     mem = memory(sessions, FakeModel([text("I'd rather not.")]), FakeEmbedder())
     assert await mem.summarise(cid) is None
-    assert (await row(sessions, cid)).summary_attempts == 1
+    assert (await row(sessions, cid)).attempts == 1
 
 
 async def test_success_after_failure_clears_retry(
@@ -129,7 +132,7 @@ async def test_success_after_failure_clears_retry(
     assert await mem.summarise(cid) is None
     assert await mem.summarise(cid) == "Chicken thighs recipe"
     stored = await row(sessions, cid)
-    assert stored.summary_attempts == 0 and stored.summary_next_at is None
+    assert stored.attempts == 0 and stored.next_at is None
 
 
 async def test_only_embedding_redone(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -216,10 +219,13 @@ async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSess
     reminder_id = await Reminders(sessions).set("call mum", NOW, "diogo", ["diogo"])
     history = History(sessions)
     await history.append(
-        "diogo", "reminder", "call mum", reminder_id=reminder_id, reminder_due_at=NOW
+        "diogo", "reminder", "call mum", origin=EntryOrigin(reminder_id, NOW, "diogo")
     )
     await history.append(
-        "diogo", "reminder_reply", "Your call to mum, sir.", reminder_id=reminder_id
+        "diogo",
+        "reminder_reply",
+        "Your call to mum, sir.",
+        origin=EntryOrigin(reminder_id, NOW, "diogo"),
     )
     await history.append("diogo", "user", "done")
     reset = await history.reset("diogo")
@@ -268,7 +274,7 @@ async def test_preempt_cancels_the_summary_request(
     stored = await row(sessions, cid)
     assert stored.title is None and stored.summary is None and stored.embedding is None
     # Not a failure: no attempt counted and no backoff.
-    assert stored.summary_attempts == 0 and stored.summary_next_at is None
+    assert stored.attempts == 0 and stored.next_at is None
 
 
 async def test_preempt_set_before_the_request_starts(
@@ -279,7 +285,7 @@ async def test_preempt_set_before_the_request_starts(
     preempt.set()
     mem = memory(sessions, BlockingModel(), FakeEmbedder([[0.5]]))  # type: ignore[arg-type]
     assert await asyncio.wait_for(mem.summarise(cid, preempt=preempt), 5) is None
-    assert (await row(sessions, cid)).summary_attempts == 0
+    assert (await row(sessions, cid)).attempts == 0
 
 
 async def test_preempt_does_not_stop_the_embedding(
@@ -299,4 +305,4 @@ async def test_preempt_does_not_stop_the_embedding(
     stored = await row(sessions, cid)
     assert stored.title == "Chicken thighs recipe" and stored.summary is not None
     assert stored.embedding is not None
-    assert stored.summary_attempts == 0
+    assert stored.attempts == 0

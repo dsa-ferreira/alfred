@@ -8,8 +8,8 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
+from alfred.archive.tables import ConversationSummary
 from alfred.conversations.store import History
-from alfred.conversations.tables import Conversation
 from alfred.facts.duplicate_job import FactDuplicateJob
 from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.store import FactStore
@@ -23,7 +23,7 @@ from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
 from tests.archive.test_summaries import REPLY, archived, row
-from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing
+from tests.fakes import NoInputRequests, NoQuestions, QuietQueue, no_typing
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, make_sweeper, text
 
 FAST = {"retry_initial_s": 0.01, "retry_max_s": 0.04}
@@ -127,13 +127,13 @@ async def test_retries_with_backoff(sessions: async_sessionmaker[AsyncSession]) 
     assert await mem._sweep_once() is None  # attempt 2 fails
     assert await mem._sweep_once() == 60  # the delay doubled
     stored = await row(sessions, cid)
-    assert stored.summary_attempts == 2
+    assert stored.attempts == 2
 
     clock.now += timedelta(seconds=60)
     assert await mem._sweep_once() is None  # attempt 3 succeeds
     stored = await row(sessions, cid)
     assert stored.title == "Chicken thighs recipe"
-    assert stored.summary_attempts == 0 and stored.summary_next_at is None
+    assert stored.attempts == 0 and stored.next_at is None
     assert await mem._sweep_once() == 900
 
 
@@ -156,10 +156,9 @@ async def test_reembeds_rows_from_another_model(
 ) -> None:
     cid = await archived(sessions, "chicken?", "Lemon.")
     async with sessions.begin() as session:
-        await session.execute(
-            update(Conversation)
-            .where(Conversation.id == cid)
-            .values(
+        session.add(
+            ConversationSummary(
+                conversation_id=cid,
                 title="Chicken thighs recipe",
                 summary="Lemon and garlic.",
                 embedding=[1.0, 0.0],
@@ -211,7 +210,6 @@ async def test_owner_messages_answered_while_sweeper_fails(
         users=cfg.users,
         nudge=mem.jobs[0].summaries.changed.set,
         parking=Parking(NoInputRequests(), NoQuestions()),
-        reminders=NoReminders(),
         typing=no_typing,
     )
     tasks = [asyncio.create_task(mem.run_forever()), asyncio.create_task(worker.run_forever())]
@@ -358,7 +356,7 @@ async def test_an_arriving_item_cancels_the_summary(
             await until(lambda: _true(model.cancelled == cancelled))  # noqa: B023
             stored = await row(sessions, cid)
             assert stored.summary is None
-            assert stored.summary_attempts == 0 and stored.summary_next_at is None
+            assert stored.attempts == 0 and stored.next_at is None
             # The item is answered; the summary waits for another quiet period.
             await finish_all(sessions, queue)
             await settle()
@@ -367,7 +365,7 @@ async def test_an_arriving_item_cancels_the_summary(
             mem.jobs[0].summaries.changed.set()
         await until(lambda: _summarised(sessions, cid))
         assert model.started == 3
-        assert (await row(sessions, cid)).summary_attempts == 0
+        assert (await row(sessions, cid)).attempts == 0
     finally:
         await stop(task)
 
@@ -378,10 +376,10 @@ async def test_embedding_only_does_not_wait_for_the_queue(
     needs_summary = await archived(sessions, "a", "b")
     needs_embedding = await archived(sessions, "chicken?", "Lemon.")
     async with sessions.begin() as session:
-        await session.execute(
-            update(Conversation)
-            .where(Conversation.id == needs_embedding)
-            .values(title="Chicken", summary="Lemon and garlic.")
+        session.add(
+            ConversationSummary(
+                conversation_id=needs_embedding, title="Chicken", summary="Lemon and garlic."
+            )
         )
     model = FakeModel()
     embedder = FakeEmbedder(default=[1.0])

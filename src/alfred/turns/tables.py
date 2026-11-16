@@ -1,9 +1,8 @@
 """The turns tables.
 
 - ``queue_items``: AI-bound work (users' messages, ``/ask`` prompts and due
-  reminders), each for one user. A reminder item points at its reminder
-  through ``reminder_id`` and carries the delivered occurrence's
-  ``reminder_due_at``.
+  reminders), each for one user. What each kind carries is its ``payload``
+  (``turns.payloads``).
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
 - ``input_requests``: a parked turn's question to its user and the turn's
   saved progress. Its queue item is ``waiting`` while the request is
@@ -34,7 +33,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from alfred.db.base import Base, in_values
 
-_QUEUE_KINDS = ("user", "ask", "reminder")
+_QUEUE_KINDS = ("chat", "ask", "reminder")
 # ``waiting``: parked for its user's answer; ``cancelled``: ended without one.
 _QUEUE_STATUSES = ("pending", "done", "failed", "waiting", "cancelled")
 _INPUT_REQUEST_STATUSES = ("open", "answered", "running", "done", "cancelled", "expired")
@@ -54,19 +53,14 @@ class QueueItem(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     # Whose turn it is: the sender, the /ask target or the reminder's recipient.
     user_name: Mapped[str] = mapped_column(Text, nullable=False)
-    source: Mapped[str | None] = mapped_column(String(64))
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    # The kind's data (``turns.payloads``).
+    payload: Mapped[Any] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     next_attempt_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     failure_reason: Mapped[str | None] = mapped_column(Text)
-    # For ``reminder`` items: the reminder to deliver.
-    reminder_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("reminders.id"))
-    # For ``reminder`` items: the due time of the occurrence delivered.
-    reminder_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

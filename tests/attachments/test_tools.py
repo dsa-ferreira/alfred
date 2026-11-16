@@ -127,15 +127,15 @@ async def test_not_offered_on_ask_and_reminder_turns(
 
 
 class FixedScope:
-    """A conversation scope that reaches only the given entries."""
+    """A conversation scope that reaches only the given attachments."""
 
-    def __init__(self, *entry_ids: int) -> None:
-        self.entry_ids = set(entry_ids)
+    def __init__(self, *attachment_ids: int) -> None:
+        self.attachment_ids = set(attachment_ids)
         self.asked: list[tuple[str, int]] = []
 
-    async def reaches(self, user: str, entry_id: int) -> bool:
-        self.asked.append((user, entry_id))
-        return entry_id in self.entry_ids
+    async def reaches(self, user: str, attachment_id: int) -> bool:
+        self.asked.append((user, attachment_id))
+        return attachment_id in self.attachment_ids
 
 
 # --- conversation scope -------------------------------------------------------------
@@ -145,15 +145,15 @@ async def test_the_scope_decides_what_is_reachable(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     store = FakeStore()
-    _, entry = await owner_with_files(
+    await owner_with_files(
         sessions, "total?", [image_file(name="receipt.jpg")], store, [image_bytes(400, 300)]
     )
     shut = FixedScope()
     toolset = AttachmentTools(store, sessions, brains(), SETTINGS, shut)
     outcome = await call(toolset, _VIEW_ATTACHMENT, id=1)
     assert outcome == ToolOutcome(False, "Error: there is no attachment #1 in this conversation.")
-    assert shut.asked == [("diogo", entry)]
-    toolset = AttachmentTools(store, sessions, brains(), SETTINGS, FixedScope(entry))
+    assert shut.asked == [("diogo", 1)]
+    toolset = AttachmentTools(store, sessions, brains(), SETTINGS, FixedScope(1))
     assert (await call(toolset, _VIEW_ATTACHMENT, id=1)).ok
 
 
@@ -161,10 +161,10 @@ async def test_the_scope_is_not_asked_about_another_users_attachment(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     store = FakeStore()
-    _, entry = await owner_with_files(
+    await owner_with_files(
         sessions, "hi", [image_file(name="x.jpg")], store, [image_bytes(400, 300)], user="ana"
     )
-    scope = FixedScope(entry)
+    scope = FixedScope(1)
     outcome = await call(
         AttachmentTools(store, sessions, brains(), SETTINGS, scope), _VIEW_ATTACHMENT, id=1
     )

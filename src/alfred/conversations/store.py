@@ -18,18 +18,17 @@ import dataclasses
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import ColumnElement, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import aliased
 
-from alfred.attachments.handles import AttachmentRef, refs_by_entry
-from alfred.attachments.tables import Attachment
+from alfred.attachments.handles import AttachmentRef
 from alfred.conversations.current import current_id
-from alfred.conversations.tables import Conversation, Entry
-from alfred.reminders.tables import Reminder
+from alfred.conversations.entry_files import link, refs_by_entry
+from alfred.conversations.tables import Conversation, Entry, EntryAttachment, EntryOrigin
+from alfred.conversations.transcript import Recalled, RecalledLookup, recalled_of
 
 _EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
@@ -71,16 +70,21 @@ class History:
         *,
         idle_after: timedelta | None = None,
         on_archive: Callable[[], None] = lambda: None,
+        recalled: RecalledLookup | None = None,
     ) -> None:
         self._sessions = sessions
+        # Recalled conversations' titles and summaries (``archive``); without
+        # it, recall entries have neither.
+        self._recalled = recalled
         # ``[history] idle_close_after_h``; None: unattended conversations stay.
         self._idle_after = idle_after
         # Called after a conversation is archived as unattended (the sweeper nudge);
         # by default nobody is told.
         self._on_archive = on_archive
 
-    async def reaches(self, user: str, entry_id: int) -> bool:
-        """Whether the entry is in ``user``'s current conversation or in one recalled into it.
+    async def reaches(self, user: str, attachment_id: int) -> bool:
+        """Whether the attachment was sent with an entry of ``user``'s current
+        conversation or of one recalled into it.
 
         The attachment tools' conversation scope.
         """
@@ -90,13 +94,16 @@ class History:
                 Entry.conversation_id == current, Entry.kind == "recall"
             )
             found = await session.scalar(
-                select(Entry.id).where(
-                    Entry.id == entry_id,
+                select(Entry.id)
+                .join(EntryAttachment, EntryAttachment.entry_id == Entry.id)
+                .where(
+                    EntryAttachment.attachment_id == attachment_id,
                     or_(
                         Entry.conversation_id == current,
                         Entry.conversation_id.in_(recalled.scalar_subquery()),
                     ),
                 )
+                .limit(1)
             )
         return found is not None
 
@@ -110,16 +117,16 @@ class History:
         kind: _EntryKind,
         text_: str,
         source: str | None = None,
-        queue_item_id: int | None = None,
-        reminder_id: int | None = None,
-        reminder_due_at: datetime | None = None,
+        turn_id: int | None = None,
+        origin: EntryOrigin | None = None,
+        attachment_ids: Sequence[int] = (),
     ) -> int:
         """Add an entry to ``user``'s current conversation. Returns the entry's ID.
 
-        With ``queue_item_id``, an entry of the same kind for that item that
+        With ``turn_id``, an entry of the same kind for that turn that
         already exists is kept and nothing is added (a retried turn); its ID
-        is returned. A user entry takes the attachments queued with its
-        item, in the same transaction.
+        is returned. ``attachment_ids`` are a user entry's files, in message
+        order, linked in the same transaction.
 
         A notice, ``/ask`` prompt or reminder first archives a current
         conversation with no user message whose newest entry is older than
@@ -127,11 +134,11 @@ class History:
         """
         archived = False
         async with self._sessions.begin() as session:
-            if queue_item_id is not None:
+            if turn_id is not None:
                 # Before the close check: a retry never closes the conversation
                 # its entry is already in.
                 done = await session.scalar(
-                    select(Entry.id).where(Entry.queue_item_id == queue_item_id, Entry.kind == kind)
+                    select(Entry.id).where(Entry.turn_id == turn_id, Entry.kind == kind)
                 )
                 if done is not None:
                     return done
@@ -157,24 +164,19 @@ class History:
                     kind=kind,
                     source=source,
                     text=text_,
-                    queue_item_id=queue_item_id,
-                    reminder_id=reminder_id,
-                    reminder_due_at=reminder_due_at,
+                    turn_id=turn_id,
+                    origin=origin.to_json() if origin is not None else None,
                 )
-                .on_conflict_do_nothing(index_elements=["queue_item_id", "kind"])
+                .on_conflict_do_nothing(index_elements=["turn_id", "kind"])
                 .returning(Entry.id)
             )
             if entry_id is None:  # recorded by an earlier attempt that committed meanwhile
                 entry_id = await session.scalar(
-                    select(Entry.id).where(Entry.queue_item_id == queue_item_id, Entry.kind == kind)
+                    select(Entry.id).where(Entry.turn_id == turn_id, Entry.kind == kind)
                 )
                 assert entry_id is not None
-            if kind == "user" and queue_item_id is not None:
-                await session.execute(
-                    update(Attachment)
-                    .where(Attachment.queue_item_id == queue_item_id, Attachment.entry_id.is_(None))
-                    .values(entry_id=entry_id)
-                )
+            else:
+                await link(session, entry_id, attachment_ids)
         if archived:
             self._on_archive()
         return entry_id
@@ -319,7 +321,6 @@ class History:
         self, user: str, limit: int, where: list[ColumnElement[bool]]
     ) -> list[HistoryEntry]:
         """The newest ``limit`` of ``user``'s entries that match ``where``, oldest first."""
-        recalled = aliased(Conversation)
         async with self._sessions() as session:
             newest = (
                 select(
@@ -328,8 +329,7 @@ class History:
                     Entry.source,
                     Entry.text,
                     Entry.recalled_conversation_id,
-                    Entry.reminder_id,
-                    Entry.reminder_due_at,
+                    Entry.origin,
                     Entry.created_at,
                     Entry.conversation_id,
                 )
@@ -339,35 +339,11 @@ class History:
                 .limit(limit)
                 .subquery()
             )
-            rows = await session.execute(
-                select(
-                    newest.c.kind,
-                    newest.c.source,
-                    newest.c.text,
-                    newest.c.recalled_conversation_id,
-                    recalled.title,
-                    recalled.summary,
-                    newest.c.reminder_id,
-                    # The entry's own occurrence: a repeating reminder's row
-                    # has moved on.
-                    newest.c.reminder_due_at,
-                    newest.c.created_at,
-                    newest.c.id,
-                    Reminder.created_by,
-                    newest.c.conversation_id,
-                )
-                .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
-                .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
-                .order_by(newest.c.id)
+            rows = list(await session.execute(select(newest).order_by(newest.c.id)))
+            recalls = await recalled_of(
+                session, self._recalled, (row.recalled_conversation_id for row in rows)
             )
-            entries = [
-                HistoryEntry(
-                    *row[:-2],
-                    reminder_set_by=row[-2] if row[-2] not in (None, user) else None,
-                    conversation_id=row[-1],
-                )
-                for row in rows
-            ]
+            entries = [_history_entry(user, row, recalls) for row in rows]
             user_ids = [e.entry_id for e in entries if e.kind == "user" and e.entry_id]
             refs = await refs_by_entry(session, user_ids)
         return [
@@ -417,9 +393,30 @@ class _LastMessage:
     at: datetime
 
 
+def _history_entry(user: str, row: Any, recalls: dict[int, Recalled]) -> HistoryEntry:
+    """A row of the window query as a :class:`HistoryEntry`."""
+    recalled = recalls.get(row.recalled_conversation_id, Recalled())
+    origin = EntryOrigin.from_json(row.origin) if row.origin is not None else None
+    return HistoryEntry(
+        row.kind,
+        row.source,
+        row.text,
+        recalled_id=row.recalled_conversation_id,
+        recalled_title=recalled.title,
+        recalled_summary=recalled.summary,
+        reminder_id=origin.reminder_id if origin else None,
+        # The entry's own occurrence: a repeating reminder has moved on.
+        reminder_due_at=origin.due_at if origin else None,
+        created_at=row.created_at,
+        entry_id=row.id,
+        reminder_set_by=origin.created_by if origin and origin.created_by != user else None,
+        conversation_id=row.conversation_id,
+    )
+
+
 def _not_from(items: Collection[int]) -> ColumnElement[bool]:
-    """Not an entry of one of the queue items ``items``. Entries of no item pass."""
-    return or_(Entry.queue_item_id.is_(None), Entry.queue_item_id.not_in(list(items)))
+    """Not an entry of one of the turns ``items``. Entries of no turn pass."""
+    return or_(Entry.turn_id.is_(None), Entry.turn_id.not_in(list(items)))
 
 
 async def _unattended(session: AsyncSession, conversation_id: int, idle_after: timedelta) -> bool:

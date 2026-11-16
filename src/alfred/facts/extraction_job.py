@@ -1,8 +1,8 @@
 """Facts learned from archived conversations.
 
 ``FactExtractionJob`` is a sweeper job. Every archived conversation starts
-with its extraction pending (``facts_outcome IS NULL``), so conversations
-from before the upgrade are backfilled like new ones, oldest first. A user's
+with its extraction pending: it has no ``fact_extractions`` row, or one
+with no ``outcome``. Archived conversations are extracted oldest first. A user's
 conversations are extracted in order: one waits while an older one of the
 same user is pending, even on its backoff; other users' don't hold it up.
 
@@ -25,14 +25,16 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.backoff import RetryDelays, backoff_s
 from alfred.conversations.tables import Conversation
-from alfred.conversations.transcript import cut_middle, load_transcript, render
+from alfred.conversations.transcript import RecalledLookup, cut_middle, load_transcript, render
 from alfred.facts.config import FactsConfig
 from alfred.facts.extraction_prompt import (
     ExtractionParseError,
@@ -43,11 +45,15 @@ from alfred.facts.extraction_prompt import (
     quote_matches,
 )
 from alfred.facts.store import FactStore, insert_fact, lock_user
+from alfred.facts.tables import FactExtraction
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.protocols import ChatModel
 from alfred.llm.streaming import complete_unless_preempted
 
 log = logging.getLogger(__name__)
+
+# The extraction row of the conversation, outer-joined: none yet means pending.
+_EXTRACTION_OF = FactExtraction.conversation_id == Conversation.id
 
 
 class FactExtractionJob:
@@ -62,6 +68,7 @@ class FactExtractionJob:
         facts: FactStore,
         *,
         input_max_chars: int,
+        recalled: RecalledLookup | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._memory = memory
@@ -71,6 +78,8 @@ class FactExtractionJob:
         self._sessions = sessions
         self._model = model
         self._facts = facts
+        # Recalled conversations' titles in transcripts (``archive``).
+        self._recalled = recalled
         self._now = now
         # Set when a retry was scheduled or an extraction ended.
         self.changed = asyncio.Event()
@@ -82,12 +91,10 @@ class FactExtractionJob:
         async with self._sessions() as session:
             return await session.scalar(
                 select(Conversation.id)
+                .outerjoin(FactExtraction, _EXTRACTION_OF)
                 .where(
                     *_pending(),
-                    or_(
-                        Conversation.facts_next_at.is_(None),
-                        Conversation.facts_next_at <= self._now(),
-                    ),
+                    or_(FactExtraction.next_at.is_(None), FactExtraction.next_at <= self._now()),
                     _first_of_its_user(),
                 )
                 .order_by(Conversation.id)
@@ -99,9 +106,10 @@ class FactExtractionJob:
             return None  # the sweeper wakes when the queue goes quiet
         async with self._sessions() as session:
             soonest = await session.scalar(
-                select(func.min(Conversation.facts_next_at)).where(
-                    *_pending(), _first_of_its_user()
-                )
+                select(func.min(FactExtraction.next_at))
+                .select_from(Conversation)
+                .outerjoin(FactExtraction, _EXTRACTION_OF)
+                .where(*_pending(), _first_of_its_user())
             )
         if soonest is None:
             return None
@@ -119,11 +127,16 @@ class FactExtractionJob:
 
     async def _extract(self, conversation_id: int, preempt: asyncio.Event | None) -> None:
         async with self._sessions() as session:
-            row = await session.get(Conversation, conversation_id)
-            if row is None or row.ended_at is None or row.facts_outcome is not None:
+            user = await session.scalar(
+                select(Conversation.user_name)
+                .outerjoin(FactExtraction, _EXTRACTION_OF)
+                .where(Conversation.id == conversation_id, *_pending())
+            )
+            if user is None:
                 return
-            user = row.user_name
-            entries = extraction_entries(await load_transcript(session, conversation_id))
+            entries = extraction_entries(
+                await load_transcript(session, conversation_id, self._recalled)
+            )
         if not any(e.kind == "user" for e in entries):
             await self._done(conversation_id)
             log.info("conversation %s facts: no message from its user", conversation_id)
@@ -148,7 +161,9 @@ class FactExtractionJob:
         async with self._sessions.begin() as session:
             await lock_user(session, user)
             still_pending = await session.scalar(
-                select(Conversation.id).where(Conversation.id == conversation_id, *_pending())
+                select(Conversation.id)
+                .outerjoin(FactExtraction, _EXTRACTION_OF)
+                .where(Conversation.id == conversation_id, *_pending())
             )
             if still_pending is None:
                 return
@@ -179,9 +194,7 @@ class FactExtractionJob:
                         why,
                     )
             await session.execute(
-                update(Conversation)
-                .where(Conversation.id == conversation_id)
-                .values(facts_outcome="done", facts_attempts=0, facts_next_at=None)
+                _upsert(conversation_id, outcome="done", attempts=0, next_at=None)
             )
         log.info(
             "conversation %s facts: %d added, %d replaced, %d replacement%s refused; %s",
@@ -210,9 +223,7 @@ class FactExtractionJob:
     async def _done(self, conversation_id: int) -> None:
         async with self._sessions.begin() as session:
             await session.execute(
-                update(Conversation)
-                .where(Conversation.id == conversation_id)
-                .values(facts_outcome="done", facts_attempts=0, facts_next_at=None)
+                _upsert(conversation_id, outcome="done", attempts=0, next_at=None)
             )
 
     async def _failed(self, conversation_id: int, reason: str) -> None:
@@ -220,13 +231,15 @@ class FactExtractionJob:
         try:
             async with self._sessions.begin() as session:
                 attempts = await session.scalar(
-                    update(Conversation)
-                    .where(Conversation.id == conversation_id)
-                    .values(facts_attempts=Conversation.facts_attempts + 1)
-                    .returning(Conversation.facts_attempts)
+                    insert(FactExtraction)
+                    .values(conversation_id=conversation_id, attempts=1)
+                    .on_conflict_do_update(
+                        index_elements=[FactExtraction.conversation_id],
+                        set_={"attempts": FactExtraction.attempts + 1},
+                    )
+                    .returning(FactExtraction.attempts)
                 )
-                if attempts is None:
-                    return
+                assert attempts is not None
                 log.warning(
                     "conversation %s: fact extraction failed (attempt %d): %s",
                     conversation_id,
@@ -235,11 +248,7 @@ class FactExtractionJob:
                 )
                 limit = self._memory.facts_extraction_max_attempts
                 if limit > 0 and attempts >= limit:
-                    await session.execute(
-                        update(Conversation)
-                        .where(Conversation.id == conversation_id)
-                        .values(facts_outcome="gave_up", facts_next_at=None)
-                    )
+                    await session.execute(_upsert(conversation_id, outcome="gave_up", next_at=None))
                     log.warning(
                         "conversation %s: gave up fact extraction after %d attempts",
                         conversation_id,
@@ -248,9 +257,7 @@ class FactExtractionJob:
                     return
                 delay = backoff_s(attempts, self._retry.retry_initial_s, self._retry.retry_max_s)
                 await session.execute(
-                    update(Conversation)
-                    .where(Conversation.id == conversation_id)
-                    .values(facts_next_at=self._now() + timedelta(seconds=delay))
+                    _upsert(conversation_id, next_at=self._now() + timedelta(seconds=delay))
                 )
         except Exception:
             log.exception("conversation %s: could not record a failed extraction", conversation_id)
@@ -259,15 +266,32 @@ class FactExtractionJob:
 
 
 def _pending() -> tuple[object, ...]:
-    return (Conversation.ended_at.is_not(None), Conversation.facts_outcome.is_(None))
+    """Archived and not yet extracted: with ``FactExtraction`` outer-joined
+    (``_EXTRACTION_OF``), a conversation with no row reads ``outcome`` NULL."""
+    return (Conversation.ended_at.is_not(None), FactExtraction.outcome.is_(None))
 
 
 def _first_of_its_user() -> object:
-    """No older conversation of the same user is pending (the partial index)."""
+    """No older conversation of the same user is pending."""
     older = aliased(Conversation)
-    return ~exists().where(
-        older.user_name == Conversation.user_name,
-        older.id < Conversation.id,
-        older.ended_at.is_not(None),
-        older.facts_outcome.is_(None),
+    extraction = aliased(FactExtraction)
+    return ~(
+        select(older.id)
+        .outerjoin(extraction, extraction.conversation_id == older.id)
+        .where(
+            older.user_name == Conversation.user_name,
+            older.id < Conversation.id,
+            older.ended_at.is_not(None),
+            extraction.outcome.is_(None),
+        )
+        .exists()
+    )
+
+
+def _upsert(conversation_id: int, **values: Any) -> Any:
+    """Insert the conversation's extraction row with ``values``, or set them on it."""
+    return (
+        insert(FactExtraction)
+        .values(conversation_id=conversation_id, **values)
+        .on_conflict_do_update(index_elements=[FactExtraction.conversation_id], set_=values)
     )

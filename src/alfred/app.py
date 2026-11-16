@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent
 from alfred.archive.search import ConversationSearch
-from alfred.archive.summaries import Summaries
+from alfred.archive.summaries import Summaries, recalled
 from alfred.archive.summary_job import SummaryJob
 from alfred.archive.tools import MemoryTools, Searcher
 from alfred.attachments.intake import Intake
@@ -241,7 +241,12 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         if config.history.idle_close_after_h is not None
         else None
     )
-    history = History(sessions, idle_after=idle_after, on_archive=summaries.changed.set)
+    history = History(
+        sessions,
+        idle_after=idle_after,
+        on_archive=summaries.changed.set,
+        recalled=recalled,
+    )
     # Turns waiting for their user's answer: a user's new message
     # cancels theirs before it is queued.
     inputs = InputRequests(sessions, history, config.users)
@@ -262,6 +267,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
                 summary_model,
                 facts,
                 input_max_chars=config.memory.summary_input_max_chars,
+                recalled=recalled,
             ),
             FactEmbeddingJob(facts),
             # Needs the model, so only while the queue is quiet.
@@ -326,7 +332,6 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         users=config.users,
         nudge=summaries.changed.set,
         typing=outbox.typing,
-        reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
         parking=Parking(
             inputs,

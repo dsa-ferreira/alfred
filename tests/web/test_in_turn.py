@@ -7,6 +7,7 @@ import respx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
+from alfred.archive.tables import ConversationSummary
 from alfred.conversations.store import History
 from alfred.conversations.tables import Conversation, Entry
 from alfred.conversations.tools import _END_CONVERSATION
@@ -171,9 +172,10 @@ async def test_url_in_a_notice_or_recall(
     )
     current = await history.current_conversation_id("diogo")
     async with sessions.begin() as session:
-        old = Conversation(user_name="diogo", ended_at=NOW, title="Old chat", summary="Links.")
+        old = Conversation(user_name="diogo", ended_at=NOW)
         session.add(old)
         await session.flush()
+        session.add(ConversationSummary(conversation_id=old.id, title="Old chat", summary="Links."))
         session.add(
             Entry(
                 conversation_id=current,

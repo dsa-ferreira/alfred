@@ -19,7 +19,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
+from alfred.archive.tables import ConversationSummary
 from alfred.conversations.tables import Conversation
+
+# An archived conversation with no summary row yet is pending: its columns read NULL.
+_SUMMARY_OF = ConversationSummary.conversation_id == Conversation.id
 
 
 class SummaryJob:
@@ -48,11 +52,12 @@ class SummaryJob:
         async with self._sessions() as session:
             return await session.scalar(
                 select(Conversation.id)
+                .outerjoin(ConversationSummary, _SUMMARY_OF)
                 .where(
                     *self._pending(embedding_only=not model_allowed),
                     or_(
-                        Conversation.summary_next_at.is_(None),
-                        Conversation.summary_next_at <= self._now(),
+                        ConversationSummary.next_at.is_(None),
+                        ConversationSummary.next_at <= self._now(),
                     ),
                 )
                 .order_by(Conversation.id)
@@ -62,9 +67,10 @@ class SummaryJob:
     async def seconds_until_due(self, model_allowed: bool) -> float | None:
         async with self._sessions() as session:
             soonest = await session.scalar(
-                select(func.min(Conversation.summary_next_at)).where(
-                    *self._pending(embedding_only=not model_allowed)
-                )
+                select(func.min(ConversationSummary.next_at))
+                .select_from(Conversation)
+                .outerjoin(ConversationSummary, _SUMMARY_OF)
+                .where(*self._pending(embedding_only=not model_allowed))
             )
         if soonest is None:
             return None
@@ -77,12 +83,14 @@ class SummaryJob:
         conditions: tuple[Any, ...] = (
             Conversation.ended_at.is_not(None),
             or_(
-                Conversation.summary.is_(None),
-                Conversation.embedding.is_(None),
-                Conversation.embedding_model.is_distinct_from(self.summaries.embedding_model),
+                ConversationSummary.summary.is_(None),
+                ConversationSummary.embedding.is_(None),
+                ConversationSummary.embedding_model.is_distinct_from(
+                    self.summaries.embedding_model
+                ),
             ),
         )
         if embedding_only:
             # Already summarised: only the embedding request (never preempted) is left.
-            conditions += (Conversation.summary.is_not(None),)
+            conditions += (ConversationSummary.summary.is_not(None),)
         return conditions

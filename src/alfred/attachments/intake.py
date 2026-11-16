@@ -94,9 +94,7 @@ class Intake:
             return _Received(notices=[notices.not_kept(address)])
 
         attachments = [r.attachment for r in ready]
-        result.item_id = await self._queue.enqueue_user(
-            user.name, text, telegram_message_id, attachments
-        )
+        result.item_id = await self._queue.enqueue_user(user.name, text, attachments)
         log.info(
             "queued %s's message %s as item %s with %s",
             user.name,
@@ -147,7 +145,6 @@ class _Enqueue(Protocol):
         self,
         user: str,
         text: str,
-        telegram_message_id: int | None = None,
         attachments: Sequence[NewAttachment] = (),
     ) -> int:
         """Queue ``user``'s message with its files, in one transaction; the item's id."""

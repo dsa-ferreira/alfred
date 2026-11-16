@@ -2,7 +2,7 @@
 
 ```
 cancel the user's parked requests (before_message)
-begin:  queue item + its attachments and PDF pages
+begin:  the attachments and PDF pages, then the queue item listing them
 notify the worker
 ```
 
@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments import NewAttachment, rows
+from alfred.turns.payloads import ChatPayload
 from alfred.turns.queue import Queue
 
 
@@ -39,7 +40,6 @@ class ChatIntake:
         self,
         user: str,
         text: str,
-        telegram_message_id: int | None = None,
         attachments: Sequence[NewAttachment] = (),
     ) -> int:
         """Queue ``user``'s message, with its attachments, in one transaction; the item's id.
@@ -53,9 +53,7 @@ class ChatIntake:
         if self._before_message is not None:
             await self._before_message(user)
         async with self._sessions.begin() as session:
-            item_id = await self._queue.add(
-                session, user, "chat", text=text, telegram_message_id=telegram_message_id
-            )
-            await rows.add(session, user, attachments, queue_item_id=item_id)
+            ids = await rows.add(session, user, attachments)
+            item_id = await self._queue.add(session, user, ChatPayload(text, tuple(ids)))
         self._queue.notify()
         return item_id

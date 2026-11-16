@@ -256,7 +256,6 @@ async def test_morning_briefing_uses_the_tools(
         outbox,
         cfg.queue,
         users=cfg.users,
-        reminders=store,
         zone=LISBON,
         parking=Parking(NoInputRequests(), NoQuestions()),
         typing=no_typing,

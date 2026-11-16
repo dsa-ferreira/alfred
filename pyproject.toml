@@ -85,7 +85,3 @@ layers = [
     "db | llm | backoff | times",
     "settings",
 ]
-# Cross-slice table uses the per-feature-schema change is removing.
-ignore_imports = [
-    "alfred.conversations.store -> alfred.reminders.tables",
-]
