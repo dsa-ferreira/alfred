@@ -21,10 +21,11 @@ from alfred.memory.search import (
     SEARCH_CONVERSATIONS,
     ConversationSearch,
 )
-from alfred.queue import Queue, Worker
+from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.tools.conversation import END_CONVERSATION
+from alfred.worker import Worker
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
 from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import in_process, make_cookbook, make_mcparr

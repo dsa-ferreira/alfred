@@ -21,11 +21,12 @@ from alfred.history import History
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message
 from alfred.inputs.store import InputRequests
-from alfred.queue import Queue, Worker
+from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from alfred.tools.base import AllowList
+from alfred.worker import Worker
 from tests.agent.turn_helpers import LISBON, tool_rows
 from tests.helpers import ANA, ANA_ID, DIOGO, OWNER, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import config as server_config

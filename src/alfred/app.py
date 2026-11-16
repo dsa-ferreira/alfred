@@ -51,7 +51,7 @@ from alfred.memory.facts import FactEmbeddingJob, FactStore, FactTools
 from alfred.memory.search import ConversationSearch, MemoryTools, Searcher
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
-from alfred.queue import Queue, Worker
+from alfred.queue import Queue
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
 from alfred.telegram.bot import (
@@ -68,6 +68,7 @@ from alfred.tools.calculator import CalculatorTools
 from alfred.tools.conversation import ConversationTools
 from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
+from alfred.worker import Worker
 
 log = logging.getLogger(__name__)
 

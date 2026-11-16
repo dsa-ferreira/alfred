@@ -15,7 +15,8 @@ from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
-from alfred.queue import Queue, Worker
+from alfred.queue import Queue
+from alfred.worker import Worker
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text
 from tests.memory.test_summarise import REPLY, archived, row
 

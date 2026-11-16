@@ -223,9 +223,10 @@ def make_weather() -> MCPServer:
 async def test_morning_briefing_uses_the_tools(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    from alfred.queue import Queue, Worker
+    from alfred.queue import Queue
     from alfred.reminders.when import parse_rule
-    from tests.test_queue import FakeOutbox
+    from alfred.worker import Worker
+    from tests.test_worker import FakeOutbox
 
     monday = datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
     cfg = make_config(

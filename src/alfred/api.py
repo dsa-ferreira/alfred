@@ -18,7 +18,8 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from alfred.config import Service, User, Users
 from alfred.history import History
-from alfred.queue import Outbox, Queue
+from alfred.outbox import Outbox
+from alfred.queue import Queue
 
 log = logging.getLogger(__name__)
 

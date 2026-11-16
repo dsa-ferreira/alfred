@@ -16,8 +16,9 @@ from alfred.api import create_app
 from alfred.config import Service, Users
 from alfred.db.models import QueueItem
 from alfred.history import History
-from alfred.queue import Queue, Worker
+from alfred.queue import Queue
 from alfred.telegram.bot import TelegramOutbox
+from alfred.worker import Worker
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeModel, make_agent, make_config, text
 from tests.mcp.servers import in_process
 from tests.telegram.fake_bot import make_bot
