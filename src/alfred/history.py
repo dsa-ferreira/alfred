@@ -15,19 +15,17 @@ new conversation, with no marker.
 from __future__ import annotations
 
 import dataclasses
-import re
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal
-from zoneinfo import ZoneInfo
+from typing import Literal
 
 from sqlalchemy import ColumnElement, func, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
+from alfred.attachments.handles import AttachmentRef, refs_by_entry
 from alfred.db.models import (
     Attachment,
     Conversation,
@@ -36,27 +34,15 @@ from alfred.db.models import (
     QueueItem,
     Reminder,
 )
-from alfred.memory.transcript import recall_label
-from alfred.reminders.when import format_when
-from alfred.tools.base import ModelImage
 
 _EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
 ]
-_UTC_ZONE = ZoneInfo("UTC")
 # The first entry of something that arrives without the user: a new one may
 # close a conversation that has no user message. Never a reply.
 _ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
 # An input request whose turn is still waiting or going on (a parked turn).
 _LIVE_STATUSES = ("open", "answered", "running")
-
-
-_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-_STAMP = re.compile(
-    r"\[(?:" + "|".join(_DAYS) + r") \d{1,2} (?:" + "|".join(_MONTHS) + r") \d{2}:\d{2}\]"
-)
-_LEADING_STAMP = re.compile(_STAMP.pattern + r"\s*")
 
 
 @dataclass(frozen=True)
@@ -79,19 +65,6 @@ class HistoryEntry:
     # For reminder entries: who set it, when not the conversation's user.
     reminder_set_by: str | None = None
     conversation_id: int | None = None
-
-
-@dataclass(frozen=True)
-class Inline:
-    """How a user entry in the inline window is sent.
-
-    ``handles`` replace the plain handles (a PDF's with its page 1 text, a
-    note when an image can't be shown); ``images`` follow the text as image
-    parts.
-    """
-
-    handles: list[str]
-    images: list[ModelImage] = field(default_factory=list)
 
 
 class History:
@@ -399,74 +372,6 @@ async def current_id(
     return found
 
 
-def stamped(text_: str, moment: datetime | None, zone: ZoneInfo) -> str:
-    """``text_`` after the time it arrived, or as is when that time is unknown."""
-    return text_ if moment is None else f"{_format_stamp(moment, zone)} {text_}"
-
-
-def strip_stamp(text_: str) -> str:
-    """``text_`` without a stamp at its very start (one the model copied)."""
-    return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
-
-
-def to_messages(
-    entries: list[HistoryEntry],
-    zone: ZoneInfo = _UTC_ZONE,
-    inline: Mapping[int, Inline] | None = None,
-) -> list[dict[str, Any]]:
-    """Map entries to chat-completions messages.
-
-    User messages and ask prompts are ``user`` turns (ask prompts prefixed
-    ``[ask:<service>]``), replies are ``assistant`` turns, and notices are
-    ``user`` turns prefixed ``[notice:<service>]``. Delivered reminders are
-    ``user`` turns prefixed ``[reminder:#<id> due <time in zone>]`` (with
-    ``, set by <name>`` when someone else set it), followed by what the
-    user was told. Recalls are ``user`` turns prefixed ``[recall:#<id>
-    "<title>"]``: the newest with its transcript, older ones with only the
-    recalled conversation's summary.
-
-    Every ``user`` turn starts with the time its entry was recorded, before
-    its label (``[Mon 9 Nov 14:05] [notice:backup] ...``); replies have none.
-
-    A user message ends with the handles of its attachments
-    (``[attachment #7: image "receipt.jpg"]``). The user entries in
-    ``inline`` (by entry ID) are sent as it says; with images, their content
-    is a list: the text part, then one ``image_url`` part per image.
-    """
-    newest_recall = max((i for i, e in enumerate(entries) if e.kind == "recall"), default=None)
-    messages: list[dict[str, Any]] = []
-    for i, e in enumerate(entries):
-        content: str | None = None
-        match e.kind:
-            case "recall":
-                label = f"[recall:{recall_label(e.recalled_id, e.recalled_title)}]"
-                if i == newest_recall:
-                    content = f"{label} {e.text}"
-                else:
-                    content = f"{label} Summary: {e.recalled_summary or '(no summary yet)'}"
-            case "user":
-                extra = (inline or {}).get(e.entry_id) if e.entry_id is not None else None
-                content = _user_text(e, extra)
-                if extra is not None and extra.images:
-                    text_part = {"type": "text", "text": stamped(content, e.created_at, zone)}
-                    parts = [text_part, *(image.part() for image in extra.images)]
-                    messages.append({"role": "user", "content": parts})
-                    continue
-            case "ask_prompt":
-                content = f"[ask:{e.source}] {e.text}"
-            case "notice":
-                content = f"[notice:{e.source}] {e.text}"
-            case "reminder":
-                due = f" due {format_when(e.reminder_due_at, zone)}" if e.reminder_due_at else ""
-                set_by = f", set by {e.reminder_set_by}" if e.reminder_set_by else ""
-                content = f"[reminder:#{e.reminder_id}{due}{set_by}] {e.text}"
-            case "assistant" | "ask_reply" | "reminder_reply":
-                messages.append({"role": "assistant", "content": e.text})
-        if content is not None:
-            messages.append({"role": "user", "content": stamped(content, e.created_at, zone)})
-    return messages
-
-
 @dataclass(frozen=True)
 class _Reset:
     """The conversation just archived (``None`` if there was none) and the new one."""
@@ -514,18 +419,3 @@ async def _unattended(session: AsyncSession, conversation_id: int, idle_after: t
         )
     )
     return bool(stale)
-
-
-def _format_stamp(moment: datetime, zone: ZoneInfo) -> str:
-    """``[Mon 9 Nov 14:05]``: absolute, so an entry's text never changes.
-
-    English names without the locale, like the rest of alfred's prompts.
-    """
-    local = moment.astimezone(zone)
-    return f"[{_DAYS[local.weekday()]} {local.day} {_MONTHS[local.month - 1]} {local:%H:%M}]"
-
-
-def _user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
-    """What the user wrote, then the handles of what they sent with it."""
-    handles = inline.handles if inline else [handle(a) for a in entry.attachments]
-    return with_handles(entry.text, handles)

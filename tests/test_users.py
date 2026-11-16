@@ -13,8 +13,9 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.agent.messages import strip_stamp
 from alfred.config import User
-from alfred.history import History, strip_stamp
+from alfred.history import History
 from alfred.memory.search import (
     RECALL_CONVERSATION,
     SEARCH_CONVERSATIONS,

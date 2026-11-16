@@ -14,12 +14,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
+from alfred.agent.messages import strip_stamp
 from alfred.agent.model import ModelFailed, ModelReply
 from alfred.agent.prompts import _CALCULATE, _DATE, _operating_rules
 from alfred.agent.turn import Agent, TurnResult
 from alfred.config import User, Users
 from alfred.db.models import TurnToolCall
-from alfred.history import History, strip_stamp
+from alfred.history import History
 from alfred.mcp.registry import ServerInstructions
 from alfred.mcp.toolset import _server_instructions
 from alfred.memory.facts import FactTools

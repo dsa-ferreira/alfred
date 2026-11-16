@@ -11,10 +11,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
+from alfred.agent.messages import _STAMP
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
-from alfred.history import _STAMP, History
+from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET

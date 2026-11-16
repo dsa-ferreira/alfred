@@ -61,12 +61,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.brains import Brain, Brains
 from alfred.agent.context import context_sizes, largest_tools
+from alfred.agent.messages import stamped, strip_stamp, to_messages
 from alfred.agent.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.agent.prompts import FactsBlock, KnownFact, brain_line, facts_block, system_prompt
 from alfred.attachments.inline import ImageCache, InlineAttachments
 from alfred.config import Config
 from alfred.db.models import TurnToolCall
-from alfred.history import History, stamped, strip_stamp, to_messages
+from alfred.history import History
 from alfred.reminders.when import format_now, format_when
 from alfred.tools.base import (
     AttemptContext,

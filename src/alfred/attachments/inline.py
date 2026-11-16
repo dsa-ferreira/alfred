@@ -16,13 +16,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from alfred.agent.messages import Inline
 from alfred.attachments import Unreadable
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.attachments.images import for_model_async
 from alfred.attachments.pdf import render_page_async
 from alfred.attachments.store import ObjectStore, StoreError
 from alfred.config import AttachmentsConfig
-from alfred.history import HistoryEntry, Inline
+from alfred.history import HistoryEntry
 from alfred.tools.base import ModelImage
 
 log = logging.getLogger(__name__)
