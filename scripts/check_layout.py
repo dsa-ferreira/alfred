@@ -6,10 +6,10 @@ Parses ``src/alfred/`` and ``migrations/`` and reports, as ``path:line: message`
 2. a top-level ``_`` name that another source module imports;
 3. module order: constants and variables, then public classes and functions,
    then ``_`` ones;
-4. class order: attributes, dunders, public methods, then ``_`` methods;
-5. two packages that import each other. A package is a subpackage of
-   ``alfred`` or a top-level module (``alfred.history``); imports under
-   ``TYPE_CHECKING`` and inside functions count too.
+4. class order: attributes, dunders, public methods, then ``_`` methods.
+
+Which package may import which is checked by ``lint-imports`` (the contract
+in ``pyproject.toml``).
 
 Python's definition order wins over the sections:
 
@@ -106,49 +106,7 @@ def check(modules: dict[str, Module], root: Path) -> list[str]:
             if isinstance(node, ast.ClassDef):
                 for line, message in _class_order(node):
                     problems.append(f"{where}:{line}: {message}")
-    problems += _package_cycles(modules, root)
     return problems
-
-
-def _package_cycles(modules: dict[str, Module], root: Path) -> list[str]:
-    # (from package, to package) -> where the first such import is
-    first: dict[tuple[str, str], str] = {}
-    for module in modules.values():
-        source = _package(module.name)
-        if source is None:
-            continue
-        for node in ast.walk(module.tree):
-            for target in _imported_modules(node):
-                package = _package(target)
-                if package is not None and package != source:
-                    where = f"{module.path.relative_to(root)}:{node.lineno}"
-                    first.setdefault((source, package), where)
-    problems = []
-    for (source, target), where in first.items():
-        back = first.get((target, source))
-        if back is not None and source < target:
-            problems.append(
-                f"{where}: package {source} imports {target}, and {target} imports {source} "
-                f"({back})"
-            )
-    return problems
-
-
-def _package(module: str) -> str | None:
-    """The package graph's node for ``module``; ``None`` outside the graph."""
-    if not module.startswith("alfred."):
-        return None
-    return ".".join(module.split(".")[:2])
-
-
-def _imported_modules(node: ast.AST) -> list[str]:
-    if isinstance(node, ast.Import):
-        return [alias.name for alias in node.names]
-    if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-        if node.module == "alfred":  # from alfred import notices
-            return [f"alfred.{alias.name}" for alias in node.names]
-        return [node.module]
-    return []
 
 
 def _sort_key(problem: str) -> tuple[str, int]:

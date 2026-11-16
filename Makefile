@@ -17,6 +17,7 @@ lint:
 	$(UV) run ruff check .
 	$(UV) run ruff format --check .
 	$(UV) run python scripts/check_layout.py
+	$(UV) run lint-imports
 
 format:
 	$(UV) run ruff check --fix .

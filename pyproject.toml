@@ -35,6 +35,7 @@ dev = [
     "testcontainers[postgres]",
     "ruff",
     "moto[s3,server]>=5.2.5",
+    "import-linter>=2.16",
 ]
 
 [build-system]
@@ -52,3 +53,35 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC"]
+
+# The ranks of AGENTS.md ("Code layout"): a package imports only from its own
+# row or the rows below it. "a | b" are siblings that must not import each
+# other; "a : b" may. Imports under TYPE_CHECKING count.
+[tool.importlinter]
+root_package = "alfred"
+exclude_type_checking_imports = false
+
+[[tool.importlinter.contracts]]
+name = "ranks and feature order"
+type = "layers"
+containers = ["alfred"]
+exhaustive = true
+layers = [
+    # entry
+    "app : cli : config : startup",
+    # adapters
+    "telegram | http",
+    # runtime
+    "turns",
+    "agent",
+    # features, in their declared order
+    "archive | facts | reminders | web | mcp | toolbox",
+    "conversations",
+    "attachments",
+    "brains",
+    # kernel
+    "kernel",
+    # infra
+    "db | llm | backoff | times",
+    "settings",
+]
