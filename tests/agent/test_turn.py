@@ -667,14 +667,17 @@ async def test_turn_parks_at_a_listed_call(sessions: async_sessionmaker[AsyncSes
     _, _, result = await parked_turn(sessions, model)
     waiting = result.waiting
     assert waiting is not None and result.reply == ""
-    assert (waiting.call.name, waiting.call_index) == ("mcparr_add_media", 1)
-    assert [c.name for c in waiting.remaining] == [_REMIND_SET]
+    assert (waiting.checkpoint.call.name, waiting.checkpoint.call_index) == ("mcparr_add_media", 1)
+    assert [c.name for c in waiting.checkpoint.remaining] == [_REMIND_SET]
     # The tail: the assistant message with the three calls, and find's result.
-    assert [m["role"] for m in waiting.tail] == ["assistant", "tool"]
-    assert len(waiting.tail[0]["tool_calls"]) == 3
-    assert "Dune" in waiting.tail[1]["content"]
-    assert (waiting.requests_used, waiting.seq) == (1, 2)
-    assert waiting.upto_entry_id is not None and waiting.conversation_id is not None
+    assert [m["role"] for m in waiting.checkpoint.tail] == ["assistant", "tool"]
+    assert len(waiting.checkpoint.tail[0]["tool_calls"]) == 3
+    assert "Dune" in waiting.checkpoint.tail[1]["content"]
+    assert (waiting.checkpoint.requests_used, waiting.checkpoint.seq) == (1, 2)
+    assert (
+        waiting.checkpoint.upto_entry_id is not None
+        and waiting.checkpoint.conversation_id is not None
+    )
     # find ran, the park is recorded, remind didn't run.
     rows = await tool_rows(sessions)
     assert [(r.tool, r.ok, r.result_excerpt) for r in rows][1:] == [
@@ -729,13 +732,16 @@ async def test_two_listed_calls_ask_one_after_the_other(
     alien = ("mcparr_add_media", '{"title": "Alien"}')
     model = FakeModel([calls(ADD, alien), text("Both added.")])
     alfred, turn, first = await parked_turn(sessions, model)
-    assert first.waiting is not None and first.waiting.call.arguments == ADD[1]
+    assert first.waiting is not None and first.waiting.checkpoint.call.arguments == ADD[1]
     second = await alfred.run(resumed(turn, first, True))
     assert second.waiting is not None
-    assert (second.waiting.call.arguments, second.waiting.call_index) == (alien[1], 1)
-    assert second.waiting.remaining == ()
+    assert (second.waiting.checkpoint.call.arguments, second.waiting.checkpoint.call_index) == (
+        alien[1],
+        1,
+    )
+    assert second.waiting.checkpoint.remaining == ()
     # Dune's real result is in the tail now.
-    assert "added Dune" in second.waiting.tail[-1]["content"]
+    assert "added Dune" in second.waiting.checkpoint.tail[-1]["content"]
     done = await alfred.run(resumed(turn, second, True))
     assert done.reply == "Both added."
     assert len(model.requests) == 2
@@ -748,7 +754,7 @@ async def test_max_requests_counts_the_whole_turn(
     alfred = confirming(sessions, model, ai={"max_requests_per_turn": 3})
     turn = await owner_turn(sessions, "add Dune", CONFIRMS_ADD)
     parked = await alfred.run(turn)
-    assert parked.waiting is not None and parked.waiting.requests_used == 2
+    assert parked.waiting is not None and parked.waiting.checkpoint.requests_used == 2
     with pytest.raises(TurnFailed) as failed:
         await alfred.run(resumed(turn, parked, True))
     assert "stopped after 3 model requests" in failed.value.reason
@@ -816,4 +822,7 @@ async def test_images_in_the_tail_are_replaced_by_a_note(
     turn = await owner_turn(sessions, "look, then add", CONFIRMS_ADD)
     result = await alfred.run(turn)
     assert result.waiting is not None
-    assert result.waiting.tail[1]["content"] == "two pictures\n[2 images not kept while waiting]"
+    assert (
+        result.waiting.checkpoint.tail[1]["content"]
+        == "two pictures\n[2 images not kept while waiting]"
+    )

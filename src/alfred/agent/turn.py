@@ -98,17 +98,18 @@ class Fallback:
 
 
 @dataclass(frozen=True)
-class _Waiting:
-    """A turn parked at a call that needs its user's answer.
+class _Checkpoint:
+    """Where a parked turn stopped, stored as JSON while it waits for its user's answer.
 
-    ``remaining`` are the calls after it in the same model reply, not run
-    yet; ``tail`` the messages after the context (assistant messages with
-    tool calls, and the results so far); ``requests_used`` and ``seq`` the
-    model requests and tool calls so far; ``conversation_id`` and
-    ``upto_entry_id`` (``None`` for no entries) where the context came from.
+    ``call`` is the call that asked, ``call_index`` its place in its model
+    reply and ``remaining`` the calls after it, not run yet; ``tail`` the
+    messages after the context (assistant messages with tool calls, and the
+    results so far); ``requests_used`` and ``seq`` the model requests and tool
+    calls so far; ``conversation_id`` and ``upto_entry_id`` (``None`` for no
+    entries) where the context came from, and ``entry_ids`` exactly which
+    entries. Turns parked by 0.16.0 saved no ids: ``None``.
     """
 
-    need: InputNeed
     call: ToolCall
     call_index: int
     remaining: tuple[ToolCall, ...]
@@ -118,12 +119,28 @@ class _Waiting:
     conversation_id: int | None
     upto_entry_id: int | None
     reset: bool = False
-    # The ids of the entries in its context, read again on resume.
-    entry_ids: tuple[int, ...] = ()
+    entry_ids: tuple[int, ...] | None = ()
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> _Checkpoint:
+        """Read what :meth:`to_json` wrote, or what 0.16.0 wrote (no ``entry_ids``)."""
+        entry_ids = data.get("entry_ids")
+        return cls(
+            call=_call_of(data["call"]),
+            call_index=data["call_index"],
+            remaining=tuple(_call_of(c) for c in data["remaining"]),
+            tail=data["tail"],
+            requests_used=data["requests_used"],
+            seq=data["seq"],
+            conversation_id=data["conversation_id"],
+            upto_entry_id=data["upto_entry_id"],
+            reset=bool(data.get("reset")),
+            entry_ids=None if entry_ids is None else tuple(entry_ids),
+        )
 
     def to_json(self) -> dict[str, Any]:
-        """What is stored to resume it (without ``need``, which is stored apart)."""
-        return {
+        """What is stored to resume the turn; the same keys 0.16.1 stores."""
+        data = {
             "call": _call_json(self.call),
             "call_index": self.call_index,
             "remaining": [_call_json(c) for c in self.remaining],
@@ -133,8 +150,18 @@ class _Waiting:
             "conversation_id": self.conversation_id,
             "upto_entry_id": self.upto_entry_id,
             "reset": self.reset,
-            "entry_ids": list(self.entry_ids),
         }
+        if self.entry_ids is not None:
+            data["entry_ids"] = list(self.entry_ids)
+        return data
+
+
+@dataclass(frozen=True)
+class _Waiting:
+    """A turn parked at a call that needs its user's answer (``need``, stored apart)."""
+
+    need: InputNeed
+    checkpoint: _Checkpoint
 
 
 @dataclass(frozen=True)
@@ -273,7 +300,8 @@ class Agent:
         others = [b.name for b in self._brains.brains if b != brain]
         now = self._now()
         resume = turn.resume
-        if resume is None:
+        checkpoint = _Checkpoint.from_json(resume.turn) if resume is not None else None
+        if checkpoint is None:
             # Without other parked turns' entries: they have no reply yet.
             entries = await self._history.recent(
                 user.name, cfg.history.max_entries, turn_item_id=turn.queue_item_id
@@ -285,10 +313,10 @@ class Agent:
             entries = await self._history.recent(
                 user.name,
                 cfg.history.max_entries,
-                conversation_id=resume.turn["conversation_id"],
-                upto_entry_id=resume.turn["upto_entry_id"] or 0,
+                conversation_id=checkpoint.conversation_id,
+                upto_entry_id=checkpoint.upto_entry_id or 0,
                 turn_item_id=turn.queue_item_id,
-                entry_ids=resume.turn.get("entry_ids"),
+                entry_ids=checkpoint.entry_ids,
             )
         state = _State(
             brain,
@@ -327,9 +355,9 @@ class Agent:
             open_toolset.new_attempt(state.context)
         state.context_len = len(state.messages)
         state.entry_ids = tuple(e.entry_id for e in entries if e.entry_id is not None)
-        if resume is not None:
-            state.conversation_id = resume.turn["conversation_id"]
-            state.upto_entry_id = resume.turn["upto_entry_id"]
+        if checkpoint is not None:
+            state.conversation_id = checkpoint.conversation_id
+            state.upto_entry_id = checkpoint.upto_entry_id
         elif entries:
             state.conversation_id = entries[-1].conversation_id
             state.upto_entry_id = entries[-1].entry_id
@@ -353,8 +381,8 @@ class Agent:
                 "turn %s largest tools: %s", turn.queue_item_id, largest_tools(this.definitions)
             )
 
-        if resume is not None:
-            parked = await self._go_on(this, state, resume)
+        if resume is not None and checkpoint is not None:
+            parked = await self._go_on(this, state, checkpoint, resume)
             if parked is not None:
                 return self._parked(state, parked)
 
@@ -380,26 +408,27 @@ class Agent:
             side_effects_possible=state.side_effects,
         )
 
-    async def _go_on(self, this: _Turn, state: _State, resume: Resume) -> _Waiting | None:
+    async def _go_on(
+        self, this: _Turn, state: _State, saved: _Checkpoint, resume: Resume
+    ) -> _Waiting | None:
         """Pick a parked turn up where it stopped: the answered call, then the rest of its reply."""
-        saved = resume.turn
-        state.messages += saved["tail"]
+        state.messages += saved.tail
         state.side_effects = True  # tools ran before it parked
-        state.seq = saved["seq"]
-        state.requests = saved["requests_used"]
-        if saved.get("reset"):
+        state.seq = saved.seq
+        state.requests = saved.requests_used
+        if saved.reset:
             state.context.request_reset()
-        call = _call_of(saved["call"])
-        remaining = [_call_of(c) for c in saved["remaining"]]
+        call = saved.call
+        remaining = saved.remaining
         state.seq += 1
         outcome = await dispatch_resume(
             this.opened, call.name, call.arguments, resume.state, resume.answer, state.context
         )
         await self._record(this.input, state.seq, call, outcome)
         if outcome.need is not None:  # the server asks again
-            return self._waiting(state, call, saved["call_index"], outcome.need, remaining)
+            return self._waiting(state, call, saved.call_index, outcome.need, remaining)
         state.messages.append(_tool_message(call.id, outcome))
-        return await self._run_calls(this, state, remaining, saved["call_index"] + 1)
+        return await self._run_calls(this, state, remaining, saved.call_index + 1)
 
     async def _run_calls(
         self, this: _Turn, state: _State, calls: Sequence[ToolCall], first_index: int
@@ -422,24 +451,26 @@ class Agent:
     ) -> _Waiting:
         return _Waiting(
             need,
-            call,
-            index,
-            tuple(remaining),
-            [_without_images(m) for m in state.messages[state.context_len :]],
-            state.requests,
-            state.seq,
-            state.conversation_id,
-            state.upto_entry_id,
-            state.context.reset,
-            state.entry_ids,
+            _Checkpoint(
+                call,
+                index,
+                tuple(remaining),
+                [_without_images(m) for m in state.messages[state.context_len :]],
+                state.requests,
+                state.seq,
+                state.conversation_id,
+                state.upto_entry_id,
+                state.context.reset,
+                state.entry_ids,
+            ),
         )
 
     def _parked(self, state: _State, waiting: _Waiting) -> TurnResult:
         log.info(
             "turn %s parked at tool call #%d %s: waiting for %s's answer",
             state.context.turn.queue_item_id,
-            waiting.seq,
-            waiting.call.name,
+            waiting.checkpoint.seq,
+            waiting.checkpoint.call.name,
             state.context.turn.user.name,
         )
         return TurnResult("", False, True, waiting=waiting)

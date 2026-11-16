@@ -227,6 +227,6 @@ def resumed(turn: TurnInput, result: TurnResult, answer: object) -> TurnInput:
     """``turn`` going on after its user chose ``answer``, as stored in the database."""
     waiting = result.waiting
     assert waiting is not None, result
-    saved = json.loads(json.dumps(waiting.to_json()))
+    saved = json.loads(json.dumps(waiting.checkpoint.to_json()))
     state = json.loads(json.dumps(waiting.need.state))
     return dataclasses.replace(turn, resume=Resume(saved, state, answer))

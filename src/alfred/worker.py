@@ -218,17 +218,17 @@ class Worker:
         user = turn.user
         await self._tell_fallback(item, user, result.fallback)
         question = dataclasses.replace(waiting.need.question, title=self._title(item, turn))
-        arguments = parse_arguments(waiting.call.arguments)
+        arguments = parse_arguments(waiting.checkpoint.call.arguments)
         request_id = await self._inputs.park(
             item.id,
             user.name,
-            tool=waiting.call.name,
+            tool=waiting.checkpoint.call.name,
             arguments=arguments
             if isinstance(arguments, dict)
-            else {"_raw": waiting.call.arguments},
+            else {"_raw": waiting.checkpoint.call.arguments},
             question=question,
             state=waiting.need.state,
-            turn=waiting.to_json(),
+            turn=waiting.checkpoint.to_json(),
             expires_at=self._expire_after,
         )
         try:
@@ -244,7 +244,7 @@ class Worker:
             item.id,
             user.name,
             request_id,
-            waiting.call.name,
+            waiting.checkpoint.call.name,
         )
 
     def _title(self, item: QueueItem, turn: TurnInput) -> str:
