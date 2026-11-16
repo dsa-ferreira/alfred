@@ -21,3 +21,5 @@ ba28570ed51627cc68e62dc4f2f563635dfa68d9
 1d2f77b894ee73fc4b893e83f7c1edc5dc216ea5
 # refactor(db): move each table into its slice's tables.py
 acc68cc4cc35682468e4d6940f9c7aaae17626d0
+# refactor: move packages under one directory per rank
+0b1983d8ccd1642db9903a13a1c87e3c060266d9
