@@ -20,10 +20,10 @@ from alfred.mcp.toolset import McpTools, _OpenMcpTools, _server_instructions, _u
 from alfred.tools.base import (
     AllowList,
     AttemptContext,
+    ChatTurn,
     Gated,
     PromptNote,
     ToolOutcome,
-    TurnInput,
     dispatch,
 )
 from tests.helpers import ANA, DIOGO, make_config
@@ -38,7 +38,7 @@ from tests.mcp.servers import (
 
 MCPARR = config("mcparr")
 COOKBOOK = config("cookbook", frozenset({"delete_recipe"}))
-TURN = TurnInput("chat", "hi", 1, user=DIOGO)
+TURN = ChatTurn("hi", 1, user=DIOGO)
 
 
 def mcp_tools(**servers: object) -> McpTools:
@@ -115,7 +115,7 @@ def per_user(connect: Connector, *users: User) -> McpTools:
 async def test_per_user_token() -> None:
     seen: list[tuple[str, str]] = []
     tools = per_user(recording({"mcparr": make_mcparr(), "cookbook": make_cookbook()}, seen))
-    ana = TurnInput("chat", "hi", 2, user=ANA_WITH_TOKEN)
+    ana = ChatTurn("hi", 2, user=ANA_WITH_TOKEN)
     opened = await tools.open(ana)
     listed = len(seen)
     outcome = await dispatch([opened], "mcparr_add_media", '{"title": "Dune"}', AttemptContext(ana))
@@ -134,7 +134,7 @@ async def test_server_outside_the_allow_list_is_not_contacted() -> None:
     no_cookbook = dataclasses.replace(ANA, tools=AllowList.of("alfred_*", "mcparr_find_media"))
     servers = {"mcparr": make_mcparr(), "cookbook": ConnectionError("down")}
     tools = per_user(recording(servers, seen), DIOGO, no_cookbook)
-    opened = await tools.open(TurnInput("chat", "hi", 2, user=no_cookbook))
+    opened = await tools.open(ChatTurn("hi", 2, user=no_cookbook))
     assert [name for name, _ in seen] == ["mcparr"]
     # Not listed, so not reported as unavailable either; no cookbook instructions.
     assert opened.prompt_notes == []
@@ -145,7 +145,7 @@ async def test_empty_allow_list_contacts_no_server() -> None:
     seen: list[tuple[str, str]] = []
     nothing = dataclasses.replace(ANA, tools=AllowList())
     tools = per_user(recording({"mcparr": make_mcparr(), "cookbook": make_cookbook()}, seen))
-    opened = await tools.open(TurnInput("chat", "hi", 2, user=nothing))
+    opened = await tools.open(ChatTurn("hi", 2, user=nothing))
     assert seen == [] and opened.definitions == [] and opened.prompt_notes == []
 
 
@@ -155,7 +155,7 @@ async def test_instructions_dropped_without_an_allowed_tool(
     typo = dataclasses.replace(ANA, tools=AllowList.of("cookbook_get_recipee"))
     tools = per_user(in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()}))
     with caplog.at_level(logging.WARNING, logger="alfred.mcp.toolset"):
-        opened = await tools.open(TurnInput("chat", "hi", 2, user=typo))
+        opened = await tools.open(ChatTurn("hi", 2, user=typo))
     assert opened.prompt_notes == []
     gated = Gated(opened, typo.tools)
     assert gated.definitions == []
@@ -167,7 +167,7 @@ async def test_instructions_dropped_without_an_allowed_tool(
 async def test_instructions_kept_with_an_allowed_tool() -> None:
     one = dataclasses.replace(ANA, tools=AllowList.of("cookbook_get_recipe"))
     tools = per_user(in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()}))
-    opened = await tools.open(TurnInput("chat", "hi", 2, user=one))
+    opened = await tools.open(ChatTurn("hi", 2, user=one))
     assert [n.log_label for n in opened.prompt_notes] == ["cookbook"]
     assert [d["function"]["name"] for d in Gated(opened, one.tools).definitions] == [
         "cookbook_get_recipe"
@@ -177,7 +177,7 @@ async def test_instructions_kept_with_an_allowed_tool() -> None:
 async def test_hidden_tool_call_never_reaches_the_server() -> None:
     seen: list[tuple[str, str]] = []
     tools = per_user(recording({"mcparr": make_mcparr(), "cookbook": make_cookbook()}, seen))
-    ana = TurnInput("chat", "hi", 2, user=ANA_WITH_TOKEN)
+    ana = ChatTurn("hi", 2, user=ANA_WITH_TOKEN)
     opened = Gated(await tools.open(ana), ANA_WITH_TOKEN.tools)
     seen.clear()
     outcome = await dispatch([opened], "mcparr_get_downloads", "{}", AttemptContext(ana))

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY, brain_line
 from alfred.brains import Brains
-from alfred.tools.base import AllowList, AttemptContext, ToolOutcome, TurnInput
+from alfred.tools.base import AllowList, AskTurn, AttemptContext, ChatTurn, ToolOutcome
 from alfred.tools.brains import SET_MODEL, BrainTools
 from tests.agent.turn_helpers import (
     GEMMA,
@@ -87,7 +87,7 @@ async def test_ask_turns_cant_switch(sessions: async_sessionmaker[AsyncSession])
     item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
     model = FakeModel([text(_NO_REPLY)])
     await agent(sessions, model, brains=two_brains()).run(
-        TurnInput("ask", "anything?", item, "disk-check", user=DIOGO)
+        AskTurn("anything?", item, "disk-check", user=DIOGO)
     )
     assert SET_MODEL not in model.tool_names()
 
@@ -111,14 +111,14 @@ async def test_brain_already_current(sessions: async_sessionmaker[AsyncSession])
 
 # --- alfred_set_model ---------------------------------------------------------------
 
-ADMIN = TurnInput("chat", "use bonsai", 1, user=DIOGO)
+ADMIN = ChatTurn("use bonsai", 1, user=DIOGO)
 TWO = {"gemma": "gemma4", "bonsai": "bonsai:8b"}
 
 
 async def test_set_model_offered_on_admin_turns_with_two_brains() -> None:
     tools = BrainTools(Brains("gemma4", TWO))
     assert await tools.open(ADMIN) is tools
-    assert await tools.open(TurnInput("ask", "x", 2, "svc", user=DIOGO)) is None
+    assert await tools.open(AskTurn("x", 2, "svc", user=DIOGO)) is None
     assert await BrainTools(Brains("gemma4")).open(ADMIN) is None
     [definition] = tools.definitions
     assert definition["function"]["name"] == SET_MODEL
@@ -157,7 +157,7 @@ EVERYTHING = dataclasses.replace(ANA, tools=AllowList.of("*"))
 
 async def test_set_model_not_offered_to_other_users() -> None:
     tools = BrainTools(Brains("gemma4", TWO))
-    assert await tools.open(TurnInput("chat", "switch to bonsai", 1, user=EVERYTHING)) is None
+    assert await tools.open(ChatTurn("switch to bonsai", 1, user=EVERYTHING)) is None
 
 
 async def test_other_user_cannot_switch(sessions: async_sessionmaker[AsyncSession]) -> None:

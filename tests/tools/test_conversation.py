@@ -4,19 +4,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
 from alfred.history import History
-from alfred.tools.base import AttemptContext, TurnInput
+from alfred.tools.base import AskTurn, AttemptContext, ChatTurn, ReminderTurn
 from alfred.tools.conversation import END_CONVERSATION, ConversationTools
 from tests.agent.turn_helpers import agent, owner_turn
 from tests.helpers import DIOGO, FakeModel, add_queue_item, calls, text
 
-OWNER = TurnInput("chat", "thanks, that's all", 1, user=DIOGO)
+OWNER = ChatTurn("thanks, that's all", 1, user=DIOGO)
 
 
 async def test_offered_on_owner_turns_only() -> None:
     tools = ConversationTools()
     assert await tools.open(OWNER) is tools
-    assert await tools.open(TurnInput("ask", "x", 2, "svc", user=DIOGO)) is None
-    assert await tools.open(TurnInput("reminder", "x", 3, user=DIOGO)) is None
+    assert await tools.open(AskTurn("x", 2, "svc", user=DIOGO)) is None
+    assert await tools.open(ReminderTurn("x", 3, user=DIOGO)) is None
 
 
 async def test_call_requests_a_reset() -> None:
@@ -52,7 +52,7 @@ async def test_end_conversation_not_offered_on_ask_turns(
 ) -> None:
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
     model = FakeModel([calls((END_CONVERSATION, "{}")), text(_NO_REPLY)])
-    result = await agent(sessions, model).run(TurnInput("ask", "x", item, "disk-check", user=DIOGO))
+    result = await agent(sessions, model).run(AskTurn("x", item, "disk-check", user=DIOGO))
     assert END_CONVERSATION not in model.tool_names()
     assert not result.reset_requested
     assert "unknown tool" in model.requests[1][0][-1]["content"]

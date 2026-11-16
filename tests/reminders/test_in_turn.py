@@ -17,7 +17,7 @@ from alfred.model import ModelUnreachable
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
-from alfred.tools.base import TurnInput
+from alfred.tools.base import AskTurn
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.tools.dates import DATE
@@ -67,7 +67,7 @@ async def test_reminder_tools_not_offered_in_ask_turns(
     model.script.append(text("done"))
     a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
-    await a.run(TurnInput("ask", "93%", item, "disk-check", user=DIOGO))
+    await a.run(AskTurn("93%", item, "disk-check", user=DIOGO))
     assert not REMINDER_TOOLS & model.tool_names(0)
     # A reminder turn gets only the list; setting is refused, nothing stored.
     await a.run(await reminder_turn(sessions))
@@ -129,7 +129,7 @@ async def test_reminder_turn_gets_the_ask_tool_set_and_the_list(
     )
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await agent(sessions, ask_model, reminders=tools, now=clock).run(
-        TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
+        AskTurn("93%", item, "disk-check", user=DIOGO)
     )
     assert reminder_model.tool_names() == ask_model.tool_names() | {_REMINDERS_LIST}
     assert END_CONVERSATION not in reminder_model.tool_names()

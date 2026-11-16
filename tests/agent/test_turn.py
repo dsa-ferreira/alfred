@@ -23,6 +23,7 @@ from alfred.reminders.tools import _REMIND_SET
 from alfred.tools.base import (
     _DECLINED,
     AllowList,
+    AskTurn,
     AttemptContext,
     LocalToolset,
     ModelImage,
@@ -119,7 +120,7 @@ async def test_ask_turn_context(sessions: async_sessionmaker[AsyncSession]) -> N
     item = await add_queue_item(sessions, "ask", "is this worth telling?", "disk-check")
     model = FakeModel([text(_NO_REPLY)])
     result = await agent(sessions, model).run(
-        TurnInput("ask", "is this worth telling?", item, "disk-check", user=DIOGO)
+        AskTurn("is this worth telling?", item, "disk-check", user=DIOGO)
     )
     assert result.reply == _NO_REPLY
     messages = model.requests[0][0]
@@ -304,7 +305,7 @@ async def test_date_in_ask_turn(sessions: async_sessionmaker[AsyncSession]) -> N
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
     model = FakeModel([text(_NO_REPLY)])
     await agent(sessions, model, now=JUST_AFTER_MIDNIGHT).run(
-        TurnInput("ask", "x", item, "disk-check", user=DIOGO)
+        AskTurn("x", item, "disk-check", user=DIOGO)
     )
     assert "Today is Tuesday, 3 November 2026." in model.requests[0][0][0]["content"]
 
@@ -392,7 +393,7 @@ async def test_ask_turn_falls_back(sessions: async_sessionmaker[AsyncSession]) -
     item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
     model = FakeModel([BAD_MODEL, text(_NO_REPLY)])
     result = await agent(sessions, model, brains=brains).run(
-        TurnInput("ask", "anything?", item, "disk-check", user=DIOGO)
+        AskTurn("anything?", item, "disk-check", user=DIOGO)
     )
     assert result.reply == _NO_REPLY and result.fallback == FELL_BACK
     assert brains.current.name == "gemma"
@@ -452,7 +453,7 @@ async def test_tool_order_on_ask_turns(
     model = FakeModel([text(_NO_REPLY)])
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await all_toolsets_agent(sessions, model, web_http).run(
-        TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
+        AskTurn("93%", item, "disk-check", user=DIOGO)
     )
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         _WEB_SEARCH,
@@ -506,7 +507,7 @@ async def test_ask_input_carries_the_time_now(sessions: async_sessionmaker[Async
     model = FakeModel([text(_NO_REPLY)])
     at_three = datetime(2026, 11, 10, 3, 0, tzinfo=UTC)  # 03:00 in Lisbon (WET)
     await agent(sessions, model, now=at_three).run(
-        TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
+        AskTurn("93% full", item, "disk-check", user=DIOGO)
     )
     assert model.requests[0][0][-1]["content"] == "[Tue 10 Nov 03:00] [ask:disk-check] 93% full"
 
@@ -529,9 +530,7 @@ async def test_echoed_stamp_is_removed(sessions: async_sessionmaker[AsyncSession
 async def test_echoed_stamp_before_no_reply(sessions: async_sessionmaker[AsyncSession]) -> None:
     item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
     model = FakeModel([text(f"[Mon 2 Nov 14:05] {_NO_REPLY}")])
-    result = await agent(sessions, model).run(
-        TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
-    )
+    result = await agent(sessions, model).run(AskTurn("93% full", item, "disk-check", user=DIOGO))
     assert is_no_reply(result.reply)
 
 

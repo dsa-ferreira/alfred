@@ -45,7 +45,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from alfred.config import User
@@ -94,29 +94,86 @@ class AllowList:
 
 
 @dataclass(frozen=True)
-class TurnInput:
-    """What a turn answers: a user's chat message, an ``/ask`` prompt or a due reminder.
+class _Turn:
+    """What every turn has. ``user`` is whose turn it is."""
 
-    ``user`` is whose turn it is: the sender, the target of the ``/ask``, or
-    the reminder's recipient.
-    """
-
-    kind: Literal["chat", "ask", "reminder"]
     text: str
     queue_item_id: int
-    source: str | None = None  # the service, for ask turns
-    # For reminder turns: the reminder's number and when this occurrence was due.
-    reminder_id: int | None = None
-    due_at: datetime | None = None
-    # For reminder turns: who set it, when not the recipient.
-    set_by: str | None = None
-    # For reminder turns: its repeat rule as shown ("every weekday at 08:00"),
-    # and whether the turn may answer NO_REPLY.
-    repeat_label: str | None = None
-    quiet_ok: bool = False
     user: User = field(kw_only=True)
     # Set when a parked turn goes on with its user's answer.
     resume: Resume | None = field(default=None, kw_only=True)
+
+
+@dataclass(frozen=True)
+class ChatTurn(_Turn):
+    """A user's chat message, already in the history when its turn runs."""
+
+    kind = "chat"
+
+    def prompt_flags(self) -> _PromptFlags:
+        return _PromptFlags()
+
+    def input_line(self, now: datetime, times: _TimeFormat) -> str | None:
+        return None
+
+
+@dataclass(frozen=True)
+class AskTurn(_Turn):
+    """An ``/ask`` prompt from a service, for ``user``.
+
+    Only recorded if the answer reaches the user, so the agent adds it to
+    the messages itself.
+    """
+
+    source: str
+    kind = "ask"
+
+    def prompt_flags(self) -> _PromptFlags:
+        return _PromptFlags(ask=True)
+
+    def input_line(self, now: datetime, times: _TimeFormat) -> str | None:
+        """``[Mon 9 Nov 14:05] [ask:disk-check] 93% full``: after the time now."""
+        return times.stamp(f"[ask:{self.source}] {self.text}", now)
+
+
+@dataclass(frozen=True)
+class ReminderTurn(_Turn):
+    """A due reminder, for one of its recipients (``user``).
+
+    ``due_at`` is when this occurrence was due, ``set_by`` who set it when
+    not ``user``, ``repeat_label`` its repeat rule as shown ("every weekday
+    at 08:00"), and ``quiet_ok`` whether the turn may answer ``NO_REPLY``.
+    """
+
+    reminder_id: int | None = None
+    due_at: datetime | None = None
+    set_by: str | None = None
+    repeat_label: str | None = None
+    quiet_ok: bool = False
+    kind = "reminder"
+
+    def prompt_flags(self) -> _PromptFlags:
+        return _PromptFlags(reminder=True, reminder_quiet=self.quiet_ok)
+
+    def input_line(self, now: datetime, times: _TimeFormat) -> str | None:
+        """``[reminder:#12 due Monday 9 November 2026, 17:00; now 17:12] call mum``.
+
+        Labelled with this attempt's time, so a retried turn shows how late
+        it really is. ``; every weekday at 08:00`` after the time when it
+        repeats, and ``; set by diogo`` before the ``]`` when someone else
+        set it.
+        """
+        due = self.due_at or now
+        rule = f"; {self.repeat_label}" if self.repeat_label else ""
+        set_by = f"; set by {self.set_by}" if self.set_by else ""
+        return (
+            f"[reminder:#{self.reminder_id} due {times.when(due)}; "
+            f"now {times.now(now, due)}{rule}{set_by}] {self.text}"
+        )
+
+
+# What a turn answers: a user's chat message, an ``/ask`` prompt or a due reminder.
+TurnInput = ChatTurn | AskTurn | ReminderTurn
 
 
 @dataclass(frozen=True)
@@ -464,6 +521,31 @@ async def dispatch_resume(
     except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
         log.exception("tool %s failed on resume", name)
         return ToolOutcome(False, f"Error: tool {name!r} failed: {type(exc).__name__}")
+
+
+class _TimeFormat(Protocol):
+    """Times as the turn's user reads them (in their time zone)."""
+
+    def stamp(self, text: str, moment: datetime) -> str:
+        """``text`` after the time it arrived, like a history message."""
+        ...
+
+    def when(self, moment: datetime) -> str:
+        """A due time: ``Monday 9 November 2026, 17:00``."""
+        ...
+
+    def now(self, now: datetime, due: datetime) -> str:
+        """The time now, against a due time."""
+        ...
+
+
+@dataclass(frozen=True)
+class _PromptFlags:
+    """Which turn rules the system prompt adds."""
+
+    ask: bool = False
+    reminder: bool = False
+    reminder_quiet: bool = False
 
 
 def _confirm_question(name: str, arguments: dict[str, Any]) -> Question:

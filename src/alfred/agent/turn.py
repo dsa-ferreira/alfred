@@ -225,6 +225,7 @@ class Agent:
         self._toolsets = list(toolsets)
         self._now = now
         self._zone = ZoneInfo(config.ai.timezone)
+        self._times = _Times(self._zone)
 
     async def run(self, turn: TurnInput) -> TurnResult:
         opened: list[OpenToolset] = []
@@ -325,11 +326,9 @@ class Agent:
         if self._attachments is not None and this.images is not None and turn.kind == "chat":
             inline = await self._attachments.build(entries, vision=brain.vision, cache=this.images)
         state.messages += to_messages(entries, self._zone, inline)
-        if turn.kind == "ask":
-            ask = f"[ask:{turn.source}] {turn.text}"
-            state.messages.append({"role": "user", "content": stamped(ask, now, self._zone)})
-        elif turn.kind == "reminder":
-            state.messages.append({"role": "user", "content": self._reminder_input(turn, now)})
+        line = turn.input_line(now, self._times)
+        if line is not None:
+            state.messages.append({"role": "user", "content": line})
         for open_toolset in this.opened:
             open_toolset.new_attempt(state.context)
         state.context_len = len(state.messages)
@@ -385,15 +384,16 @@ class Agent:
         turn = this.input
         user = turn.user
         others = [b.name for b in self._brains.brains if b != brain]
+        flags = turn.prompt_flags()
         return {
             "role": "system",
             "content": system_prompt(
                 cfg.ai.persona,
                 name=user.name,
                 address=user.address,
-                ask=turn.kind == "ask",
-                reminder=turn.kind == "reminder",
-                reminder_quiet=turn.quiet_ok,
+                ask=flags.ask,
+                reminder=flags.reminder,
+                reminder_quiet=flags.reminder_quiet,
                 today=now.astimezone(self._zone).date(),
                 tools=this.offered,
                 others=[u.name for u in cfg.users if u.name != user.name],
@@ -499,20 +499,6 @@ class Agent:
             state.context.turn.user.name,
         )
         return TurnResult("", False, True, waiting=waiting)
-
-    def _reminder_input(self, turn: TurnInput, now: datetime) -> str:
-        """``[reminder:#12 due Monday 9 November 2026, 17:00; now 17:12] call mum``.
-
-        ``; every weekday at 08:00`` after the time when it repeats, and
-        ``; set by diogo`` before the ``]`` when someone else set it.
-        """
-        due = turn.due_at or now
-        rule = f"; {turn.repeat_label}" if turn.repeat_label else ""
-        set_by = f"; set by {turn.set_by}" if turn.set_by else ""
-        return (
-            f"[reminder:#{turn.reminder_id} due {format_when(due, self._zone)}; "
-            f"now {format_now(now, due, self._zone)}{rule}{set_by}] {turn.text}"
-        )
 
     async def _ask_model(self, state: _State, definitions: list[dict[str, Any]]) -> ModelReply:
         address = state.context.turn.user.address
@@ -669,3 +655,19 @@ def _images_note(outcome: ToolOutcome) -> str:
     """`` [1 image]``: what the excerpt keeps of a result's images, never their data."""
     n = len(outcome.images)
     return f" [{n} image{'' if n == 1 else 's'}]" if n else ""
+
+
+class _Times:
+    """Times in the user's zone, for the ask and reminder input lines."""
+
+    def __init__(self, zone: ZoneInfo) -> None:
+        self._zone = zone
+
+    def stamp(self, text: str, moment: datetime) -> str:
+        return stamped(text, moment, self._zone)
+
+    def when(self, moment: datetime) -> str:
+        return format_when(moment, self._zone)
+
+    def now(self, now: datetime, due: datetime) -> str:
+        return format_now(now, due, self._zone)

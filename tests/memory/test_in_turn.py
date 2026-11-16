@@ -9,7 +9,7 @@ from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Entry
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.base import TurnInput
+from alfred.tools.base import AskTurn
 from tests.agent.turn_helpers import agent, contents, memory, owner_turn, tool_rows
 from tests.helpers import DIOGO, FakeEmbedder, FakeModel, add_queue_item, calls, text
 from tests.memory.test_search import CHICKEN, at, seed
@@ -41,7 +41,7 @@ async def test_memory_tools_not_offered_on_ask_turns(
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
     model = FakeModel([calls((RECALL_CONVERSATION, '{"id": 41}')), text(_NO_REPLY)])
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
-        TurnInput("ask", "x", item, "disk-check", user=DIOGO)
+        AskTurn("x", item, "disk-check", user=DIOGO)
     )
     assert not {SEARCH_CONVERSATIONS, RECALL_CONVERSATION} & model.tool_names()
     assert "unknown tool" in model.requests[1][0][-1]["content"]

@@ -8,7 +8,9 @@ from alfred.tools.base import (
     _CONFIRM,
     _DECLINED,
     AllowList,
+    AskTurn,
     AttemptContext,
+    ChatTurn,
     Confirmed,
     Gated,
     LocalToolset,
@@ -44,8 +46,8 @@ class Broken(LocalToolset):
         raise ValueError("boom")
 
 
-CHAT = TurnInput("chat", "hi", 1, user=DIOGO)
-ASK = TurnInput("ask", "hi", 2, "disk-check", user=DIOGO)
+CHAT = ChatTurn("hi", 1, user=DIOGO)
+ASK = AskTurn("hi", 2, "disk-check", user=DIOGO)
 
 
 async def test_first_toolset_that_handles_the_name_wins() -> None:

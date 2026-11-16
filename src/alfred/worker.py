@@ -50,7 +50,7 @@ from alfred.inputs.store import RequestRow
 from alfred.outbox import Outbox
 from alfred.queue import Queue
 from alfred.reminders.store import ReminderRow
-from alfred.tools.base import TurnInput
+from alfred.tools.base import AskTurn, ChatTurn, ReminderTurn, TurnInput
 
 log = logging.getLogger(__name__)
 
@@ -185,10 +185,12 @@ class Worker:
     async def _turn_input(self, item: QueueItem, user: User) -> TurnInput:
         if item.kind == "reminder":
             return await self._reminder_turn(item, user)
-        kind = "chat" if item.kind == "user" else item.kind
-        return TurnInput(kind, item.text, item.id, item.source, user=user)  # type: ignore[arg-type]
+        if item.kind == "ask":
+            assert item.source is not None
+            return AskTurn(item.text, item.id, item.source, user=user)
+        return ChatTurn(item.text, item.id, user=user)
 
-    async def _reminder_turn(self, item: QueueItem, user: User) -> TurnInput:
+    async def _reminder_turn(self, item: QueueItem, user: User) -> ReminderTurn:
         """The reminder's text, rule, quietness and creator, read through ``reminder_id``.
 
         The due time is the item's own: a repeating reminder's row has
@@ -200,16 +202,14 @@ class Worker:
             reminder = await self._reminders.get(item.reminder_id)
         if reminder is None:
             log.error("queue item %s: reminder #%s not found", item.id, item.reminder_id)
-            return TurnInput(
-                "reminder",
+            return ReminderTurn(
                 item.text,
                 item.id,
                 reminder_id=item.reminder_id,
                 due_at=due_at or item.created_at,
                 user=user,
             )
-        return TurnInput(
-            "reminder",
+        return ReminderTurn(
             reminder.text,
             item.id,
             reminder_id=reminder.id,

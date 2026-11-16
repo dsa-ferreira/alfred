@@ -7,11 +7,18 @@ import time
 
 import pytest
 
-from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
+from alfred.tools.base import (
+    AskTurn,
+    AttemptContext,
+    ChatTurn,
+    ReminderTurn,
+    ToolOutcome,
+    TurnInput,
+)
 from alfred.tools.calculator import _CALCULATE_TOOL, CALCULATE, CalculatorTools
 from tests.helpers import DIOGO
 
-OWNER = TurnInput("chat", "what's 347 times 28.5?", 1, user=DIOGO)
+OWNER = ChatTurn("what's 347 times 28.5?", 1, user=DIOGO)
 
 
 async def calc(**arguments: object) -> ToolOutcome:
@@ -38,8 +45,8 @@ async def error(**arguments: object) -> str:
     "turn",
     [
         OWNER,
-        TurnInput("ask", "x", 2, "disk-check", user=DIOGO),
-        TurnInput("reminder", "x", 3, user=DIOGO),
+        AskTurn("x", 2, "disk-check", user=DIOGO),
+        ReminderTurn("x", 3, user=DIOGO),
     ],
 )
 async def test_offered_on_every_turn(turn: TurnInput) -> None:

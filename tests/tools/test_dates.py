@@ -8,13 +8,20 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
+from alfred.tools.base import (
+    AskTurn,
+    AttemptContext,
+    ChatTurn,
+    ReminderTurn,
+    ToolOutcome,
+    TurnInput,
+)
 from alfred.tools.dates import _DATE_TOOL, DATE, DateTools
 from tests.helpers import DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
 NOW = datetime(2026, 11, 9, 14, 5, tzinfo=UTC)  # Monday, 14:05 in Lisbon (WET)
-OWNER = TurnInput("chat", "how many days until Christmas?", 1, user=DIOGO)
+OWNER = ChatTurn("how many days until Christmas?", 1, user=DIOGO)
 
 
 async def call(arguments: dict[str, object], now: datetime = NOW) -> ToolOutcome:
@@ -42,8 +49,8 @@ async def error(**arguments: object) -> str:
     "turn",
     [
         OWNER,
-        TurnInput("ask", "x", 2, "disk-check", user=DIOGO),
-        TurnInput("reminder", "x", 3, user=DIOGO),
+        AskTurn("x", 2, "disk-check", user=DIOGO),
+        ReminderTurn("x", 3, user=DIOGO),
     ],
 )
 async def test_offered_on_every_turn(turn: TurnInput) -> None:

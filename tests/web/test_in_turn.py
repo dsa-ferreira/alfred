@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Conversation, Entry
 from alfred.history import History
-from alfred.tools.base import TurnInput
+from alfred.tools.base import AskTurn
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
@@ -46,7 +46,7 @@ async def test_web_tools_offered_in_ask_turns(
     item = await add_queue_item(sessions, "ask", "anything new?", "backup")
     model = FakeModel([text(_NO_REPLY)])
     await agent(sessions, model, web=web_tools(web_http)).run(
-        TurnInput("ask", "anything new?", item, "backup", user=DIOGO)
+        AskTurn("anything new?", item, "backup", user=DIOGO)
     )
     assert {_WEB_SEARCH, _WEB_FETCH} <= model.tool_names()
     assert END_CONVERSATION not in model.tool_names()
@@ -119,7 +119,7 @@ async def test_url_in_the_ask_prompt(
     item = await add_queue_item(sessions, "ask", prompt, "updates")
     model = FakeModel([fetch_call("https://example.com/release"), text(_NO_REPLY)])
     await agent(sessions, model, web=web_tools(web_http)).run(
-        TurnInput("ask", prompt, item, "updates", user=DIOGO)
+        AskTurn(prompt, item, "updates", user=DIOGO)
     )
     assert "Version 2 is out." in last_tool_result(model)
 

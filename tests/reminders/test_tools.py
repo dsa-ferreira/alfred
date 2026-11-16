@@ -16,13 +16,13 @@ from alfred.reminders.tools import (
     NAMES,
     ReminderTools,
 )
-from alfred.tools.base import AttemptContext, TurnInput
+from alfred.tools.base import AskTurn, AttemptContext, ChatTurn, ReminderTurn
 from tests.helpers import ANA, DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
 USERS = Users((DIOGO, ANA))
-AS_DIOGO = AttemptContext(TurnInput("chat", "x", 1, user=DIOGO))
-AS_ANA = AttemptContext(TurnInput("chat", "x", 2, user=ANA))
+AS_DIOGO = AttemptContext(ChatTurn("x", 1, user=DIOGO))
+AS_ANA = AttemptContext(ChatTurn("x", 2, user=ANA))
 
 
 class Clock:
@@ -182,9 +182,9 @@ def _names(toolset: object) -> set[str]:
 
 
 async def test_offered_by_turn_kind(tools: ReminderTools) -> None:
-    assert await tools.open(TurnInput("chat", "hi", 1, user=DIOGO)) is tools
-    assert await tools.open(TurnInput("ask", "93%", 2, "disk-check", user=DIOGO)) is None
-    reminder_turn = await tools.open(TurnInput("reminder", "brief me", 3, user=DIOGO))
+    assert await tools.open(ChatTurn("hi", 1, user=DIOGO)) is tools
+    assert await tools.open(AskTurn("93%", 2, "disk-check", user=DIOGO)) is None
+    reminder_turn = await tools.open(ReminderTurn("brief me", 3, user=DIOGO))
     assert reminder_turn is not None and _names(reminder_turn) == {_REMINDERS_LIST}
     assert reminder_turn.handles(_REMINDERS_LIST)
     assert not reminder_turn.handles(_REMIND_SET) and not reminder_turn.handles(_REMINDER_CANCEL)
@@ -195,7 +195,7 @@ async def test_offered_by_turn_kind(tools: ReminderTools) -> None:
 async def test_reminder_turn_lists_the_recipients_reminders(tools: ReminderTools) -> None:
     await tools.call(_REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
     await tools.call(_REMIND_SET, {"text": "gym", "at": "19:00"}, AS_DIOGO)
-    turn = TurnInput("reminder", "brief me", 3, user=ANA)
+    turn = ReminderTurn("brief me", 3, user=ANA)
     reminder_turn = await tools.open(turn)
     assert reminder_turn is not None
     outcome = await reminder_turn.call(_REMINDERS_LIST, {}, AttemptContext(turn))
@@ -207,7 +207,7 @@ async def test_reminder_turn_lists_the_recipients_reminders(tools: ReminderTools
 async def test_reminder_turn_respects_the_allow_list(tools: ReminderTools) -> None:
     from alfred.tools.base import AllowList, Gated
 
-    reminder_turn = await tools.open(TurnInput("reminder", "brief me", 3, user=DIOGO))
+    reminder_turn = await tools.open(ReminderTurn("brief me", 3, user=DIOGO))
     assert reminder_turn is not None
     gated = Gated(reminder_turn, AllowList.of("alfred_remind_set", "alfred_web_*"))
     assert gated.definitions == [] and not gated.handles(_REMINDERS_LIST)

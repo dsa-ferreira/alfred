@@ -23,7 +23,15 @@ from alfred.brains import Brains
 from alfred.config import AttachmentsConfig, BrainEntry, User
 from alfred.history import History
 from alfred.memory.search import ConversationSearch
-from alfred.tools.base import AllowList, AttemptContext, ToolOutcome, TurnInput
+from alfred.tools.base import (
+    AllowList,
+    AskTurn,
+    AttemptContext,
+    ChatTurn,
+    ReminderTurn,
+    ToolOutcome,
+    TurnInput,
+)
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.fakes import NoFacts
@@ -63,7 +71,7 @@ def tools(
 async def call(
     toolset: AttachmentTools, name: str, *, user: User = DIOGO, **arguments: object
 ) -> ToolOutcome:
-    attempt = AttemptContext(TurnInput("chat", "x", 1, user=user))
+    attempt = AttemptContext(ChatTurn("x", 1, user=user))
     return await toolset.call(name, json.dumps(arguments), attempt)
 
 
@@ -83,7 +91,7 @@ def size(outcome: ToolOutcome) -> tuple[int, int]:
 
 
 async def test_owner_turn_on_a_vision_brain(sessions: async_sessionmaker[AsyncSession]) -> None:
-    opened = await tools(sessions, FakeStore()).open(TurnInput("chat", "hi", 1, user=DIOGO))
+    opened = await tools(sessions, FakeStore()).open(ChatTurn("hi", 1, user=DIOGO))
     assert opened is not None
     assert [d["function"]["name"] for d in opened.definitions] == [VIEW_ATTACHMENT, READ_DOCUMENT]
     (note,) = opened.prompt_notes
@@ -94,7 +102,7 @@ async def test_owner_turn_on_a_vision_brain(sessions: async_sessionmaker[AsyncSe
 
 async def test_text_only_brain(sessions: async_sessionmaker[AsyncSession]) -> None:
     opened = await tools(sessions, FakeStore(), brains(vision=False)).open(
-        TurnInput("chat", "hi", 1, user=DIOGO)
+        ChatTurn("hi", 1, user=DIOGO)
     )
     assert opened is not None
     assert [d["function"]["name"] for d in opened.definitions] == [READ_DOCUMENT]
@@ -107,8 +115,8 @@ async def test_not_offered_on_ask_and_reminder_turns(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     toolset = tools(sessions, FakeStore())
-    assert await toolset.open(TurnInput("ask", "x", 1, "disk-check", user=DIOGO)) is None
-    assert await toolset.open(TurnInput("reminder", "x", 1, user=DIOGO)) is None
+    assert await toolset.open(AskTurn("x", 1, "disk-check", user=DIOGO)) is None
+    assert await toolset.open(ReminderTurn("x", 1, user=DIOGO)) is None
 
 
 # --- view -------------------------------------------------------------------------
@@ -320,7 +328,7 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
         attachments=None,
         facts=NoFacts(),
     )
-    await agent.run(TurnInput("chat", "read it", item, user=DIOGO))
+    await agent.run(ChatTurn("read it", item, user=DIOGO))
     result = model.requests[1][0][-1]["content"]
     assert len(result) > 6000
     assert all(p in result for p in pages)
@@ -350,7 +358,7 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
         attachments=None,
         facts=NoFacts(),
     )
-    await agent.run(TurnInput("chat", "what's on it?", item, user=DIOGO))
+    await agent.run(ChatTurn("what's on it?", item, user=DIOGO))
     assert model.models[:2] == ["bonsai-2:27b", GEMMA]
     assert model.requests[2][0][-1]["content"] == (
         'Error: the current brain "gemma" can\'t see images.'
@@ -393,7 +401,7 @@ async def test_attachments_belong_to_the_sender(
 
 
 def chat(allow: AllowList) -> TurnInput:
-    return TurnInput("chat", "hi", 1, user=dataclasses.replace(ANA, tools=allow))
+    return ChatTurn("hi", 1, user=dataclasses.replace(ANA, tools=allow))
 
 
 async def test_only_allowed_tools_are_described(

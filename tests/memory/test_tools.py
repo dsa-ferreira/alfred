@@ -5,10 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS, MemoryTools
-from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
+from alfred.tools.base import (
+    AskTurn,
+    AttemptContext,
+    ChatTurn,
+    ReminderTurn,
+    ToolOutcome,
+    TurnInput,
+)
 from tests.helpers import DIOGO
 
-OWNER = TurnInput("chat", "remember the chicken?", 1, user=DIOGO)
+OWNER = ChatTurn("remember the chicken?", 1, user=DIOGO)
 
 
 class FakeSearch:
@@ -29,8 +36,8 @@ class FakeSearch:
 async def test_offered_on_owner_turns_only() -> None:
     tools = MemoryTools(FakeSearch())
     assert await tools.open(OWNER) is tools
-    assert await tools.open(TurnInput("ask", "x", 2, "svc", user=DIOGO)) is None
-    assert await tools.open(TurnInput("reminder", "x", 3, user=DIOGO)) is None
+    assert await tools.open(AskTurn("x", 2, "svc", user=DIOGO)) is None
+    assert await tools.open(ReminderTurn("x", 3, user=DIOGO)) is None
     assert [d["function"]["name"] for d in tools.definitions] == [
         SEARCH_CONVERSATIONS,
         RECALL_CONVERSATION,
@@ -69,7 +76,7 @@ from alfred.memory.facts import _FORGET, _REMEMBER, FactStore, FactTools  # noqa
 from alfred.tools.base import AllowList, Gated  # noqa: E402
 from tests.helpers import ANA, FakeEmbedder, make_config  # noqa: E402
 
-ANA_CHAT = TurnInput("chat", "hi", 2, user=ANA)
+ANA_CHAT = ChatTurn("hi", 2, user=ANA)
 
 
 def fact_tools(
@@ -173,8 +180,8 @@ async def test_fact_tools_offered_on_chat_turns_only(
     on = fact_tools(sessions, facts_in_context=True)
     off = fact_tools(sessions)
     for tools in (on, off):
-        assert await tools.open(TurnInput("ask", "x", 2, "svc", user=DIOGO)) is None
-        assert await tools.open(TurnInput("reminder", "x", 3, user=DIOGO)) is None
+        assert await tools.open(AskTurn("x", 2, "svc", user=DIOGO)) is None
+        assert await tools.open(ReminderTurn("x", 3, user=DIOGO)) is None
     opened_on = await on.open(OWNER)
     opened_off = await off.open(OWNER)
     assert opened_on is not None and opened_off is not None
@@ -190,7 +197,7 @@ async def test_ids_note_names_only_allowed_tools(
 ) -> None:
     tools = fact_tools(sessions, facts_in_context=True)
     user = DIOGO.__class__("x", 1, "sir", tools=AllowList.of(_REMEMBER))
-    opened = await tools.open(TurnInput("chat", "hi", 1, user=user))
+    opened = await tools.open(ChatTurn("hi", 1, user=user))
     assert opened is not None
     gated = Gated(opened, user.tools)
     assert [d["function"]["name"] for d in gated.definitions] == [_REMEMBER]

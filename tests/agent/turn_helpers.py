@@ -27,7 +27,7 @@ from alfred.memory.search import ConversationSearch
 from alfred.model import ModelFailed, ModelReply
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.base import Resume, TurnInput
+from alfred.tools.base import ChatTurn, ReminderTurn, Resume, TurnInput
 from alfred.tools.brains import SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
@@ -124,7 +124,7 @@ async def owner_turn(
     """``user``'s chat message, queued and recorded as the worker does."""
     item = await add_queue_item(sessions, "user", message, user=user.name)
     await History(sessions).append(user.name, "user", message, queue_item_id=item)
-    return TurnInput("chat", message, item, user=user)
+    return ChatTurn(message, item, user=user)
 
 
 async def tool_rows(sessions: async_sessionmaker[AsyncSession]) -> list[TurnToolCall]:
@@ -210,8 +210,7 @@ async def reminder_turn(
     quiet_ok: bool = False,
 ) -> TurnInput:
     item = await add_queue_item(sessions, "reminder", text_, user=user.name)
-    return TurnInput(
-        "reminder",
+    return ReminderTurn(
         text_,
         item,
         reminder_id=reminder_id,

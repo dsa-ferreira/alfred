@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.memory.facts import _FORGET, _REMEMBER, FactStore, FactTools
-from alfred.tools.base import TurnInput
+from alfred.tools.base import AskTurn, TurnInput
 from tests.agent.turn_helpers import agent, owner_turn, reminder_turn
 from tests.helpers import (
     ANA,
@@ -34,7 +34,7 @@ def system(model: FakeModel, request: int = 0) -> str:
 
 async def ask_turn(sessions: async_sessionmaker[AsyncSession]) -> TurnInput:
     item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
-    return TurnInput("ask", "anything?", item, "disk-check", user=DIOGO)
+    return AskTurn("anything?", item, "disk-check", user=DIOGO)
 
 
 async def run(

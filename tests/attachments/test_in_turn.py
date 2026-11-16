@@ -12,7 +12,7 @@ from alfred.brains import Brains
 from alfred.config import BrainEntry
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.base import TurnInput
+from alfred.tools.base import ChatTurn
 from alfred.tools.brains import SET_MODEL
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
@@ -66,7 +66,7 @@ async def test_tool_order_with_attachments(
         store=FakeStore(),
         attachments=ATTACHMENTS,
     )
-    await a.run(TurnInput("chat", "hi", item, user=DIOGO))
+    await a.run(ChatTurn("hi", item, user=DIOGO))
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         _WEB_SEARCH,
         _WEB_FETCH,
@@ -91,7 +91,7 @@ async def test_no_attachment_tools_without_the_section(
     model = FakeModel([text("ok")])
     item, _ = await owner_with_files(sessions, "hi", [])
     await agent(sessions, model, brains=vision_brains(), store=FakeStore()).run(
-        TurnInput("chat", "hi", item, user=DIOGO)
+        ChatTurn("hi", item, user=DIOGO)
     )
     names = {t["function"]["name"] for t in model.requests[0][1]}
     assert not names & {VIEW_ATTACHMENT, READ_DOCUMENT}
@@ -109,7 +109,7 @@ async def test_owner_turn_views_an_earlier_photo(
     item, _ = await owner_with_files(sessions, "and the date on it?", [])
     model = FakeModel([calls((VIEW_ATTACHMENT, json.dumps({"id": 1}))), text("9 November, sir.")])
     a = agent(sessions, model, brains=vision_brains(), store=store, attachments=ATTACHMENTS)
-    result = await a.run(TurnInput("chat", "and the date on it?", item, user=DIOGO))
+    result = await a.run(ChatTurn("and the date on it?", item, user=DIOGO))
 
     assert result.reply == "9 November, sir."
     system = model.requests[0][0][0]["content"]
@@ -131,7 +131,7 @@ async def test_text_only_brain_explains_no_view_tool(
     a = agent(
         sessions, model, brains=vision_brains(False), store=FakeStore(), attachments=ATTACHMENTS
     )
-    await a.run(TurnInput("chat", "hi", item, user=DIOGO))
+    await a.run(ChatTurn("hi", item, user=DIOGO))
     system = model.requests[0][0][0]["content"]
     assert _TEXT_ONLY_NOTE in system and VIEW_ATTACHMENT not in system
     names = {t["function"]["name"] for t in model.requests[0][1]}
