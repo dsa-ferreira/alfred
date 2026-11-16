@@ -1,4 +1,4 @@
-"""Facts about each user (change add-user-facts).
+"""Facts about each user.
 
 A fact is ``told`` (the user asked alfred to remember it) or ``learned``
 (extracted from an archived conversation, ``alfred.memory.extract``). Every
@@ -6,19 +6,19 @@ read and write names the user, and only active facts (``removed_at IS NULL``)
 are ever read by id, so another user's fact and a removed one both read as
 not found.
 
-Writes take one advisory lock per user (design D7), inside their
-transaction: extraction apply, dedupe, ``alfred_remember``, ``alfred_forget``
-and ``/memory forget``. Removal is an UPDATE of an active row, never a
-DELETE, so two removals of the same fact mark it once. Embedding and model
+Writes take one advisory lock per user, inside their transaction:
+extraction apply, dedupe, ``alfred_remember``, ``alfred_forget`` and
+``/memory forget``. Removal is an UPDATE of an active row, never a DELETE,
+so two removals of the same fact mark it once. Embedding and model
 requests happen outside the lock.
 
 Each fact is embedded (:meth:`FactStore.embed`, by ``alfred_remember``
 inline and by the sweeper's ``FactEmbeddingJob``) and then checked for
-duplicates (change fix-fact-removals): embedding distance only picks the
-user's closest other facts (:meth:`FactStore.duplicate_candidates`), and the
-model decides which say the same thing (``alfred.memory.duplicates``).
-Measured distances can't tell a duplicate from a related or contradicting
-fact, so distance alone never removes one.
+duplicates: embedding distance only picks the user's closest other facts
+(:meth:`FactStore.duplicate_candidates`), and the model decides which say
+the same thing (``alfred.memory.duplicates``). Measured distances can't
+tell a duplicate from a related or contradicting fact, so distance alone
+never removes one.
 """
 
 from __future__ import annotations
@@ -56,11 +56,9 @@ _Origin = Literal["told", "learned"]
 _ACTIVE = Fact.removed_at.is_(None)
 
 
-# The most facts one duplicate check compares a new fact with (design D2).
+# The most facts one duplicate check compares a new fact with.
 _DUPLICATE_CANDIDATES = 5
 
-
-# --- Tools (design D8) ------------------------------------------------------------------
 
 _REMEMBER = "alfred_remember"
 _FORGET = "alfred_forget"
@@ -238,8 +236,6 @@ class FactStore:
             session, user_name, ids, "replaced", self._now(), replaced_by=new_id, origin="learned"
         )
         return [f.id for f in removed]
-
-    # --- Embedding (design D6 of add-user-facts) ----------------------------------------
 
     async def embed(self, fact_id: int) -> bool:
         """Embed an active fact; whether its vector was stored. Never raises.
@@ -441,8 +437,6 @@ class FactStore:
         self.changed.set()  # its duplicate check may be due now
         return stored is not None
 
-    # --- The duplicate check's state (change fix-fact-removals, design D1, D2) ----------
-
     def _duplicate_pending(self) -> tuple[object, ...]:
         """Active facts not yet checked, embedded with the configured model."""
         return (
@@ -486,7 +480,7 @@ class FactStore:
 
 
 class FactEmbeddingJob:
-    """The sweeper job that embeds facts (design D6; checking them is ``FactDuplicateJob``).
+    """The sweeper job that embeds facts (checking them is ``FactDuplicateJob``).
 
     Facts with no embedding, or one from another model, oldest first, each
     after its own ``embedding_next_at``. It needs no chat model, so it never

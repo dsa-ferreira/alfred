@@ -58,9 +58,6 @@ _NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 _TOKEN_ENV = re.compile(r"ALFRED_[A-Z0-9_]+")
 
 
-# --- field types ---------------------------------------------------------------
-
-
 def _check_name(value: str) -> str:
     if not _NAME.fullmatch(value):
         raise ValueError("must be lowercase letters, digits and hyphens")
@@ -123,7 +120,7 @@ class _Section(BaseModel):
 
 
 class BrainEntry(_Section):
-    """An ``[ai.models]`` entry written as a table (change add-attachments, design D9)."""
+    """An ``[ai.models]`` entry written as a table."""
 
     model: Annotated[str, Field(min_length=1)]
     vision: bool = False
@@ -185,7 +182,7 @@ class QueueConfig(_Section):
 
 
 class MemoryConfig(_Section):
-    """Summaries, search and recall of archived conversations (memory design D11)."""
+    """Summaries, search and recall of archived conversations."""
 
     # None: the ``[ai]`` model (see :attr:`Config.summary_model`).
     summary_model: Annotated[str, Field(min_length=1)] | None = None
@@ -197,11 +194,11 @@ class MemoryConfig(_Section):
     recall_max_chars: _PositiveInt = 32000
     summary_input_max_chars: _PositiveInt = 60000
     search_results: _PositiveInt = 5
-    # Seconds the queue must have been quiet before a summary request starts
-    # (change close-idle-conversations, design D5). 0: only an empty queue.
+    # Seconds the queue must have been quiet before a summary request
+    # starts. 0: only an empty queue.
     summary_quiet_s: _NonNegativeFloat = 60
-    # User facts (change add-user-facts, design D12). Off: facts are learned,
-    # remembered and listed by /memory, but sent in no prompt.
+    # User facts. Off: facts are learned, remembered and listed by
+    # /memory, but sent in no prompt.
     facts_in_context: bool = False
     # Most characters of facts in one system prompt.
     facts_context_max_chars: _PositiveInt = 3000
@@ -210,12 +207,12 @@ class MemoryConfig(_Section):
     # Failed extractions of one conversation before giving up. 0: never.
     facts_extraction_max_attempts: _NonNegativeInt = 0
     # Cosine distance within which a user's facts are checked for duplicates by
-    # the model (change fix-fact-removals, design D7). Distance alone decides nothing.
+    # the model. Distance alone decides nothing.
     facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
 class AttachmentsConfig(_Section):
-    """Images and PDFs from users (change add-attachments, design D1 and D10).
+    """Images and PDFs from users.
 
     The section's presence turns attachments on; the object store key comes
     from ``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``.
@@ -243,9 +240,6 @@ class AttachmentsConfig(_Section):
         return value
 
 
-# --- resolved configuration ----------------------------------------------------
-
-
 @dataclass(frozen=True)
 class Service:
     name: str
@@ -263,7 +257,7 @@ class McpServer:
 
 @dataclass(frozen=True)
 class User:
-    """Someone alfred serves (change add-multiple-users, design D1)."""
+    """Someone alfred serves."""
 
     name: str
     telegram_user_id: int
@@ -312,12 +306,12 @@ class S3Key:
 class _HistoryConfig(_Section):
     max_entries: _PositiveInt = 30
     # Hours after a user's last own message before their conversation is
-    # closed (change close-idle-conversations, design D7). None: never.
+    # closed. None: never.
     idle_close_after_h: _PositiveFloat | None = None
 
 
 class _WebConfig(_Section):
-    """Web search through SearXNG and page fetch (change add-web-search, design D9)."""
+    """Web search through SearXNG and page fetch."""
 
     searxng_url: _HttpUrlStr = "http://oracle.lan"
     search_results: _PositiveInt = 5
@@ -333,7 +327,7 @@ def _check_clock(value: str) -> str:
 
 
 class _RemindersConfig(_Section):
-    """Timed reminders (change add-reminders, design D9)."""
+    """Timed reminders."""
 
     # The time of a reminder on a date with no clock time ("on Friday").
     default_time: Annotated[str, AfterValidator(_check_clock)] = "09:00"
@@ -343,7 +337,7 @@ class _RemindersConfig(_Section):
 
 
 class _InputRequestsConfig(_Section):
-    """Turns waiting for their user's answer (change add-user-input-requests, design D9)."""
+    """Turns waiting for their user's answer."""
 
     # Counted from when the question was sent.
     expire_after_min: _PositiveFloat = 60
@@ -389,7 +383,7 @@ class Config:
         return self.memory.summary_model or self.ai.model
 
     def servers_for(self, user: User) -> tuple[McpServer, ...]:
-        """The MCP servers with the token to use on ``user``'s turns (design D8)."""
+        """The MCP servers with the token to use on ``user``'s turns."""
         return tuple(
             dataclasses.replace(s, token=user.mcp_tokens[s.name])
             if s.name in user.mcp_tokens
@@ -433,7 +427,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     service_tokens = _resolve_tokens(source, "services", services_raw, problems)
     server_tokens = _resolve_tokens(source, "mcp_servers", servers_raw, problems)
     problems += _duplicate_tokens(service_tokens)
-    # Users may share a token with each other or with the server (design D8).
+    # Users may share a token with each other or with the server.
     user_tokens = _resolve_user_tokens(source, users_raw, problems)
     s3_key: S3Key | None = None
     if isinstance(data.get("attachments"), Mapping):
@@ -516,9 +510,6 @@ def load_database_url(
     return result
 
 
-# --- file sections -------------------------------------------------------------
-
-
 class _TelegramConfig(_Section):
     """No settings of its own: who may chat is set by ``[[users]]``.
 
@@ -540,7 +531,7 @@ class _McpServerEntry(_Section):
 
 
 class _UserEntry(_Section):
-    """A ``[[users]]`` entry (change add-multiple-users, design D1)."""
+    """A ``[[users]]`` entry."""
 
     name: _Name
     telegram_user_id: _PositiveInt
@@ -550,7 +541,7 @@ class _UserEntry(_Section):
     # Model-facing tool names, ``prefix*`` patterns, or ``*``.
     tools: list[Annotated[str, Field(min_length=1)]] = []
     # Tools whose calls on this user's turns wait for their confirmation, in
-    # the same syntax (change add-user-input-requests, design D9).
+    # the same syntax.
     confirm: list[Annotated[str, Field(min_length=1)]] = []
     # MCP server name -> the variable holding this user's token for it.
     mcp_tokens: dict[_Name, _TokenEnv] = {}
@@ -574,9 +565,6 @@ class _FileConfig(_Section):
     server: _ServerConfig = _ServerConfig()
     services: list[_ServiceEntry] = []
     mcp_servers: list[_McpServerEntry] = []
-
-
-# --- loading -------------------------------------------------------------------
 
 
 def _config_path(env: Mapping[str, str] | None = None) -> Path:
@@ -673,7 +661,7 @@ def _check_users(users: list[dict[str, Any]], server_names: set[str]) -> list[st
                         f"{label}: mcp_tokens names {server!r}, "
                         "which is not a configured MCP server"
                     )
-        # The confirm list has the allow-list's syntax and rules (design D9).
+        # The confirm list has the allow-list's syntax and rules.
         for key in ("tools", "confirm"):
             entries = user.get(key)
             for entry in entries if isinstance(entries, list) else ():
@@ -699,7 +687,7 @@ def _tool_entry_problem(entry: object, server_names: set[str]) -> str | None:
 
 
 def _warn_hidden_confirms(users: list[_UserEntry]) -> None:
-    """Log confirm entries the user's allow-list can never match (design D9).
+    """Log confirm entries the user's allow-list can never match.
 
     Not an error: the entry is harmless, only useless until the allow-list
     changes.

@@ -1,4 +1,4 @@
-"""Question messages: their title, Telegram HTML and buttons, and their outcome (design D7).
+"""Question messages: their title, Telegram HTML and buttons, and their outcome.
 
 Written by alfred, never by the model. The title says what asked: the user's
 own request, the service of an ``/ask``, or the reminder by number and text.

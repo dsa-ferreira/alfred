@@ -1,4 +1,4 @@
-"""A background model request that gives way to the queue (change fix-fact-removals, D2).
+"""A background model request that gives way to the queue.
 
 Used by fact extraction and the duplicate check. The request is streamed,
 because the model server only stops generating for a dropped client on a

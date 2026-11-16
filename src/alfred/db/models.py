@@ -1,46 +1,41 @@
-"""SQLAlchemy models (design D7).
+"""SQLAlchemy models.
 
 Rows that belong to a user name them in ``user_name`` (``created_by`` for
-reminders): a configured ``[[users]]`` name (change add-multiple-users,
-design D1). There is no users table; entries belong to a user through their
-conversation.
+reminders): a configured ``[[users]]`` name. There is no users table;
+entries belong to a user through their conversation.
 
 - ``conversations``: at most one per user has ``ended_at IS NULL`` (their
-  current one).
-  ``end_reason`` says how an archived one ended (``user``, ``idle``, or
-  ``unattended`` for one with no user message closed when something new
-  arrived), and ``marker_sent_at`` when its idle-close marker was handed out
-  (change close-idle-conversations, design D2).
-  Archived ones get a title, a summary and an embedding of both (memory
-  design D1); ``search_tsv`` is generated from title and summary.
+  current one). ``end_reason`` says how an archived one ended (``user``,
+  ``idle``, or ``unattended`` for one with no user message closed when
+  something new arrived), and ``marker_sent_at`` when its idle-close
+  marker was handed out. Archived ones get a title, a summary and an
+  embedding of both; ``search_tsv`` is generated from title and summary.
 - ``entries``: what was said in a conversation, in order. Entries written by
   a turn carry its ``queue_item_id``, so a retried turn records them once.
-  A ``recall`` entry brings an archived conversation into the current one
-  (memory design D8).
+  A ``recall`` entry brings an archived conversation into the current one.
 - ``queue_items``: AI-bound work (users' messages, ``/ask`` prompts and due
   reminders), each for one user.
-- ``reminders``: timed reminders a user set (change add-reminders, design
-  D3), for the users in ``reminder_recipients``. ``fired`` means handed to
-  the queue, one item per recipient. A repeating one (``repeat`` set; change
-  add-recurring-reminders, design D1) stays ``pending`` and its ``due_at``
-  moves to the next occurrence. A reminder queue item and its
-  ``reminder``/``reminder_reply`` entries point at the row through
-  ``reminder_id`` and carry the delivered occurrence's ``reminder_due_at``.
+- ``reminders``: timed reminders a user set, for the users in
+  ``reminder_recipients``. ``fired`` means handed to the queue, one item
+  per recipient. A repeating one (``repeat`` set) stays ``pending`` and
+  its ``due_at`` moves to the next occurrence. A reminder queue item and
+  its ``reminder``/``reminder_reply`` entries point at the row through
+  ``reminder_id`` and carry the delivered occurrence's
+  ``reminder_due_at``.
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
 - ``input_requests``: a parked turn's question to its user and the turn's
-  saved progress (change add-user-input-requests, design D4). Its queue item
-  is ``waiting`` while the request is ``open``; at most one request per item
-  is live (``open``, ``answered`` or ``running``).
-- ``attachments``: users' photos, image files and PDFs (change
-  add-attachments, design D1). The bytes are in the object store under
-  ``object_key``; the row is written with its queue item and linked to the
-  user entry (``entry_id``) when the turn records it. ``attachment_pages``
-  holds each PDF page's text.
-- ``facts``: short facts about a user (change add-user-facts, design D1),
-  ``told`` by the user or ``learned`` from an archived conversation. Removal
-  is soft: ``removed_at``, ``removed_reason`` and, for replaced and duplicate
-  facts, ``replaced_by``. A conversation's ``facts_outcome`` is ``NULL``
-  while its fact extraction is pending.
+  saved progress. Its queue item is ``waiting`` while the request is
+  ``open``; at most one request per item is live (``open``, ``answered`` or
+  ``running``).
+- ``attachments``: users' photos, image files and PDFs. The bytes are in
+  the object store under ``object_key``; the row is written with its queue
+  item and linked to the user entry (``entry_id``) when the turn records
+  it. ``attachment_pages`` holds each PDF page's text.
+- ``facts``: short facts about a user, ``told`` by the user or ``learned``
+  from an archived conversation. Removal is soft: ``removed_at``,
+  ``removed_reason`` and, for replaced and duplicate facts,
+  ``replaced_by``. A conversation's ``facts_outcome`` is ``NULL`` while its
+  fact extraction is pending.
 """
 
 from __future__ import annotations
@@ -78,7 +73,7 @@ _NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
-# ``user``: written by the conversation's user (change add-multiple-users, D1).
+# ``user``: written by the conversation's user.
 _ENTRY_KINDS = (
     "user",
     "assistant",
@@ -94,8 +89,7 @@ _SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(sum
 _ENTRY_TSV = "to_tsvector('english', text)"
 _QUEUE_KINDS = ("user", "ask", "reminder")
 _REMINDER_STATUSES = ("pending", "fired", "cancelled")
-# ``waiting``: parked for its user's answer; ``cancelled``: ended without one
-# (change add-user-input-requests, design D4).
+# ``waiting``: parked for its user's answer; ``cancelled``: ended without one.
 _QUEUE_STATUSES = ("pending", "done", "failed", "waiting", "cancelled")
 _INPUT_REQUEST_STATUSES = ("open", "answered", "running", "done", "cancelled", "expired")
 # Live requests: at most one per queue item.
@@ -156,7 +150,7 @@ class Conversation(Base):
     end_reason: Mapped[str | None] = mapped_column(Text)
     # When the idle-close marker was handed to the user's next message.
     marker_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Fact extraction (change add-user-facts): null while pending.
+    # Fact extraction: null while pending.
     facts_outcome: Mapped[str | None] = mapped_column(Text)
     facts_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     facts_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -265,7 +259,7 @@ class Reminder(Base):
 
 
 class ReminderRecipient(Base):
-    """Who a reminder is for (change add-multiple-users, design D7)."""
+    """Who a reminder is for."""
 
     __tablename__ = "reminder_recipients"
 
@@ -295,7 +289,7 @@ class InputRequest(Base):
     __tablename__ = "input_requests"
     __table_args__ = (
         CheckConstraint(_in("status", _INPUT_REQUEST_STATUSES), name="status"),
-        # One live request per turn (design D4).
+        # One live request per turn.
         Index(
             "uq_input_requests_live_per_item",
             "queue_item_id",
@@ -387,7 +381,7 @@ class Fact(Base):
             "id",
             postgresql_where=text("removed_at IS NULL"),
         ),
-        # Active facts whose duplicate check is pending (change fix-fact-removals).
+        # Active facts whose duplicate check is pending.
         Index(
             "ix_facts_duplicate_pending",
             "id",
@@ -411,7 +405,7 @@ class Fact(Base):
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     removed_reason: Mapped[str | None] = mapped_column(Text)
     replaced_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("facts.id"))
-    # The model's duplicate check (change fix-fact-removals): null while pending.
+    # The model's duplicate check: null while pending.
     duplicate_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duplicate_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     duplicate_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,16 +1,15 @@
 """``alfred_remind_set``, ``alfred_reminders_list`` and ``alfred_reminder_cancel``.
 
-All three are offered in chat turns (change add-reminders, design D1), and
-only ``alfred_reminders_list`` in reminder turns, so a briefing can include
-today's reminders but a reminder can't set or cancel reminders (change
-add-recurring-reminders, design D4); always subject to the user's
-allow-list. alfred resolves the time itself (``when``), so the result
-tells the model, and through it the user, the exact time and how far away it
-is. Every failure becomes an error result for the model.
+All three are offered in chat turns, and only ``alfred_reminders_list`` in
+reminder turns, so a briefing can include today's reminders but a reminder
+can't set or cancel reminders; always subject to the user's allow-list.
+alfred resolves the time itself (``when``), so the result tells the model,
+and through it the user, the exact time and how far away it is. Every
+failure becomes an error result for the model.
 
 A reminder is set by the turn's user for themselves, or ``for`` other
-configured users (change add-multiple-users, design D7). Listing and
-cancelling see only the reminders the turn's user set or is reminded of.
+configured users. Listing and cancelling see only the reminders the
+turn's user set or is reminded of.
 
 A reminder may repeat (``repeat``, ``days``, ``at`` as ``HH:MM``) and may be
 quiet (``quiet_ok``): its turn may then stay silent when there is nothing to
@@ -337,7 +336,7 @@ def _remind_set_tool(users: list[str]) -> dict[str, Any]:
 
 
 class _ListOnly(LocalToolset):
-    """``alfred_reminders_list`` alone, for reminder turns (design D4)."""
+    """``alfred_reminders_list`` alone, for reminder turns."""
 
     def __init__(self, tools: ReminderTools) -> None:
         self._tools = tools

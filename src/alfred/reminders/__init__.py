@@ -1,1 +1,1 @@
-"""Timed reminders (change add-reminders)."""
+"""Timed reminders."""

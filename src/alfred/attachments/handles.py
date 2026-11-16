@@ -1,4 +1,4 @@
-"""Attachment handles: how the model and transcripts refer to a file (design D4).
+"""Attachment handles: how the model and transcripts refer to a file.
 
 ``[attachment #7: image "receipt.jpg"]`` or
 ``[attachment #9: PDF "invoice.pdf", 12 pages, text]``. A PDF is ``text``

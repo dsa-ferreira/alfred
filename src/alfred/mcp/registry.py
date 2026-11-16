@@ -8,11 +8,11 @@ connection also yields the instructions each server sends, which the turn
 gives the model.
 
 A server may answer a call by asking the user something
-(``InputRequiredResult``, change add-user-input-requests, design D6).
-``classify`` turns a question that fits buttons into a need for the user's
-answer, carrying the server's opaque ``request_state``; anything else is an
-error result, and nothing is sent back. ``resume_tool`` repeats the call on a
-fresh connection with the answer.
+(``InputRequiredResult``). ``classify`` turns a question that fits buttons
+into a need for the user's answer, carrying the server's opaque
+``request_state``; anything else is an error result, and nothing is sent
+back. ``resume_tool`` repeats the call on a fresh connection with the
+answer.
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ async def resume_tool(
     call_timeout_s: float,
     max_chars: int,
 ) -> ToolOutcome:
-    """Repeat a call the server asked about, with the user's answer (design D6).
+    """Repeat a call the server asked about, with the user's answer.
 
     ``state`` is what :func:`classify` stored and ``answer`` the chosen
     option's ``ElicitResult``. A server that no longer accepts the saved

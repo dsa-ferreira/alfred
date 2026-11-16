@@ -1,4 +1,4 @@
-"""The memory sweeper (memory design D4).
+"""The memory sweeper.
 
 It is its own task, not a queue item, so a summary that keeps failing never
 holds up users' messages. It finds archived conversations that lack a
@@ -7,20 +7,18 @@ for each one's ``summary_next_at``. This also backfills conversations from
 before the upgrade, re-embeds them after a model change, and makes the
 summary of every conversation that ends.
 
-Summaries give way to the queue (change close-idle-conversations, design D5,
-D6): the model server runs one request at a time, so a summary request
-starts only when no queue item is waiting or running and none has finished
-within ``[memory] summary_quiet_s``, and an item that arrives while it runs
-cancels it. A conversation that only needs its embedding (another server)
-doesn't wait.
+Summaries give way to the queue: the model server runs one request at a
+time, so a summary request starts only when no queue item is waiting or
+running and none has finished within ``[memory] summary_quiet_s``, and an
+item that arrives while it runs cancels it. A conversation that only needs
+its embedding (another server) doesn't wait.
 
-The sweeper runs a list of jobs in priority order (change add-user-facts,
-design D2): the conversation summaries first, then whatever else was given
-(fact extraction, fact embedding). Each round it runs the first job with
-work due; a job that ``uses_model`` is only offered model work while the
-queue is quiet, and is cancelled by an arriving item. With nothing due it
-sleeps until the soonest job is due, the queue goes quiet, or a job's
-``changed`` is set.
+The sweeper runs a list of jobs in priority order: the conversation
+summaries first, then whatever else was given (fact extraction, fact
+embedding). Each round it runs the first job with work due; a job that
+``uses_model`` is only offered model work while the queue is quiet, and
+is cancelled by an arriving item. With nothing due it sleeps until the
+soonest job is due, the queue goes quiet, or a job's ``changed`` is set.
 """
 
 from __future__ import annotations
@@ -177,7 +175,7 @@ class _Job(Protocol):
 
 
 class _ConversationSummaryJob:
-    """Title, summary and embedding of archived conversations (memory design D4)."""
+    """Title, summary and embedding of archived conversations."""
 
     uses_model = True
 

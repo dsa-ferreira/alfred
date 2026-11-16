@@ -1,4 +1,4 @@
-"""Images: checked on arrival, normalised on the way to the model (design D6).
+"""Images: checked on arrival, normalised on the way to the model.
 
 On arrival the file is decoded in full, so a damaged or truncated image is
 refused before it is stored. The stored file is the original. What the model

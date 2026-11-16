@@ -1,4 +1,4 @@
-"""``alfred_web_search`` and ``alfred_web_fetch`` (change add-web-search, D2, D3, D7).
+"""``alfred_web_search`` and ``alfred_web_fetch``.
 
 Offered on every turn, subject to the user's allow-list. Opened for a
 turn, the toolset starts one :class:`WebTurn` per attempt, seeded with the

@@ -1,26 +1,26 @@
 """The aiogram bot: configured users' private chats, text and files in, replies out.
 
-Only users in ``[[users]]`` are answered, each in their private chat with the
-bot (change add-multiple-users, design D6); a private chat's ID is the user's
-ID, so replies go to ``telegram_user_id``. Anyone else, and every group
-chat, is ignored without a reply.
+Only users in ``[[users]]`` are answered, each in their private chat
+with the bot; a private chat's ID is the user's ID, so replies go to
+``telegram_user_id``. Anyone else, and every group chat, is ignored
+without a reply.
 
-alfred defines one bot command, ``/memory`` (change add-user-facts, design
-D11): it lists the user's facts or forgets some, without the model, and is
-neither queued nor recorded in the conversation. Every other text message
-from a user, including one that starts with ``/``, is queued for the AI as
-theirs exactly as written.
+alfred defines one bot command, ``/memory``: it lists the user's facts or
+forgets some, without the model, and is neither queued nor recorded in
+the conversation. Every other text message from a user, including one
+that starts with ``/``, is queued for the AI as theirs exactly as
+written.
 
-With attachments configured (change add-attachments), photos, ``image/*``
-files and PDF files go to the intake with their caption; anything else gets
-the ``unsupported`` notice. Without them, anything but text gets
-``text_only``. The parts of an album arrive as separate messages sharing a
-``media_group_id``: they are collected until no part has come for
-``album_wait_s`` and then received as one message (design D3).
+With attachments configured, photos, ``image/*`` files and PDF files go to
+the intake with their caption; anything else gets the ``unsupported``
+notice. Without them, anything but text gets ``text_only``. The parts of
+an album arrive as separate messages sharing a ``media_group_id``: they
+are collected until no part has come for ``album_wait_s`` and then
+received as one message.
 
 Button taps (callback queries) on alfred's question messages go to the tap
-handler (change add-user-input-requests, design D7); the outbox sends those
-questions with their buttons and edits them once they are over.
+handler; the outbox sends those questions with their buttons and edits
+them once they are over.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 ALLOWED_UPDATES = ["message", "callback_query"]
 
 # Telegram shows a chat action for about 5 seconds; resend a little sooner so
-# a slow request leaves no gap (design D2).
+# a slow request leaves no gap.
 _TYPING_INTERVAL_S = 4.0
 
 
@@ -258,7 +258,7 @@ class TelegramOutbox:
         """Show "typing..." in ``user``'s chat until the block exits.
 
         Failures to send the action are logged and never raised, so they
-        can't affect the turn the block wraps (design D3).
+        can't affect the turn the block wraps.
         """
         task = asyncio.create_task(self._keep_typing(user.telegram_user_id))
         try:

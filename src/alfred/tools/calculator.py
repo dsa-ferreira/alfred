@@ -1,6 +1,6 @@
-"""``alfred_calculate``: exact arithmetic and unit conversion (change add-utility-tools).
+"""``alfred_calculate``: exact arithmetic and unit conversion.
 
-The model works sums out badly, so alfred does them (design D3, D4):
+The model works sums out badly, so alfred does them:
 
 ```
 expression --ast.parse--> whitelisted walk --> int (exact) or float (12 significant digits)
@@ -100,8 +100,6 @@ _CALCULATE_TOOL: dict[str, Any] = {
 }
 
 
-# --- units (design D4) -----------------------------------------------------------
-
 # Letters, °, spaces, / * ^, and a digit only as a one-digit exponent (m^2, m**3).
 _UNIT = re.compile(r"(?:[^\W\d]|[° /*^]|(?<=\^)\d|(?<=\*\*)\d)+")
 
@@ -135,9 +133,6 @@ class CalculatorTools(LocalToolset):
 
 class _CalculationError(ValueError):
     """The calculation can't be done; the message is written for the model."""
-
-
-# --- arithmetic (design D3) ------------------------------------------------------
 
 
 def _evaluate(expression: str) -> int | float:
@@ -272,9 +267,6 @@ def _mismatch(units: pint.UnitRegistry, source: str, target: str) -> str:
     if set(what) == {"volume", "mass"}:
         message += ", such as the ingredient's density"
     return message + "."
-
-
-# --- the tool --------------------------------------------------------------------
 
 
 def _calculate(arguments: dict[str, Any]) -> str:

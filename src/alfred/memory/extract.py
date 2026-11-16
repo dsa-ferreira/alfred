@@ -1,4 +1,4 @@
-"""Facts learned from archived conversations (change add-user-facts, design D3).
+"""Facts learned from archived conversations.
 
 ``FactExtractionJob`` is a sweeper job. Every archived conversation starts
 with its extraction pending (``facts_outcome IS NULL``), so conversations
@@ -13,10 +13,10 @@ WARNING with the attempt count and is retried with backoff; with ``[memory]
 facts_extraction_max_attempts`` above 0 it is given up after that many.
 
 Every fact the model returns is stored as ``learned``. ``REPLACE <id>
-"<quote>"`` removes fact <id> only if it was shown to the model, the quote
-matches its text, and it is still one of the user's active learned facts
-(change fix-fact-removals, design D4); anything else is a plain addition,
-and the refusal is logged without either text.
+"<quote>"`` removes fact <id> only if it was shown to the model, the
+quote matches its text, and it is still one of the user's active learned
+facts; anything else is a plain addition, and the refusal is logged
+without either text.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Which URLs a turn may fetch (change add-web-search, design D3).
+"""Which URLs a turn may fetch.
 
 A URL is allowed when it appeared in a message from the turn's user in the turn's context,
 in the ``/ask`` prompt, or in a search result earlier in the same turn.

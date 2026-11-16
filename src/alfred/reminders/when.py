@@ -1,4 +1,4 @@
-"""When a reminder is due, and how times are shown (change add-reminders, design D2).
+"""When a reminder is due, and how times are shown.
 
 The model passes the time as the user said it: ``in_minutes``, or ``at`` as
 ``HH:MM``, ``YYYY-MM-DD HH:MM`` or ``YYYY-MM-DD``. alfred resolves it in
@@ -13,11 +13,10 @@ Local times are built with ``fold=0``. A time in a DST gap (it does not
 exist) is moved forward by the gap through a round trip via UTC; an
 ambiguous time (the autumn repeat) takes its first occurrence.
 
-A repeating reminder (change add-recurring-reminders, design D2) has a
-:class:`Rule`: the weekdays it falls on, as a bitmask (Monday = bit 0), and a
-local wall time. Each occurrence is worked out from the rule in the zone
-(:func:`next_occurrence`), never by adding 24 hours, so 08:00 stays 08:00
-across DST changes.
+A repeating reminder has a :class:`Rule`: the weekdays it falls on, as a
+bitmask (Monday = bit 0), and a local wall time. Each occurrence is
+worked out from the rule in the zone (:func:`next_occurrence`), never by
+adding 24 hours, so 08:00 stays 08:00 across DST changes.
 """
 
 from __future__ import annotations
@@ -41,8 +40,6 @@ _DATE_CLOCK = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})")
 
 _DATE_FORMS = '"YYYY-MM-DD" or "today"'
 
-
-# --- repeat rules (change add-recurring-reminders, design D2) ------------------
 
 REPEATS = ("daily", "weekdays", "weekends", "weekly")
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -122,8 +119,8 @@ def resolve(
 def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
     """A date as ``YYYY-MM-DD``, or ``today`` in ``zone`` at ``now``.
 
-    Shared with ``alfred_date`` (change add-utility-tools, design D5). Raises
-    :class:`WhenError` with a message for the model.
+    Shared with ``alfred_date``. Raises :class:`WhenError` with a
+    message for the model.
     """
     if not isinstance(value, str):
         raise WhenError(f"Error: a date must be text: {_DATE_FORMS}.")
@@ -208,7 +205,7 @@ def next_occurrence(days: int, clock: time, after: datetime, zone: ZoneInfo) -> 
 def latest_occurrence(
     days: int, clock: time, due: datetime, now: datetime, zone: ZoneInfo
 ) -> datetime:
-    """The latest occurrence at or before ``now``, stepping on from ``due`` (design D3).
+    """The latest occurrence at or before ``now``, stepping on from ``due``.
 
     On time it is ``due`` itself; after an outage, the most recent missed one.
     """
@@ -216,9 +213,6 @@ def latest_occurrence(
     while (following := next_occurrence(days, clock, latest, zone)) <= now:
         latest = following
     return latest
-
-
-# --- formatting ------------------------------------------------------------------
 
 
 def format_when(moment: datetime, zone: ZoneInfo) -> str:

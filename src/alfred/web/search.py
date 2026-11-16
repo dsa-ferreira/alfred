@@ -1,4 +1,4 @@
-"""Web search through SearXNG's JSON API (change add-web-search, design D4).
+"""Web search through SearXNG's JSON API.
 
 SearXNG returns about 20 fields per result and often 30 results. The model
 gets a short plain-text list instead: direct answers and infoboxes first,

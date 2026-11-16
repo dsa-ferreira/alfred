@@ -1,4 +1,4 @@
-"""Guarded page download (change add-web-search, design D5).
+"""Guarded page download.
 
 ```
 for each hop (the URL, then up to MAX_REDIRECTS redirects):
@@ -11,8 +11,8 @@ read the body in chunks, stop past max_bytes -> "too large"
 
 One total timeout covers every hop. The shared client keeps no cookies
 (:func:`make_http_client`). Checking the address before connecting leaves a
-DNS-rebinding window, accepted in the design: fetch targets are already
-limited by the allowlist.
+DNS-rebinding window, which is accepted: fetch targets are already limited
+by the allowlist.
 """
 
 from __future__ import annotations

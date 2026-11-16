@@ -1,4 +1,4 @@
-"""OpenAI-compatible chat completions client over httpx (design D4).
+"""OpenAI-compatible chat completions client over httpx.
 
 Failures are classified because that decides retrying:
 
@@ -10,8 +10,7 @@ Failures are classified because that decides retrying:
 
 Summaries use a streamed request (:meth:`ModelClient.complete_streamed`):
 Ollama stops generating when a streamed request's client goes away, but
-finishes a non-streamed one regardless (change close-idle-conversations,
-design D6).
+finishes a non-streamed one regardless.
 """
 
 from __future__ import annotations

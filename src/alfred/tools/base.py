@@ -20,11 +20,10 @@ answer:   dispatch_resume(opened, name, args, need.state, answer, ctx)
 ```
 
 Every opened toolset is wrapped in :class:`Gated` with the turn user's
-:class:`AllowList` (change add-multiple-users, design D3): a tool the list
-doesn't match is neither offered nor callable. No toolset checks the list
-itself, except to leave out prompt notes about tools the list hides.
-Outside that, :class:`Confirmed` holds back the calls the user's confirm list
-matches until the user says yes (change add-user-input-requests, design D2).
+:class:`AllowList`: a tool the list doesn't match is neither offered nor
+callable. No toolset checks the list itself, except to leave out prompt
+notes about tools the list hides. Outside that, :class:`Confirmed` holds
+back the calls the user's confirm list matches until the user says yes.
 
 A call may return a need for the user's answer (``ToolOutcome.need``)
 instead of a result. The turn then waits; once answered, the same toolset's
@@ -112,12 +111,11 @@ class TurnInput:
     # For reminder turns: who set it, when not the recipient.
     set_by: str | None = None
     # For reminder turns: its repeat rule as shown ("every weekday at 08:00"),
-    # and whether the turn may answer NO_REPLY (change add-recurring-reminders).
+    # and whether the turn may answer NO_REPLY.
     repeat_label: str | None = None
     quiet_ok: bool = False
     user: User = field(kw_only=True)
-    # Set when a parked turn goes on with its user's answer (change
-    # add-user-input-requests, design D3).
+    # Set when a parked turn goes on with its user's answer.
     resume: Resume | None = field(default=None, kw_only=True)
 
 
@@ -136,7 +134,7 @@ class Resume:
 
 @dataclass(frozen=True)
 class ModelImage:
-    """An image ready for the model: already scaled down and encoded (change add-attachments)."""
+    """An image ready for the model: already scaled down and encoded."""
 
     data: bytes
     mime: str  # image/jpeg or image/png
@@ -159,7 +157,7 @@ class Option:
 
 @dataclass(frozen=True)
 class Question:
-    """What a waiting call asks its user (change add-user-input-requests, design D2).
+    """What a waiting call asks its user.
 
     ``title`` says what asked for it (the user's request, a service, a
     reminder) and is filled in by the worker; ``body`` is the question,
@@ -204,7 +202,7 @@ class InputNeed:
 class ToolOutcome:
     ok: bool
     text: str
-    # Sent to the model with the text, as image parts of the tool message (design D5).
+    # Sent to the model with the text, as image parts of the tool message.
     images: tuple[ModelImage, ...] = ()
     # Set instead of a result when the call waits for the user (``ok`` and
     # ``text`` are then unused).
@@ -340,7 +338,7 @@ def chat_only(turn: TurnInput) -> bool:
 
 
 class Gated:
-    """An open toolset seen through an :class:`AllowList` (design D3).
+    """An open toolset seen through an :class:`AllowList`.
 
     Definitions the list doesn't match are left out, and their names are not
     handled, so a call to one is an unknown tool. Everything else passes through.
@@ -385,7 +383,7 @@ class Gated:
 
 
 class Confirmed:
-    """An open toolset whose calls the user's confirm list matches wait for a yes (design D2).
+    """An open toolset whose calls the user's confirm list matches wait for a yes.
 
     The outermost wrapper, around :class:`Gated`: it offers and handles what
     the gate does, so the confirm list never offers a tool. A matching call

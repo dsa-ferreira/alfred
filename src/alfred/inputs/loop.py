@@ -1,4 +1,4 @@
-"""Ending requests nobody answered: a user's new message, and the expiry loop (design D5).
+"""Ending requests nobody answered: a user's new message, and the expiry loop.
 
 ```
 new message from a user  -> cancel their open requests, then queue the message

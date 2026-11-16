@@ -1,4 +1,4 @@
-"""Attachments sent with the message they arrived in (design D4).
+"""Attachments sent with the message they arrived in.
 
 The newest ``inline_turns`` user messages (default 1: the one being
 answered) carry what they brought: an image as an image, a PDF as its

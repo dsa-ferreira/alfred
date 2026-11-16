@@ -1,4 +1,4 @@
-"""Model Markdown to Telegram HTML, and splitting long replies (design D9).
+"""Model Markdown to Telegram HTML, and splitting long replies.
 
 Only a small subset is converted: bold, italic, strikethrough, inline code,
 fenced code, links, bullet lists and headings (as bold). Everything else is

@@ -1,7 +1,7 @@
-"""``alfred_date``: calendar arithmetic in the user's timezone (change add-utility-tools).
+"""``alfred_date``: calendar arithmetic in the user's timezone.
 
-The model gets weekdays and day counts wrong, so alfred works them out
-(design D5). One tool with an ``op`` keeps the definition small:
+The model gets weekdays and day counts wrong, so alfred works them out. One
+tool with an ``op`` keeps the definition small:
 
 ```
 between  from, to             -> days from one to the other (and weeks and days)

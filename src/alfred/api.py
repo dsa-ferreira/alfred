@@ -1,10 +1,9 @@
 """The HTTP API for homelab services: ``/notify``, ``/ask`` and ``/healthz``.
 
-Services authenticate with a bearer token from ``[[services]]``; the matching
-service's name identifies the sender. ``/notify`` and ``/ask`` take an
-optional ``user``, the configured user they are for; without it they are for
-the admin, and an unknown name is refused with 422 (change
-add-multiple-users, design D10).
+Services authenticate with a bearer token from ``[[services]]``; the
+matching service's name identifies the sender. ``/notify`` and ``/ask`` take
+an optional ``user``, the configured user they are for; without it they are
+for the admin, and an unknown name is refused with 422.
 """
 
 from __future__ import annotations

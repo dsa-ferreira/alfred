@@ -1,11 +1,11 @@
-"""Deleting orphan files from the bucket (change add-attachments, design D10).
+"""Deleting orphan files from the bucket.
 
-A file is uploaded before its row is committed (design D2), so a crash in
-between leaves an object no row refers to. Once at startup and then every
-24 hours, every object under ``attachments/`` older than a day with no
+A file is uploaded before its row is committed, so a crash in between
+leaves an object no row refers to. Once at startup and then every 24
+hours, every object under ``attachments/`` older than a day with no
 ``attachments`` row is deleted. The day leaves any upload in progress far
-behind. Errors are logged and the round is tried again next time; the task
-never stops alfred, and no turn waits for it.
+behind. Errors are logged and the round is tried again next time; the
+task never stops alfred, and no turn waits for it.
 """
 
 from __future__ import annotations

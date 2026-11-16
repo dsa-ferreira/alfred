@@ -1,13 +1,12 @@
-"""Transcripts of archived conversations, and the summary prompt (memory design D5).
+"""Transcripts of archived conversations, and the summary prompt.
 
 A transcript is one line per entry: ``User:``, ``alfred:``,
 ``[notice:<service>]``, ``[ask:<service>]``, ``[reminder:#<id>]`` and, for a recall, only
 ``[recalled #<id> "<title>"]``, so a recalled conversation is never summarised
 or recalled again as part of the conversation it was brought into.
 
-A user line ends with the handles of its attachments (change add-attachments,
-design D11), so a recalled conversation's files can be opened again; never
-image data or PDF text.
+A user line ends with the handles of its attachments, so a recalled
+conversation's files can be opened again; never image data or PDF text.
 """
 
 from __future__ import annotations

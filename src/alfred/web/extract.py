@@ -1,4 +1,4 @@
-"""Page text from a download (change add-web-search, design D6).
+"""Page text from a download.
 
 HTML goes through trafilatura, which keeps the main content (dropping menus,
 footers, cookie banners and comments) as light Markdown with headings,

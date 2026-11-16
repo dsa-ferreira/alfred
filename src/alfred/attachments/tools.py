@@ -1,4 +1,4 @@
-"""``alfred_view_attachment`` and ``alfred_read_document`` (change add-attachments, design D8).
+"""``alfred_view_attachment`` and ``alfred_read_document``.
 
 Offered on chat turns, subject to the user's allow-list.
 ``alfred_read_document`` is offered on every brain; ``alfred_view_attachment``
@@ -7,10 +7,10 @@ checks the current brain again, which covers a fallback within the turn. The
 prompt note describes only the tools the allow-list leaves.
 
 Both reach only the turn user's attachments sent in their current
-conversation or in a conversation recalled into it (change
-add-multiple-users: recall only brings back the user's own). A recall only
-brings back the handles in its transcript, so a conversation recalled inside
-a recalled one is reachable only when it is itself recalled.
+conversation or in a conversation recalled into it (recall only brings back
+the user's own). A recall only brings back the handles in its transcript, so
+a conversation recalled inside a recalled one is reachable only when it is
+itself recalled.
 
 ``alfred_read_document`` is not cut to ``[ai] tool_result_max_chars``: it
 sizes its own result with ``[attachments] read_chars``.
@@ -181,8 +181,6 @@ class AttachmentTools(LocalToolset):
             return await self._view(user, attachment_id, arguments.get("page"))
         return await self.read(user, attachment_id, arguments.get("pages"))
 
-    # --- read --------------------------------------------------------------------
-
     async def read(self, user: str, attachment_id: int, pages_value: Any = None) -> ToolOutcome:
         ref = await self.find(user, attachment_id)
         if ref is None:
@@ -210,10 +208,8 @@ class AttachmentTools(LocalToolset):
             texts = {page: text_ for page, text_ in rows}
         return ToolOutcome(True, self._render(ref, first, last, texts))
 
-    # --- access ------------------------------------------------------------------
-
     async def find(self, user: str, attachment_id: int) -> AttachmentRef | None:
-        """The attachment, if ``user``'s current conversation may reach it (design D8)."""
+        """The attachment, if ``user``'s current conversation may reach it."""
         async with self._sessions() as session:
             current = await current_id(session, user, lock=False)
             recalled = select(Entry.recalled_conversation_id).where(
@@ -235,8 +231,6 @@ class AttachmentTools(LocalToolset):
             ).first()
             await session.commit()  # current_id may have created the conversation
         return AttachmentRef(*row) if row is not None else None
-
-    # --- view --------------------------------------------------------------------
 
     async def _view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
         if not self._brains.current.vision:

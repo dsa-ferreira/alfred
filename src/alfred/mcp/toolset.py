@@ -1,18 +1,17 @@
 """The configured MCP servers as one toolset.
 
 Opening it for a turn lists the servers the turn's user may use
-(``build_turn_tools``), each with that user's token (change
-add-multiple-users, design D8). A server none of the user's allow-list
-entries can match is not contacted at all (design D3). The servers'
-instructions, kept only when one of the server's tools passes the
-allow-list, and the names of servers that couldn't be listed, reach the
-system prompt as prompt notes. Calls go through the turn's routing map;
-results are cut to ``[ai] tool_result_max_chars``.
+(``build_turn_tools``), each with that user's token. A server none of
+the user's allow-list entries can match is not contacted at all. The
+servers' instructions, kept only when one of the server's tools passes
+the allow-list, and the names of servers that couldn't be listed, reach
+the system prompt as prompt notes. Calls go through the turn's routing
+map; results are cut to ``[ai] tool_result_max_chars``.
 
-A server's question to the user comes back as a need for input; ``resume``
-repeats the call with the user's answer on a fresh connection (change
-add-user-input-requests, design D6). A resumed turn opens the toolset anew,
-so the routes it uses are those of that turn's listing.
+A server's question to the user comes back as a need for input;
+``resume`` repeats the call with the user's answer on a fresh
+connection. A resumed turn opens the toolset anew, so the routes it uses
+are those of that turn's listing.
 """
 
 from __future__ import annotations

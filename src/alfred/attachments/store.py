@@ -1,4 +1,4 @@
-"""Where attachment files are kept: an S3-compatible bucket (design D1, D10).
+"""Where attachment files are kept: an S3-compatible bucket.
 
 :class:`ObjectStore` is what the rest of alfred uses; :class:`S3Store` is
 the aiobotocore implementation, with one client for alfred's lifetime. Every

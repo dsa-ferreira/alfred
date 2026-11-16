@@ -1,11 +1,11 @@
-"""Search and recall of archived conversations (memory design D7, D8).
+"""Search and recall of archived conversations.
 
 :class:`MemoryTools` offers them to the model on chat turns as
 ``alfred_search_conversations`` and ``alfred_recall_conversation``.
 
-Both see only the turn user's own conversations (change add-multiple-users,
-design D5): every query is limited to them, and another user's conversation
-is refused exactly like one that doesn't exist.
+Both see only the turn user's own conversations: every query is limited
+to them, and another user's conversation is refused exactly like one
+that doesn't exist.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ _RECALL_CONVERSATION_TOOL: dict[str, Any] = {
     },
 }
 
-# Reciprocal rank fusion constant (memory design D7).
+# Reciprocal rank fusion constant.
 _RRF_K = 60
 # A result whose fused score is at least this share of the best one's is "close".
 _CLOSE_RATIO = 0.9
@@ -155,7 +155,7 @@ class ConversationSearch:
     async def search(
         self, user: str, query: Any = None, after: Any = None, before: Any = None
     ) -> ToolOutcome:
-        """``user``'s archived conversations by topic, by date, or both (memory design D7)."""
+        """``user``'s archived conversations by topic, by date, or both."""
         if query is not None and not isinstance(query, str):
             return ToolOutcome(False, "Error: query must be text.")
         query = (query or "").strip() or None
@@ -226,10 +226,8 @@ class ConversationSearch:
             lines.append(self._format(found_by_id[cid], label))
         return ToolOutcome(True, "\n\n".join(lines))
 
-    # --- recall ------------------------------------------------------------------
-
     async def recall(self, user: str, conversation_id: Any) -> ToolOutcome:
-        """Bring one of ``user``'s archived conversations into their current one (D8)."""
+        """Bring one of ``user``'s archived conversations into their current one."""
         cid = _parse_id(conversation_id)
         if cid is None:
             return ToolOutcome(False, "Error: id must be a conversation number, such as 41.")

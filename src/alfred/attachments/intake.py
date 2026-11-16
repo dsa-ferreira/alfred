@@ -1,4 +1,4 @@
-"""Receiving a user's files: check, download, read, store, queue (design D2).
+"""Receiving a user's files: check, download, read, store, queue.
 
 ```
 each file:  size from Telegram > max_bytes -> too_large, skip (not downloaded)

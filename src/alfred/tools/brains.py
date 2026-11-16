@@ -1,9 +1,8 @@
 """``alfred_set_model``: the admin switches the brain (model) that answers everyone.
 
-Offered on the admin's chat turns when there is more than one brain, whatever
-other users' allow-lists say (change add-multiple-users, design D3). The
-brains and the current one live in ``alfred.agent.brains``; a switch applies
-alfred-wide from the next turn.
+Offered on the admin's chat turns when there is more than one brain,
+whatever other users' allow-lists say. The brains and the current one live
+in ``alfred.agent.brains``; a switch applies alfred-wide from the next turn.
 """
 
 from __future__ import annotations

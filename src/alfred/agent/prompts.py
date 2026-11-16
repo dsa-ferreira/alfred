@@ -1,19 +1,18 @@
 """System prompt and the per-turn additions to it.
 
-The prompt is layered (design D1): the persona (alfred's voice, replaceable
-from config), then the built-in operating rules ending with today's date and
-the current brain (model), then the notes this turn's toolsets add (the MCP
+The prompt is layered: the persona (alfred's voice, replaceable from
+config), then the built-in operating rules ending with today's date and the
+current brain (model), then the notes this turn's toolsets add (the MCP
 servers' instructions and which servers are unavailable), then this turn's
 other additions.
 
-It is built for the turn's user (change add-multiple-users, design D4): the
-persona uses their form of address, the rules name them, and the paragraphs
-about alfred's own tools are sent only when those tools are offered on the
-turn. The paragraphs stay together here, so the whole prompt can be read in
-one place.
+It is built for the turn's user: the persona uses their form of address,
+the rules name them, and the paragraphs about alfred's own tools are sent
+only when those tools are offered on the turn. The paragraphs stay together
+here, so the whole prompt can be read in one place.
 
-The date has no time of day (memory design D12): the prompt then changes at
-most once a day, so the AI server can keep reusing its processed prefix.
+The date has no time of day: the prompt then changes at most once a day,
+so the AI server can keep reusing its processed prefix.
 """
 
 from __future__ import annotations
@@ -35,7 +34,7 @@ _REMIND_SET = "alfred_remind_set"
 _SET_MODEL = "alfred_set_model"
 
 # Formatted with the user's form of address. Only this built-in text is
-# formatted; a configured persona is sent as written (design D3).
+# formatted; a configured persona is sent as written.
 _BUTLER_PERSONA = """\
 You are alfred, a butler.
 Speak in a formal, composed English register: courteous, never servile, never chatty. \
@@ -146,8 +145,8 @@ and nothing else. Otherwise write the short message the user should receive; it 
 will be sent to them as is."""
 
 
-# The reminder turn's rule (change add-recurring-reminders, design D6), then
-# one of the two endings: only a quiet reminder may stay silent.
+# The reminder turn's rule, then one of the two endings: only a quiet
+# reminder may stay silent.
 _REMINDER_RULE = """\
 This turn was started by a reminder set earlier, by the user or by the user named \
 after "set by", shown in the last message with when it was due and the time now. \
@@ -159,8 +158,6 @@ _REMINDER_ALWAYS = "Always write a message: the user must receive it."
 _REMINDER_QUIET = f"""\
 If there is nothing worth telling, answer exactly {_NO_REPLY} and nothing else."""
 
-
-# --- The user's facts (change add-user-facts, design D9) --------------------------------
 
 _FACT_LABELS = (
     "told: {name} asked you to remember it; learned: picked up from an earlier "
@@ -203,9 +200,9 @@ def system_prompt(
     offered on the turn, ``others`` the other users' names. ``brain`` is a
     :func:`brain_line`; it sits with the operating rules, so a custom
     persona can't drop it. ``reminder_quiet`` lets a reminder turn answer
-    ``NO_REPLY`` (a ``quiet_ok`` reminder). ``facts`` is the user's :class:`FactsBlock` text,
-    always last, so a change to the facts only changes the prompt's end
-    (change add-user-facts, design D9).
+    ``NO_REPLY`` (a ``quiet_ok`` reminder). ``facts`` is the user's
+    :class:`FactsBlock` text, always last, so a change to the facts only
+    changes the prompt's end.
     """
     parts = [
         persona or _butler_persona(address),

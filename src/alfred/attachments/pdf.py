@@ -1,4 +1,4 @@
-"""PDFs: text on arrival, pages rendered on demand (design D7).
+"""PDFs: text on arrival, pages rendered on demand.
 
 pdfium is not thread-safe, so every pypdfium2 call holds one lock, and the
 async functions run them on one dedicated worker thread.

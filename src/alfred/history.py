@@ -1,16 +1,15 @@
 """Conversation history: each user's current conversation, its entries, and resets.
 
 A user's current conversation is their one row of ``conversations`` with
-``ended_at IS NULL`` (change add-multiple-users, design D5); the first is
-created when it is first needed. Each write reads it inside its own
-transaction, so an entry written around a reset lands in whichever
-conversation is current when it commits.
+``ended_at IS NULL``; the first is created when it is first needed. Each
+write reads it inside its own transaction, so an entry written around a
+reset lands in whichever conversation is current when it commits.
 
 A conversation with no message from its user (only notices, ``/ask`` turns
 and reminders) is never closed for inactivity. Instead, when a new notice,
 ``/ask`` prompt or reminder arrives more than the idle close time after its
-newest entry, it is archived as ``unattended`` and the new entry starts a new
-conversation, with no marker (change add-recurring-reminders, design D7).
+newest entry, it is archived as ``unattended`` and the new entry starts a
+new conversation, with no marker.
 """
 
 from __future__ import annotations
@@ -46,13 +45,11 @@ _EntryKind = Literal[
 ]
 _UTC_ZONE = ZoneInfo("UTC")
 # The first entry of something that arrives without the user: a new one may
-# close a conversation that has no user message (design D7). Never a reply.
+# close a conversation that has no user message. Never a reply.
 _ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
 # An input request whose turn is still waiting or going on (a parked turn).
 _LIVE_STATUSES = ("open", "answered", "running")
 
-
-# --- message times (change add-utility-tools, design D1) ---------------------
 
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -74,10 +71,10 @@ class HistoryEntry:
     # For reminder entries: the reminder's number and when it was due.
     reminder_id: int | None = None
     reminder_due_at: datetime | None = None
-    # When the entry was recorded; stamped on user messages (change add-utility-tools, D1).
+    # When the entry was recorded; stamped on user messages.
     created_at: datetime | None = None
     entry_id: int | None = None
-    # A user entry's files, in message order (change add-attachments, design D4).
+    # A user entry's files, in message order.
     attachments: tuple[AttachmentRef, ...] = ()
     # For reminder entries: who set it, when not the conversation's user.
     reminder_set_by: str | None = None
@@ -86,7 +83,7 @@ class HistoryEntry:
 
 @dataclass(frozen=True)
 class Inline:
-    """How a user entry in the inline window is sent (change add-attachments, design D4).
+    """How a user entry in the inline window is sent.
 
     ``handles`` replace the plain handles (a PDF's with its page 1 text, a
     note when an image can't be shown); ``images`` follow the text as image
@@ -130,11 +127,11 @@ class History:
         With ``queue_item_id``, an entry of the same kind for that item that
         already exists is kept and nothing is added (a retried turn); its ID
         is returned. A user entry takes the attachments queued with its
-        item, in the same transaction (change add-attachments, design D2).
+        item, in the same transaction.
 
         A notice, ``/ask`` prompt or reminder first archives a current
         conversation with no user message whose newest entry is older than
-        the idle close time, and starts a new one (design D7).
+        the idle close time, and starts a new one.
         """
         archived = False
         async with self._sessions.begin() as session:
@@ -204,10 +201,9 @@ class History:
 
         A recall counts as one entry, however long its transcript.
 
-        A resumed turn reads the context it parked with (change
-        add-user-input-requests, design D3): ``conversation_id`` reads that
-        conversation of ``user``'s even if it has been archived since, and
-        ``upto_entry_id`` leaves out entries added after that one.
+        A resumed turn reads the context it parked with: ``conversation_id``
+        reads that conversation of ``user``'s even if it has been archived
+        since, and ``upto_entry_id`` leaves out entries added after that one.
 
         With ``turn_item_id`` (the queue item of the turn reading it), the
         entries of other turns still waiting for their user's answer are
@@ -252,7 +248,7 @@ class History:
                     recalled.summary,
                     newest.c.reminder_id,
                     # The entry's own occurrence: a repeating reminder's row
-                    # has moved on (change add-recurring-reminders, D7).
+                    # has moved on.
                     newest.c.reminder_due_at,
                     newest.c.created_at,
                     newest.c.id,
@@ -291,8 +287,6 @@ class History:
             session.add(new)
             await session.flush()
             return _Reset(archived_id, new.id)
-
-    # --- idle close (change close-idle-conversations, design D3, D4) ----------
 
     async def last_user_messages(self) -> list[_LastMessage]:
         """Every current conversation with a message from its user, and the newest one's time.
@@ -335,7 +329,7 @@ class History:
             if newest is None or newest > cutoff:
                 return None
             # A turn waiting for its user's answer is busy too, until it is
-            # answered, cancelled or expires (change add-user-input-requests).
+            # answered, cancelled or expires.
             busy = await session.scalar(
                 select(QueueItem.id)
                 .where(QueueItem.status.in_(("pending", "waiting")), QueueItem.user_name == user)
@@ -382,8 +376,8 @@ async def current_id(
     """``user``'s current conversation, created if they have none yet.
 
     ``exclusive`` takes it ``FOR UPDATE`` instead of ``FOR SHARE``, to archive
-    it in the same transaction (design D7); two arrivals for the same user
-    then take turns, so only one of them closes it.
+    it in the same transaction; two arrivals for the same user then take
+    turns, so only one of them closes it.
     """
     query = select(Conversation.id).where(
         Conversation.ended_at.is_(None), Conversation.user_name == user
@@ -411,7 +405,7 @@ def stamped(text_: str, moment: datetime | None, zone: ZoneInfo) -> str:
 
 
 def strip_stamp(text_: str) -> str:
-    """``text_`` without a stamp at its very start (one the model copied, design D2)."""
+    """``text_`` without a stamp at its very start (one the model copied)."""
     return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
 
 
@@ -426,10 +420,10 @@ def to_messages(
     ``[ask:<service>]``), replies are ``assistant`` turns, and notices are
     ``user`` turns prefixed ``[notice:<service>]``. Delivered reminders are
     ``user`` turns prefixed ``[reminder:#<id> due <time in zone>]`` (with
-    ``, set by <name>`` when someone else set it), followed by what the user
-    was told. Recalls are ``user`` turns
-    prefixed ``[recall:#<id> "<title>"]``: the newest with its transcript,
-    older ones with only the recalled conversation's summary (memory design D9).
+    ``, set by <name>`` when someone else set it), followed by what the
+    user was told. Recalls are ``user`` turns prefixed ``[recall:#<id>
+    "<title>"]``: the newest with its transcript, older ones with only the
+    recalled conversation's summary.
 
     Every ``user`` turn starts with the time its entry was recorded, before
     its label (``[Mon 9 Nov 14:05] [notice:backup] ...``); replies have none.

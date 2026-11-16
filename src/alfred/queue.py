@@ -1,4 +1,4 @@
-"""The AI-bound queue and its single worker (design D8).
+"""The AI-bound queue and its single worker.
 
 Users' messages, ``/ask`` prompts and due reminders are rows in
 ``queue_items``, each for one user. One worker, for all users,
@@ -7,34 +7,31 @@ until it is done or failed. While the AI is unreachable (and no tool has run
 in the turn) the head item is retried with backoff and keeps its place.
 Pending rows simply resume after a restart.
 
-The worker resolves the item's user from the config (change
-add-multiple-users, design D2); an item for a user who is no longer
-configured is marked failed instead of blocking the queue. Replies and fixed
-notices go to that user, in their form of address; a brain fallback is also
-told to the admin (design D11).
+The worker resolves the item's user from the config; an item for a user who
+is no longer configured is marked failed instead of blocking the queue.
+Replies and fixed notices go to that user, in their form of address; a brain
+fallback is also told to the admin.
 
 A user's message starts with the marker of a conversation closed for
-inactivity, if one is pending (change close-idle-conversations, design D4).
-Ending a conversation only archives it: the memory sweeper summarises it in
-the background, so the next item never waits (design D1). The queue tells
-the sweeper when items arrive and finish (``QueueActivity``, design D5).
+inactivity, if one is pending. Ending a conversation only archives it:
+the memory sweeper summarises it in the background, so the next item
+never waits. The queue tells the sweeper when items arrive and finish
+(``QueueActivity``).
 
-A reminder always reaches its recipient (change add-reminders, design D6): a
-blank or ``NO_REPLY`` answer, or a turn that fails for good, is replaced by
-the fixed reminder notice. The exception is a quiet reminder (``quiet_ok``)
-answered ``NO_REPLY``: nothing is sent or recorded (change
-add-recurring-reminders, design D6). A quiet reminder whose turn fails still
-gets the notice, so a broken AI doesn't look like "nothing to report".
+A reminder always reaches its recipient: a blank or ``NO_REPLY`` answer, or
+a turn that fails for good, is replaced by the fixed reminder notice. The
+exception is a quiet reminder (``quiet_ok``) answered ``NO_REPLY``: nothing
+is sent or recorded. A quiet reminder whose turn fails still gets the
+notice, so a broken AI doesn't look like "nothing to report".
 
-A turn may park, waiting for its user's answer (change
-add-user-input-requests, design D8). Its item becomes ``waiting``, which
-``head`` skips, and the question goes to the user; a question that can't be
-sent ends the request at once. A tap makes the item ``pending`` again: being
-older than anything queued since, it is the next head. The worker then marks
-the request ``running`` before the turn resumes, so a crash never runs the
-call twice: an item whose request is already ``running`` fails with the
-partial notice. A user's new message first cancels their open requests
-(``before_user_message``).
+A turn may park, waiting for its user's answer. Its item becomes
+``waiting``, which ``head`` skips, and the question goes to the user; a
+question that can't be sent ends the request at once. A tap makes the item
+``pending`` again: being older than anything queued since, it is the next
+head. The worker then marks the request ``running`` before the turn resumes,
+so a crash never runs the call twice: an item whose request is already
+``running`` fails with the partial notice. A user's new message first
+cancels their open requests (``before_user_message``).
 """
 
 from __future__ import annotations
@@ -76,8 +73,7 @@ class Outbox(Protocol):
 
 
 class QueueActivity:
-    """When items arrive and finish, for the memory sweeper (change
-    close-idle-conversations, design D5).
+    """When items arrive and finish, for the memory sweeper.
 
     In-process, like the worker's ``signal``: the queue and the sweeper share
     a process, and "finished recently" needn't survive a restart.
@@ -119,7 +115,7 @@ class Queue:
         self.signal = asyncio.Event()
         self.activity = QueueActivity(self.signal, clock)
         # Run with the user's name before their message is queued: cancels
-        # their waiting turns (change add-user-input-requests, design D5).
+        # their waiting turns.
         self.before_user_message: Callable[[str], Awaitable[object]] | None = None
 
     async def has_pending(self) -> bool:
@@ -140,8 +136,7 @@ class Queue:
         """Queue ``user``'s message, with its attachments, in one transaction.
 
         The files must already be in the object store: the commit is what
-        makes the message exist (change add-attachments, design D2). They
-        belong to ``user``.
+        makes the message exist. They belong to ``user``.
 
         The user's waiting turns are cancelled first, so the message's turn
         never runs while one of them could still be answered.
@@ -237,13 +232,13 @@ class Worker:
         expire_after: timedelta = timedelta(minutes=60),
     ) -> None:
         self._queue = queue
-        # Parked turns' requests and their question messages (design D8).
+        # Parked turns' requests and their question messages.
         self._inputs = inputs
         self._questions = questions
         self._expire_after = expire_after
-        # Shown in a user's chat while their own chat turn runs (typing design D1).
+        # Shown in a user's chat while their own chat turn runs.
         self._typing = typing
-        # Wakes the memory sweeper after a reset (design D1); None in tests.
+        # Wakes the memory sweeper after a reset; None in tests.
         self._nudge = nudge
         self._agent = agent
         self._history = history
@@ -280,7 +275,7 @@ class Worker:
     async def _process(self, item: QueueItem) -> None:
         user = self._users.get(item.user_name)
         if user is None:
-            # Not retried: the config, not the AI, has to change (design D9).
+            # Not retried: the config, not the AI, has to change.
             reason = f"user {item.user_name!r} is not configured"
             log.error("queue item %s (%s): %s; marked failed", item.id, item.kind, reason)
             await self._queue.finish(item.id, "failed", reason)
@@ -291,8 +286,7 @@ class Worker:
                 return
             request = await self._inputs.take_answered(item.id, user.name)
         if item.kind == "user" and request is None:
-            # A conversation closed for inactivity is told before the reply
-            # (change close-idle-conversations, design D4). Claimed before it
+            # A conversation closed for inactivity is told before the reply. Claimed before it
             # is sent, so a retried turn doesn't send it again.
             marker = await self._history.take_idle_marker(user.name)
             if marker is not None:
@@ -351,7 +345,7 @@ class Worker:
         """Whether alfred stopped while this item's answered call was running.
 
         Then the call may have run: the item fails with the partial notice
-        and is never run again (design D5).
+        and is never run again.
         """
         assert self._inputs is not None
         stuck = await self._inputs.running_for(item.id, user.name)
@@ -378,7 +372,7 @@ class Worker:
         return True
 
     async def _park(self, item: QueueItem, turn: TurnInput, result: TurnResult) -> None:
-        """The turn waits for its user: store the request, then send the question (D8)."""
+        """The turn waits for its user: store the request, then send the question."""
         waiting = result.waiting
         assert waiting is not None
         user = turn.user
@@ -441,8 +435,7 @@ class Worker:
         """The reminder's text, rule, quietness and creator, read through ``reminder_id``.
 
         The due time is the item's own: a repeating reminder's row has
-        already moved on to its next occurrence (change
-        add-recurring-reminders, design D6).
+        already moved on to its next occurrence.
         """
         due_at = item.reminder_due_at
         reminder = None
@@ -499,7 +492,7 @@ class Worker:
         await self._send(item, user, message)
 
     async def _tell_fallback(self, item: QueueItem, user: User, fallback: Fallback | None) -> None:
-        """The brain is alfred-wide: the turn's user and the admin hear of a fallback (D11).
+        """The brain is alfred-wide: the turn's user and the admin hear of a fallback.
 
         Not recorded: the next prompt names the brain.
         """
@@ -570,7 +563,7 @@ class Worker:
 
     async def _reset(self, item: QueueItem, user: User) -> None:
         # The archived conversation is summarised by the memory sweeper, so the
-        # next item never waits for it (change close-idle-conversations, D1).
+        # next item never waits for it.
         reset = await self._history.reset(user.name)
         log.info(
             "queue item %s: %s's conversation %s archived, %s started",
@@ -608,8 +601,7 @@ class _ReminderLookup(Protocol):
 def _reset_marker(archived_id: int | None, new_id: int, *, idle: bool = False) -> str:
     """The one message that tells the user a conversation ended.
 
-    Ids only: the title is made later, in the background (change
-    close-idle-conversations, design D1). ``idle`` for a conversation closed
+    Ids only: the title is made later, in the background. ``idle`` for a conversation closed
     after inactivity.
     """
     lines: list[str] = []

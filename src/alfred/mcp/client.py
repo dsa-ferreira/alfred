@@ -2,10 +2,10 @@
 
 See "MCP SDK v2 client notes" in AGENTS.md for the APIs used here.
 
-Every client declares form elicitation (change add-user-input-requests,
-design D6): alfred drives a server's questions itself, through the
-session-level ``call_tool`` with ``allow_input_required=True``, so the
-callback that declares the capability is never meant to be reached.
+Every client declares form elicitation: alfred drives a server's questions
+itself, through the session-level ``call_tool`` with
+``allow_input_required=True``, so the callback that declares the capability is
+never meant to be reached.
 """
 
 from __future__ import annotations

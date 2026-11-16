@@ -1,14 +1,13 @@
 """Summaries of archived conversations: title, summary and embedding.
 
 ``summarise`` runs in the background memory sweeper (``alfred.memory.sweeper``)
-only; ending a conversation just wakes it (change close-idle-conversations,
-design D1). It never raises: on any failure it schedules a retry on the
-conversation row and the sweeper picks it up later.
+only; ending a conversation just wakes it. It never raises: on any failure it
+schedules a retry on the conversation row and the sweeper picks it up later.
 
-The summary request gives way to the queue (design D6): when ``preempt`` is
-set while it runs, it is cancelled and nothing is recorded, so the attempt
-doesn't count as a failure. The embedding request goes to another server and
-is never cancelled.
+The summary request gives way to the queue: when ``preempt`` is set while
+it runs, it is cancelled and nothing is recorded, so the attempt doesn't
+count as a failure. The embedding request goes to another server and is
+never cancelled.
 """
 
 from __future__ import annotations

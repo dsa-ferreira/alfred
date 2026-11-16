@@ -1,7 +1,7 @@
 """Every tool alfred offers itself, by model-facing name.
 
 Used to check allow-lists at startup: an exact ``alfred_*`` entry must name
-one of these (change add-multiple-users, ``users`` spec).
+one of these.
 """
 
 from __future__ import annotations

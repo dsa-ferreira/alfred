@@ -1,4 +1,4 @@
-"""Which users the database knows (change add-multiple-users, design D9).
+"""Which users the database knows.
 
 Rows name their user by its ``[[users]]`` name. A name the config doesn't
 have (a typo in ``ALFRED_MIGRATE_ADMIN``, or a renamed user) leaves those

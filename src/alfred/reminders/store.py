@@ -1,18 +1,17 @@
-"""Reminders in Postgres (change add-reminders, design D3, D4).
+"""Reminders in Postgres.
 
-A reminder has a creator and one or more recipients (change
-add-multiple-users, design D7). Listing and cancelling are for the users
-involved, its creator or a recipient; to anyone else the reminder doesn't
-exist. The creator cancels it for every recipient; a recipient who didn't
-set it only leaves it, and the last one leaving cancels it (change
-add-recurring-reminders, design D5).
+A reminder has a creator and one or more recipients. Listing and
+cancelling are for the users involved, its creator or a recipient; to
+anyone else the reminder doesn't exist. The creator cancels it for every
+recipient; a recipient who didn't set it only leaves it, and the last one
+leaving cancels it.
 
-``claim_due`` marks due reminders ``fired`` and inserts one queue item per
-recipient in one transaction, so each recipient's item is queued exactly
-once: a crash leaves the reminder either pending (claimed again after
-restart) or queued (the queue survives restarts). A repeating reminder
-stays ``pending`` and moves on to its next occurrence instead; after an
-outage only its latest missed occurrence is queued (design D3). Each item
+``claim_due`` marks due reminders ``fired`` and inserts one queue item
+per recipient in one transaction, so each recipient's item is queued
+exactly once: a crash leaves the reminder either pending (claimed again
+after restart) or queued (the queue survives restarts). A repeating
+reminder stays ``pending`` and moves on to its next occurrence instead;
+after an outage only its latest missed occurrence is queued. Each item
 carries the due time of the occurrence it delivers.
 """
 

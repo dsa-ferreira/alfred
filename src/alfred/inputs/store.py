@@ -1,4 +1,4 @@
-r"""Input requests: a parked turn's question, its answer and its ending (design D4, D5).
+r"""Input requests: a parked turn's question, its answer and its ending.
 
 ```
                  tap (owner, not expired)        worker picks item
@@ -240,8 +240,6 @@ class InputRequests:
                 )
             )
             return [RequestRow.of(r) for r in rows]
-
-    # --- ending without an answer (design D5) -------------------------------------
 
     async def _end(self, where: Sequence[Any], reason: _EndReason) -> list[RequestRow]:
         async with self._sessions.begin() as session:

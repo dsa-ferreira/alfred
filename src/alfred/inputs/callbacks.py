@@ -1,4 +1,4 @@
-"""Button taps on question messages (design D7).
+"""Button taps on question messages.
 
 ```
 tap -> the sender is a configured user, in their private chat?   (else: log the ID, ignore)

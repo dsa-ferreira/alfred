@@ -1,4 +1,4 @@
-"""OpenAI-compatible embeddings client over httpx (memory design D6).
+"""OpenAI-compatible embeddings client over httpx.
 
 Failures are classified like :mod:`alfred.agent.model`'s:
 

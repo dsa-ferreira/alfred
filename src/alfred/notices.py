@@ -1,4 +1,4 @@
-"""Fixed notices sent to a user without the model (design D5).
+"""Fixed notices sent to a user without the model.
 
 Each one speaks in the butler's register and ends its first clause with the
 form of address of the user it is sent to, used exactly as configured. They
@@ -12,8 +12,6 @@ from datetime import date, datetime
 _PARTIAL = " Some actions may have been partly carried out."
 
 
-# --- input requests (change add-user-input-requests, design D5) -------------------------
-
 # Why a waiting turn ended without its user's answer.
 _NOT_DONE_REASONS = {
     "new_message": "you sent a new message before answering my question",
@@ -25,9 +23,6 @@ _NOT_DONE_REASONS = {
 def text_only(address: str) -> str:
     """Anything but text, when attachments are not configured."""
     return f"I'm afraid I can only read text messages, {address}."
-
-
-# --- attachments (change add-attachments, design D12) ---------------------------
 
 
 def unsupported(address: str) -> str:
@@ -74,7 +69,7 @@ def fell_back(address: str, failed: str, default: str) -> str:
 
 
 def reminder(address: str, text: str, due: datetime, today: date) -> str:
-    """A reminder delivered without the model (change add-reminders, design D6).
+    """A reminder delivered without the model.
 
     ``due`` is in alfred's timezone; its date is shown when it isn't ``today``.
     """
@@ -84,9 +79,6 @@ def reminder(address: str, text: str, due: datetime, today: date) -> str:
     return (
         f'Your reminder, due at {when}: "{text}". My apologies for the plain delivery, {address}.'
     )
-
-
-# --- /memory (change add-user-facts, design D11) -----------------------------------------
 
 
 def memory_list(address: str) -> str:

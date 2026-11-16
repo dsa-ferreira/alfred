@@ -1,4 +1,4 @@
-"""Images and PDFs from users (change add-attachments)."""
+"""Images and PDFs from users."""
 
 from __future__ import annotations
 

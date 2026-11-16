@@ -88,7 +88,7 @@ def _without_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     """The messages with each image part's data left out, and how many there were.
 
     Images are counted, not measured: their base64 says nothing about what
-    they cost the model (change add-attachments, design D11).
+    they cost the model.
     """
     images = 0
     kept: list[dict[str, Any]] = []

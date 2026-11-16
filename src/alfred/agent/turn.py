@@ -1,4 +1,4 @@
-"""One AI turn (design D5).
+"""One AI turn.
 
 ```
 open    = each toolset opened for the turn (those not offered on it drop out),
@@ -16,36 +16,33 @@ fail "stopped after too many steps"
 
 The agent names no tool: what is offered on which turn, and what a call
 does, is up to the toolsets (``alfred.tools.base``) that ``app.py``
-passes in, seen through the turn user's allow-list (change
-add-multiple-users, design D3). The names left are what the system prompt
-describes (design D4).
+passes in, seen through the turn user's allow-list. The names left are
+what the system prompt describes.
 
 A non-retryable model error on a brain other than the startup one makes the
-startup brain current (change add-brain-switching, design D5). If no tool
-had run, the turn runs again from the start on it; either way the result
-carries the :class:`Fallback`, and the worker tells the user and the
-admin. Each attempt reads the history again and tells every open toolset it
-started (``new_attempt``), so per-attempt state such as the web fetch
-allowlist starts fresh.
+startup brain current. If no tool had run, the turn runs again from the
+start on it; either way the result carries the :class:`Fallback`, and the
+worker tells the user and the admin. Each attempt reads the history again
+and tells every open toolset it started (``new_attempt``), so per-attempt
+state such as the web fetch allowlist starts fresh.
 
-A user's chat message is already in the history when its turn runs (the
-worker records it at turn start), so it reaches the model as the newest
-entry. An ``/ask`` prompt is only recorded if the answer reaches the user, so it is
-added to the messages here, after the time now like the history's
-messages (change add-utility-tools, design D1). So is a due reminder (change add-reminders,
-design D5), labelled with its due time and the time of this attempt, so a
+A user's chat message is already in the history when its turn runs (the worker
+records it at turn start), so it reaches the model as the newest entry. An
+``/ask`` prompt is only recorded if the answer reaches the user, so it is added
+to the messages here, after the time now like the history's messages. So is a
+due reminder, labelled with its due time and the time of this attempt, so a
 retried turn shows how late it really is.
 
-A call may need its user's answer (change add-user-input-requests, design
-D3). Every toolset is wrapped in ``Confirmed`` with the user's confirm list,
-outside the allow-list gate. When a call returns a need, the turn stops
-there and returns ``waiting``: the call, the calls after it in the same
-reply (not run yet), the messages since the context (``tail``), the request
-and call counters, and the conversation and newest entry its context was
-built from. A resumed turn (``TurnInput.resume``) rebuilds the same context
-(the system prompt is new), appends the tail, hands the answer to the
-toolset that asked, runs the rest of that reply's calls, and carries on as
-usual. A resumed turn has run tools, so it is never retried.
+A call may need its user's answer. Every toolset is wrapped in
+``Confirmed`` with the user's confirm list, outside the allow-list gate.
+When a call returns a need, the turn stops there and returns ``waiting``:
+the call, the calls after it in the same reply (not run yet), the messages
+since the context (``tail``), the request and call counters, and the
+conversation and newest entry its context was built from. A resumed turn
+(``TurnInput.resume``) rebuilds the same context (the system prompt is
+new), appends the tail, hands the answer to the toolset that asked, runs
+the rest of that reply's calls, and carries on as usual. A resumed turn
+has run tools, so it is never retried.
 """
 
 from __future__ import annotations
@@ -93,7 +90,7 @@ _EXCERPT_CHARS = 500
 
 @dataclass(frozen=True)
 class Fallback:
-    """The chosen brain failed and alfred went back to the startup brain (design D5)."""
+    """The chosen brain failed and alfred went back to the startup brain."""
 
     failed: str
     default: str
@@ -101,7 +98,7 @@ class Fallback:
 
 @dataclass(frozen=True)
 class _Waiting:
-    """A turn parked at a call that needs its user's answer (design D3).
+    """A turn parked at a call that needs its user's answer.
 
     ``remaining`` are the calls after it in the same model reply, not run
     yet; ``tail`` the messages after the context (assistant messages with
@@ -222,7 +219,7 @@ class Agent:
         fallback: Fallback | None = None
         while True:
             # The brain is read once per attempt: a switch made during the
-            # turn applies from the next turn (design D3).
+            # turn applies from the next turn.
             brain = self._brains.current
             try:
                 result = await self._attempt(this, brain, can_fall_back=fallback is None)
@@ -252,7 +249,7 @@ class Agent:
             return dataclasses.replace(result, fallback=fallback)
 
     async def _facts_block(self, turn: TurnInput) -> FactsBlock | None:
-        """The user's facts for every attempt of this turn, read once (design D9)."""
+        """The user's facts for every attempt of this turn, read once."""
         memory = self._config.memory
         if not memory.facts_in_context or self._facts is None:
             return None
@@ -365,7 +362,7 @@ class Agent:
             state.requests = n
             log.info("turn %s request %d: %s", turn.queue_item_id, n, token_counts(reply.usage))
             if not reply.tool_calls:
-                # A stamp copied from the history is not part of the answer (design D2).
+                # A stamp copied from the history is not part of the answer.
                 answer = strip_stamp((reply.content or "").strip())
                 if not answer:
                     raise self._failed(state, "the model returned an empty reply")
@@ -562,7 +559,7 @@ class _State:
     side_effects: bool = False
     seq: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
-    # Where the context ends and what it was built from, for parking (design D3).
+    # Where the context ends and what it was built from, for parking.
     context_len: int = 0
     requests: int = 0
     conversation_id: int | None = None
@@ -580,9 +577,9 @@ class _Turn:
     notes: list[str]
     # The names in ``definitions``: what the system prompt describes.
     offered: frozenset[str]
-    # The turn's attachment images, kept across attempts (change add-attachments).
+    # The turn's attachment images, kept across attempts.
     images: ImageCache | None = None
-    # The user's facts, when they are in the context (change add-user-facts).
+    # The user's facts, when they are in the context.
     facts: FactsBlock | None = None
 
 
@@ -593,7 +590,7 @@ class _Facts(Protocol):
 
 
 def _tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:
-    """The result for the model; with images, a list of parts (change add-attachments, D5)."""
+    """The result for the model; with images, a list of parts."""
     if not outcome.images:
         return {"role": "tool", "tool_call_id": call_id, "content": outcome.text}
     parts = [{"type": "text", "text": outcome.text}, *(i.part() for i in outcome.images)]
@@ -601,7 +598,7 @@ def _tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:
 
 
 def _without_images(message: dict[str, Any]) -> dict[str, Any]:
-    """A message to keep while its turn waits: a tool result's images become a note (D3)."""
+    """A message to keep while its turn waits: a tool result's images become a note."""
     content = message.get("content")
     if message.get("role") != "tool" or not isinstance(content, list):
         return message

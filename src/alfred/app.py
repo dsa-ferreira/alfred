@@ -3,13 +3,13 @@ the due-reminder loop, the input request expiry loop, with ``[attachments]``
 the orphan file sweeper, and with ``[history] idle_close_after_h`` the idle
 conversation closer.
 
-Six asyncio tasks (more with those) share the database engine and the
-queue's in-process signal (design D1). SIGTERM or SIGINT stops them all; a turn in progress is
-interrupted and its item stays ``pending``, so it runs again after restart,
-a summary in progress is simply made again later, and a reminder claim is
-one transaction, so it either happened or happens again. If any task stops on
-its own (for example the port is taken), the others are stopped too and
-``serve`` raises.
+Six asyncio tasks (more with those) share the database engine and the queue's
+in-process signal. SIGTERM or SIGINT stops them all; a turn in progress is
+interrupted and its item stays ``pending``, so it runs again after restart, a
+summary in progress is simply made again later, and a reminder claim is one
+transaction, so it either happened or happens again. If any task stops on its
+own (for example the port is taken), the others are stopped too and ``serve``
+raises.
 """
 
 from __future__ import annotations
@@ -90,13 +90,13 @@ def configure_logging(level: str) -> None:
 async def serve(config: Config) -> None:
     engine = make_engine(config.database_url.get_secret_value())
     sessions = make_session_factory(engine)
-    # A misspelt ALFRED_MIGRATE_ADMIN or a renamed user shows up here (design D9).
+    # A misspelt ALFRED_MIGRATE_ADMIN or a renamed user shows up here.
     await warn_unknown_users(sessions, config.users.names)
     queue = Queue(sessions)
     bot = Bot(config.telegram_bot_token.get_secret_value())
     outbox = TelegramOutbox(bot)
     model = ModelClient(config.ai.base_url, config.ai.model, config.ai.request_timeout_s)
-    # A second client only when summaries use another model (memory design D5).
+    # A second client only when summaries use another model.
     summary_model = (
         model
         if config.summary_model == config.ai.model
@@ -111,20 +111,19 @@ async def serve(config: Config) -> None:
     )
     summaries = Summaries(config, sessions, summary_model, embedder)
     # A conversation with no user message is archived when something new arrives
-    # after the idle close time; the sweeper then summarises it (change
-    # add-recurring-reminders, design D7).
+    # after the idle close time; the sweeper then summarises it.
     idle_after = (
         timedelta(hours=config.history.idle_close_after_h)
         if config.history.idle_close_after_h is not None
         else None
     )
     history = History(sessions, idle_after=idle_after, on_archive=summaries.changed.set)
-    # Turns waiting for their user's answer (change add-user-input-requests):
-    # a user's new message cancels theirs before it is queued.
+    # Turns waiting for their user's answer: a user's new message
+    # cancels theirs before it is queued.
     inputs = InputRequests(sessions, history, config.users)
     queue.before_user_message = cancel_on_new_message(inputs, outbox, config.users)
-    # User facts (change add-user-facts): extraction after the summaries, then
-    # embedding, which needs no quiet queue, then the duplicate check.
+    # User facts: extraction after the summaries, then embedding, which
+    # needs no quiet queue, then the duplicate check.
     facts = FactStore(config, sessions, embedder)
     sweeper = Sweeper(
         config,
@@ -134,18 +133,18 @@ async def serve(config: Config) -> None:
         jobs=[
             FactExtractionJob(config, sessions, summary_model, facts),
             FactEmbeddingJob(facts),
-            # Needs the model, so only while the queue is quiet (change fix-fact-removals).
+            # Needs the model, so only while the queue is quiet.
             FactDuplicateJob(facts, summary_model),
         ],
     )
     search = ConversationSearch(config, sessions, embedder)
     # Turns pass the current brain's tag per request; summaries never do, so
-    # they stay on the summary model (change add-brain-switching, design D2).
+    # they stay on the summary model.
     brains = Brains.from_config(config.ai)
-    # Web search and fetch share one HTTP client (change add-web-search).
+    # Web search and fetch share one HTTP client.
     web = WebTools.from_config(config)
     reminders = ReminderTools.from_config(config, sessions)
-    # Photos, image files and PDFs, only with [attachments] (change add-attachments).
+    # Photos, image files and PDFs, only with [attachments].
     store: S3Store | None = None
     intake: Intake | None = None
     attachment_tools: AttachmentTools | None = None
@@ -234,7 +233,7 @@ async def serve(config: Config) -> None:
             run_due_loop(reminders.store, queue.activity.notify, config.reminders.check_interval_s),
             name="reminders",
         ),
-        # On the reminders' clock; no setting of its own (design D5).
+        # On the reminders' clock; no setting of its own.
         asyncio.create_task(
             run_expiry_loop(inputs, outbox, config.users, config.reminders.check_interval_s),
             name="input-requests",
@@ -242,7 +241,7 @@ async def serve(config: Config) -> None:
     }
     if orphans is not None:
         tasks.add(asyncio.create_task(orphans.run_forever(), name="attachments"))
-    # Only with [history] idle_close_after_h (change close-idle-conversations, D3).
+    # Only with [history] idle_close_after_h.
     if config.history.idle_close_after_h is not None:
         assert idle_after is not None
         idle = IdleCloser(history, idle_after, nudge=summaries.changed.set)
@@ -348,13 +347,13 @@ def _build_toolsets(
         toolsets.append(MemoryTools(memory))
     if facts is not None:
         toolsets.append(facts)
-    # Only with [attachments] (change add-attachments, design D8).
+    # Only with [attachments].
     if attachments is not None:
         toolsets.append(attachments)
     if reminders is not None:
         toolsets.append(reminders)
     toolsets.append(BrainTools(brains))
-    # Arithmetic and dates, on every turn (change add-utility-tools, design D7).
+    # Arithmetic and dates, on every turn.
     toolsets.append(CalculatorTools())
     toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
     toolsets.append(McpTools.from_config(config, connect))

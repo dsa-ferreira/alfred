@@ -1,24 +1,23 @@
-"""The fact extraction request: its transcript, prompt and reply (change add-user-facts).
+"""The fact extraction request: its transcript, prompt and reply.
 
-Only the user's own messages and alfred's direct replies reach extraction
-(design D4): notices, ``/ask`` prompts and replies, reminders and their
-replies, and recalled conversations are left out, so text from services or
-other users never becomes a fact about this user.
+Only the user's own messages and alfred's direct replies reach
+extraction: notices, ``/ask`` prompts and replies, reminders and their
+replies, and recalled conversations are left out, so text from services
+or other users never becomes a fact about this user.
 
-The reply is one labelled line per fact (design D5)::
+The reply is one labelled line per fact::
 
     NEW: works night shifts on weekends
     REPLACE 7 "lives in Lisbon": lives in Porto
     NONE
 
-A ``REPLACE`` quotes the fact it replaces (change fix-fact-removals, design
-D4), so a wrong id can be told from a right one when it is applied.
+A ``REPLACE`` quotes the fact it replaces, so a wrong id can be told from a
+right one when it is applied.
 
 read leniently, like the summary reply.
 
-The duplicate check (change fix-fact-removals, design D3) asks which of a
-user's close facts say the same thing as a new one, answered with
-``SAME <id>`` lines or ``NONE``.
+The duplicate check asks which of a user's close facts say the same
+thing as a new one, answered with ``SAME <id>`` lines or ``NONE``.
 """
 
 from __future__ import annotations
@@ -81,14 +80,12 @@ _REPLACE = re.compile(
 _NONE = re.compile(_PREFIX + r"none[*_`.!\s]*$", re.IGNORECASE)
 
 
-# How close a REPLACE quote must be to the fact's text (change fix-fact-removals, D4).
+# How close a REPLACE quote must be to the fact's text.
 _QUOTE_MIN_RATIO = 0.85
 # A quote found inside the fact must cover at least this share of it.
 _QUOTE_MIN_SHARE = 0.5
 _NOT_WORD = re.compile(r"[\W_]+")
 
-
-# --- The duplicate check (change fix-fact-removals, design D3) -----------------------------
 
 _DUPLICATE_PROMPT = """\
 You check a list of short facts about {user} for repeats. Below are a new \

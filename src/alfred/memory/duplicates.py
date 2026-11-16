@@ -1,4 +1,4 @@
-"""The duplicate check of each new fact (change fix-fact-removals, design D2, D3).
+"""The duplicate check of each new fact.
 
 ``FactDuplicateJob`` is a sweeper job that runs after the embedding job. For
 each active, embedded fact whose check is pending, oldest first, it takes up

@@ -1,4 +1,4 @@
-"""The due-reminder loop (change add-reminders, design D4).
+"""The due-reminder loop.
 
 ```
 loop forever:

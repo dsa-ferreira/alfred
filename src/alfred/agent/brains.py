@@ -1,11 +1,11 @@
-"""The brains (models) the admin can switch between, alfred-wide, and the current one (design D1).
+"""The brains (models) the admin can switch between, alfred-wide, and the current one.
 
 The brains are the ``[ai.models]`` aliases plus the ``[ai] model`` tag, which
 is listed under its own tag when no alias names it. The startup brain is the
-one whose tag is ``[ai] model``. Each brain says whether it can see images
-(change add-attachments, design D9): an alias's ``vision``, or ``[ai] vision``
-for the startup brain when no alias names it. The current brain lives only in memory: a
-restart goes back to the startup brain.
+one whose tag is ``[ai] model``. Each brain says whether it can see images: an
+alias's ``vision``, or ``[ai] vision`` for the startup brain when no alias
+names it. The current brain lives only in memory: a restart goes back to the
+startup brain.
 
 The admin switches brains with ``alfred_set_model`` (``alfred.tools.brains``).
 """

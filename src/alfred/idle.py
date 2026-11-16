@@ -1,11 +1,11 @@
-"""Closing idle conversations (change close-idle-conversations, design D3).
+"""Closing idle conversations.
 
 With ``[history] idle_close_after_h`` set, a user's current conversation is
 archived, and a new one started, once that long has passed since the user's
 last own message in it. Notices, ``/ask`` turns and reminders don't count,
 and a conversation with no message from its user is never closed. Nothing is
-sent at that moment: the user's next message gets the marker (design D4,
-``Worker._process``).
+sent at that moment: the user's next message gets the marker
+(``Worker._process``).
 
 ```
 loop forever:
