@@ -21,7 +21,7 @@ configured MCP servers, and runs the tool calls itself. Planning lives in `opens
 | Command        | What it does                                         |
 | -------------- | ---------------------------------------------------- |
 | `make install` | `uv sync` (creates `.venv`, installs dev deps)       |
-| `make lint`    | `ruff check` + `ruff format --check`                 |
+| `make lint`    | `ruff check` + `ruff format --check` + layout check  |
 | `make format`  | `ruff check --fix` + `ruff format`                   |
 | `make test`    | `pytest` (Postgres tests need Docker or Podman)      |
 | `make run`     | `alfred serve` locally (needs `alfred.toml` + `ALFRED_*` env) |

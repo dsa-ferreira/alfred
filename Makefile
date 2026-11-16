@@ -16,6 +16,7 @@ install:
 lint:
 	$(UV) run ruff check .
 	$(UV) run ruff format --check .
+	$(UV) run python scripts/check_layout.py
 
 format:
 	$(UV) run ruff check --fix .
