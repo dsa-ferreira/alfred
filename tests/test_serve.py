@@ -20,6 +20,7 @@ from alfred.agent.inline import InlineAttachments
 from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
+from alfred.brains.tools import BrainTools
 from alfred.config import AttachmentsConfig, BrainEntry, S3Key, _ServerConfig
 from alfred.idle import IdleCloser
 from alfred.mcp.toolset import McpTools
@@ -27,10 +28,9 @@ from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch, MemoryTools
 from alfred.memory.sweeper import Sweeper
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.brains import BrainTools
-from alfred.tools.calculator import CalculatorTools
+from alfred.toolbox.calculator import CalculatorTools
+from alfred.toolbox.dates import DateTools
 from alfred.tools.conversation import ConversationTools
-from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
 from tests.helpers import FakeStore, make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession

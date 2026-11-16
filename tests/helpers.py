@@ -16,7 +16,7 @@ from alfred.app import _build_toolsets
 from alfred.attachments import NewAttachment
 from alfred.attachments.store import StoreError, _StoredObject
 from alfred.attachments.tools import AttachmentTools
-from alfred.brains import Brains
+from alfred.brains.registry import Brains
 from alfred.config import (
     AIConfig,
     AttachmentsConfig,

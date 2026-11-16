@@ -7,7 +7,7 @@ alias's ``vision``, or ``[ai] vision`` for the startup brain when no alias
 names it. The current brain lives only in memory: a restart goes back to the
 startup brain.
 
-The admin switches brains with ``alfred_set_model`` (``alfred.tools.brains``).
+The admin switches brains with ``alfred_set_model`` (``alfred.brains.tools``).
 """
 
 from __future__ import annotations

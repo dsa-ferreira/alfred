@@ -10,7 +10,7 @@ import pytest
 
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
-from alfred.tools.dates import _DATE, _DATE_TOOL, DateTools
+from alfred.toolbox.dates import _DATE, _DATE_TOOL, DateTools
 from tests.helpers import DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")

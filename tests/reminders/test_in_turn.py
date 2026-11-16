@@ -17,9 +17,9 @@ from alfred.kernel.users import Users
 from alfred.llm.chat import ModelUnreachable
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
-from alfred.tools.calculator import _CALCULATE
+from alfred.toolbox.calculator import _CALCULATE
+from alfred.toolbox.dates import _DATE
 from alfred.tools.conversation import _END_CONVERSATION
-from alfred.tools.dates import _DATE
 from tests.agent.turn_helpers import (
     DUE,
     LISBON,

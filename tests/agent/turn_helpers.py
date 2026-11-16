@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.messages import strip_stamp
 from alfred.agent.prompts import _CALCULATE, _DATE, _operating_rules
 from alfred.agent.turn import Agent, TurnResult
-from alfred.brains import Brains
+from alfred.brains.registry import Brains
+from alfred.brains.tools import _SET_MODEL
 from alfred.db.models import TurnToolCall
 from alfred.history import History
 from alfred.kernel.turn import ChatTurn, ReminderTurn, Resume, TurnInput
@@ -28,7 +29,6 @@ from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.brains import _SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH, WebTools

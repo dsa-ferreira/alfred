@@ -7,8 +7,8 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.kernel.turn import AskTurn
-from alfred.tools.calculator import _CALCULATE
-from alfred.tools.dates import _DATE
+from alfred.toolbox.calculator import _CALCULATE
+from alfred.toolbox.dates import _DATE
 from tests.agent.turn_helpers import agent, owner_turn, tool_result, tool_rows
 from tests.helpers import DIOGO, FakeModel, add_queue_item, calls, text
 

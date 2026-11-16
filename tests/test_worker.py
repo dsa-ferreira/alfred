@@ -18,7 +18,7 @@ from alfred.agent.messages import strip_stamp
 from alfred.agent.prompts import _NO_REPLY
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
-from alfred.brains import Brains
+from alfred.brains.registry import Brains
 from alfred.config import QueueConfig
 from alfred.db.models import Attachment, Entry, QueueItem
 from alfred.history import History

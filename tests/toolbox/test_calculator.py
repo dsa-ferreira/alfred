@@ -9,7 +9,7 @@ import pytest
 
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
-from alfred.tools.calculator import _CALCULATE, _CALCULATE_TOOL, CalculatorTools
+from alfred.toolbox.calculator import _CALCULATE, _CALCULATE_TOOL, CalculatorTools
 from tests.helpers import DIOGO
 
 OWNER = ChatTurn("what's 347 times 28.5?", 1, user=DIOGO)

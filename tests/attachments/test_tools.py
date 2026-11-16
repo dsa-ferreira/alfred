@@ -19,7 +19,7 @@ from alfred.attachments.tools import (
     _VISION_NOTE,
     AttachmentTools,
 )
-from alfred.brains import Brains
+from alfred.brains.registry import Brains
 from alfred.config import AttachmentsConfig, BrainEntry
 from alfred.history import History
 from alfred.kernel.access import AllowList

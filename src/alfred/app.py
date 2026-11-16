@@ -33,7 +33,8 @@ from alfred.attachments.intake import Intake
 from alfred.attachments.store import S3Store
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
-from alfred.brains import Brains
+from alfred.brains.registry import Brains
+from alfred.brains.tools import BrainTools
 from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.history import History
@@ -65,10 +66,9 @@ from alfred.telegram.bot import (
     make_dispatcher,
     register_commands,
 )
-from alfred.tools.brains import BrainTools
-from alfred.tools.calculator import CalculatorTools
+from alfred.toolbox.calculator import CalculatorTools
+from alfred.toolbox.dates import DateTools
 from alfred.tools.conversation import ConversationTools
-from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
 from alfred.worker import Worker
 

@@ -2,7 +2,7 @@
 
 Offered on the admin's chat turns when there is more than one brain,
 whatever other users' allow-lists say. The brains and the current one live
-in ``alfred.brains``; a switch applies alfred-wide from the next turn.
+in ``alfred.brains.registry``; a switch applies alfred-wide from the next turn.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from alfred.brains import Brains
+from alfred.brains.registry import Brains
 from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,
