@@ -6,9 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments import NewAttachment
-from alfred.db.models import Attachment, QueueItem
+from alfred.attachments.tables import Attachment
 from alfred.reminders.store import Reminders
 from alfred.turns.queue import Queue
+from alfred.turns.tables import QueueItem
 
 
 class Ticks:

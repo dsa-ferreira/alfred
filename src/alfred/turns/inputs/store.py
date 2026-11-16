@@ -30,11 +30,11 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.conversations.store import History
-from alfred.db.models import InputRequest, QueueItem
 from alfred.kernel.questions import Question
 from alfred.kernel.users import Users
 from alfred.turns.inputs import notices
 from alfred.turns.queue import turn_kind
+from alfred.turns.tables import InputRequest, QueueItem
 
 log = logging.getLogger(__name__)
 

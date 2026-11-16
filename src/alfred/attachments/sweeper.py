@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments.store import PREFIX, ObjectStore, StoreError
-from alfred.db.models import Attachment
+from alfred.attachments.tables import Attachment
 
 log = logging.getLogger(__name__)
 

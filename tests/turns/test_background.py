@@ -9,15 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
-from alfred.db.models import Conversation, Fact, QueueItem
+from alfred.conversations.tables import Conversation
 from alfred.facts.duplicate_job import FactDuplicateJob
 from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.store import FactStore
+from alfred.facts.tables import Fact
 from alfred.llm.chat import ModelReply, ModelUnreachable
 from alfred.llm.embedding import _EmbeddingUnreachable
 from alfred.turns.background import Sweeper
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.queue import Queue
+from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
 from tests.archive.test_summaries import REPLY, archived, row
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing

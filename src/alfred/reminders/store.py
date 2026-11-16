@@ -26,8 +26,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.db.models import QueueItem, Reminder, ReminderRecipient
+from alfred.reminders.tables import Reminder, ReminderRecipient
 from alfred.reminders.when import Rule, latest_occurrence, next_occurrence
+from alfred.turns.tables import QueueItem
 
 _UTC_ZONE = ZoneInfo("UTC")
 

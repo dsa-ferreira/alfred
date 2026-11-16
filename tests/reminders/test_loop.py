@@ -7,9 +7,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.db.models import QueueItem
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.store import Reminders
+from alfred.turns.tables import QueueItem
 
 DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
 
@@ -58,7 +58,7 @@ async def test_reminder_comes_due(sessions: async_sessionmaker[AsyncSession]) ->
     row = await store.get(rid)
     assert row is not None
     async with sessions() as session:
-        from alfred.db.models import Reminder
+        from alfred.reminders.tables import Reminder
 
         fired = await session.get(Reminder, rid)
         assert fired is not None and fired.fired_at == DUE  # queued at 17:00:00 exactly

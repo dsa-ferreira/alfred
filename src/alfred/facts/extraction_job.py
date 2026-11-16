@@ -31,8 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.backoff import RetryDelays, backoff_s
+from alfred.conversations.tables import Conversation
 from alfred.conversations.transcript import cut_middle, load_transcript, render
-from alfred.db.models import Conversation
 from alfred.facts.config import FactsConfig
 from alfred.facts.extraction_prompt import (
     ExtractionParseError,

@@ -1,1 +1,1 @@
-"""Database: models, engine and migrations."""
+"""Database: the declarative base, engine and migrations."""

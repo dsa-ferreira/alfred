@@ -22,7 +22,6 @@ from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
 from alfred.config import _MemoryConfig
 from alfred.conversations.store import History
-from alfred.db.models import TurnToolCall
 from alfred.facts.tools import FactTools
 from alfred.kernel.turn import ChatTurn, ReminderTurn, Resume, TurnInput
 from alfred.kernel.users import User, Users
@@ -31,6 +30,7 @@ from alfred.mcp.registry import ServerInstructions
 from alfred.mcp.toolset import _server_instructions
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
+from alfred.turns.tables import TurnToolCall
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH, WebTools

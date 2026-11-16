@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.config import ArchiveConfig
 from alfred.conversations.current import current_id
+from alfred.conversations.tables import Conversation, Entry
 from alfred.conversations.transcript import (
     TranscriptEntry,
     date_span,
@@ -29,7 +30,6 @@ from alfred.conversations.transcript import (
     recall_label,
     render,
 )
-from alfred.db.models import Conversation, Entry
 from alfred.kernel.toolset import (
     ToolOutcome,
 )

@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alfred.db.models import Conversation
+from alfred.conversations.tables import Conversation
 
 
 async def current_id(

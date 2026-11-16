@@ -31,11 +31,11 @@ from alfred.agent.prompts import is_no_reply
 from alfred.agent.results import TurnFailed
 from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History
-from alfred.db.models import QueueItem
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.kernel.users import User
 from alfred.reminders import notices as reminders_notices
 from alfred.reminders.store import ReminderRow
+from alfred.turns.tables import QueueItem
 
 log = logging.getLogger(__name__)
 

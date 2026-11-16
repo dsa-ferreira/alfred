@@ -38,7 +38,6 @@ from alfred.agent.results import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
 from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History
-from alfred.db.models import QueueItem
 from alfred.kernel.outbox import Outbox
 from alfred.kernel.turn import TurnInput
 from alfred.kernel.users import User, Users
@@ -48,6 +47,7 @@ from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import RequestRow
 from alfred.turns.kinds import AskKind, ChatKind, Kind, ReminderKind, ReminderLookup
 from alfred.turns.queue import Queue, TurnKind, turn_kind
+from alfred.turns.tables import QueueItem
 
 log = logging.getLogger(__name__)
 

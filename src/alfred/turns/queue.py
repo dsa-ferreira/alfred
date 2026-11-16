@@ -25,7 +25,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments import NewAttachment
-from alfred.db.models import Attachment, AttachmentPage, QueueItem
+from alfred.attachments.tables import Attachment, AttachmentPage
+from alfred.turns.tables import QueueItem
 
 log = logging.getLogger(__name__)
 

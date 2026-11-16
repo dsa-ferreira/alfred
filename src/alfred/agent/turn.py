@@ -69,7 +69,6 @@ from alfred.agent.results import Fallback, TurnFailed, TurnResult, Waiting
 from alfred.brains.registry import Brain, Brains
 from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History, HistoryEntry
-from alfred.db.models import TurnToolCall
 from alfred.facts.config import FactsConfig
 from alfred.kernel.access import Confirmed, Gated
 from alfred.kernel.questions import InputNeed
@@ -86,6 +85,7 @@ from alfred.kernel.turn import ChatTurn, Resume, TurnInput
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.times import format_now, format_when
+from alfred.turns.tables import TurnToolCall
 
 log = logging.getLogger(__name__)
 

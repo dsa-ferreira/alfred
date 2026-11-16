@@ -12,10 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.messages import _STAMP, Inline, strip_stamp, to_messages
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.conversations.store import History, HistoryEntry
+from alfred.conversations.tables import Conversation, Entry
 from alfred.db.engine import make_engine, make_session_factory
-from alfred.db.models import Conversation, Entry, QueueItem, Reminder
 from alfred.kernel.content import ModelImage
 from alfred.reminders.store import Reminders
+from alfred.reminders.tables import Reminder
+from alfred.turns.tables import QueueItem
 from tests.fakes import ignore
 from tests.helpers import add_queue_item, image_file, owner_with_files, pdf_file
 

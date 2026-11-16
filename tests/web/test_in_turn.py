@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
 from alfred.conversations.store import History
+from alfred.conversations.tables import Conversation, Entry
 from alfred.conversations.tools import _END_CONVERSATION
-from alfred.db.models import Conversation, Entry
 from alfred.kernel.turn import AskTurn
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (

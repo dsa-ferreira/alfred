@@ -11,8 +11,8 @@ from typing import ClassVar, Protocol
 from sqlalchemy import select, union
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.db.models import Attachment, Conversation, QueueItem, Reminder, ReminderRecipient
 from alfred.kernel.users import Users
+from alfred.schema import USER_NAME_COLUMNS
 from alfred.settings import ConfigError
 
 log = logging.getLogger(__name__)
@@ -59,13 +59,7 @@ async def warn_unknown_users(
 
 async def _stored_user_names(sessions: async_sessionmaker[AsyncSession]) -> set[str]:
     """Every user name some row refers to."""
-    query = union(
-        select(Conversation.user_name),
-        select(QueueItem.user_name),
-        select(Attachment.user_name),
-        select(Reminder.created_by),
-        select(ReminderRecipient.user_name),
-    )
+    query = union(*(select(column) for column in USER_NAME_COLUMNS))
     async with sessions() as session:
         return set(await session.scalars(select(query.subquery().c[0])))
 

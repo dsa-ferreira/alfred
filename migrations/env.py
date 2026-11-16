@@ -11,14 +11,14 @@ from sqlalchemy import Connection, pool
 from sqlalchemy.engine import create_engine
 
 from alfred.config import load_database_url
-from alfred.db.models import Base
+from alfred.schema import metadata
 
 _config = context.config
 
 if _config.config_file_name is not None:
     fileConfig(_config.config_file_name, disable_existing_loggers=False)
 
-_target_metadata = Base.metadata
+_target_metadata = metadata
 
 
 def _url() -> str:

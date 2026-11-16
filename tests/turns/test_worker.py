@@ -18,12 +18,13 @@ from alfred.agent.messages import strip_stamp
 from alfred.agent.prompts import _NO_REPLY
 from alfred.archive.summaries import Summaries
 from alfred.attachments import NewAttachment
+from alfred.attachments.tables import Attachment
 from alfred.backoff import backoff_s
 from alfred.brains.registry import Brains
 from alfred.conversations.notices import reset_marker
 from alfred.conversations.store import History
+from alfred.conversations.tables import Entry
 from alfred.conversations.tools import _END_CONVERSATION
-from alfred.db.models import Attachment, Entry, QueueItem
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelUnreachable
@@ -34,6 +35,7 @@ from alfred.turns import notices as turns_notices
 from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.queue import Queue
+from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import (

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.search import _OMITTED, ConversationSearch
 from alfred.conversations.store import History
-from alfred.db.models import Entry
+from alfred.conversations.tables import Entry
 from tests.archive.test_search import at, seed
 from tests.helpers import FakeEmbedder, make_config
 

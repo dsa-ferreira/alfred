@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.messages import to_messages
 from alfred.conversations.store import History
-from alfred.db.models import InputRequest, QueueItem
 from alfred.kernel.questions import Option, Question
 from alfred.kernel.users import Users
 from alfred.turns.inputs import notices
 from alfred.turns.inputs.store import InputRequests
+from alfred.turns.tables import InputRequest, QueueItem
 from tests.helpers import ANA, DIOGO, add_queue_item
 
 QUESTION = Question(

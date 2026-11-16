@@ -26,14 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.attachments.handles import AttachmentRef, refs_by_entry
+from alfred.attachments.tables import Attachment
 from alfred.conversations.current import current_id
-from alfred.db.models import (
-    Attachment,
-    Conversation,
-    Entry,
-    QueueItem,
-    Reminder,
-)
+from alfred.conversations.tables import Conversation, Entry
+from alfred.reminders.tables import Reminder
+from alfred.turns.tables import QueueItem
 
 _EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"

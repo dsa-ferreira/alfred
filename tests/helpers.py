@@ -24,7 +24,6 @@ from alfred.brains.registry import Brains
 from alfred.config import Config, _AIConfig, _MemoryConfig
 from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History
-from alfred.db.models import QueueItem
 from alfred.facts.tools import FactTools
 from alfred.http.config import ServerConfig, Service
 from alfred.kernel.access import AllowList
@@ -37,6 +36,7 @@ from alfred.reminders.tools import ReminderTools
 from alfred.turns.background import Sweeper
 from alfred.turns.config import QueueConfig
 from alfred.turns.queue import Queue
+from alfred.turns.tables import QueueItem
 from alfred.web.config import WebConfig
 from alfred.web.tools import WebTools
 from tests.fakes import NoFacts

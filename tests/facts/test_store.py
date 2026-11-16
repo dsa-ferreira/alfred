@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.db.models import Fact
 from alfred.facts.store import _DUPLICATE_CANDIDATES, FactsNotFound, FactStore, _DuplicateCheck
+from alfred.facts.tables import Fact
 from alfred.llm.embedding import _EmbeddingUnreachable
 from tests.helpers import FakeEmbedder, make_config
 

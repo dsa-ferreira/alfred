@@ -19,9 +19,9 @@ from alfred.agent import notices as agent_notices
 from alfred.attachments import notices as attachments_notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, Intake
+from alfred.attachments.tables import Attachment
 from alfred.config import _MemoryConfig
 from alfred.conversations.store import History
-from alfred.db.models import Attachment, QueueItem
 from alfred.facts import notices as facts_notices
 from alfred.facts.store import FactStore
 from alfred.kernel.access import _confirm_question
@@ -38,6 +38,7 @@ from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
 from alfred.turns.inputs.titles import title
 from alfred.turns.queue import Queue
+from alfred.turns.tables import QueueItem
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
 from tests.fakes import (
@@ -729,7 +730,7 @@ async def test_long_memory_list_is_split(sessions: async_sessionmaker[AsyncSessi
 
 
 async def test_memory_is_not_recorded(sessions: async_sessionmaker[AsyncSession]) -> None:
-    from alfred.db.models import Entry
+    from alfred.conversations.tables import Entry
 
     dispatcher, store = memory_dispatcher(sessions)
     await store.add("diogo", "allergic to shellfish", "told")

@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
-from alfred.db.models import Conversation
+from alfred.conversations.tables import Conversation
 
 
 class SummaryJob:

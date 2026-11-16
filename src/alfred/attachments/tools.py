@@ -28,8 +28,8 @@ from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.handles import AttachmentRef, handle, has_text, ref_query
 from alfred.attachments.loading import load_image
 from alfred.attachments.store import ObjectStore, StoreError
+from alfred.attachments.tables import Attachment, AttachmentPage
 from alfred.brains.registry import Brains
-from alfred.db.models import Attachment, AttachmentPage
 from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,

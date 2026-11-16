@@ -34,8 +34,8 @@ from sqlalchemy import func, insert, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.backoff import RetryDelays, backoff_s
-from alfred.db.models import Fact
 from alfred.facts.config import FactsConfig
+from alfred.facts.tables import Fact
 from alfred.llm.embedding import EmbeddingError
 from alfred.llm.protocols import Embedder
 

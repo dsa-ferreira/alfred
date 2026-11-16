@@ -23,8 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.archive.config import ArchiveConfig
 from alfred.archive.prompts import SummaryParseError, parse_summary, summary_messages
 from alfred.backoff import RetryDelays, backoff_s
+from alfred.conversations.tables import Conversation
 from alfred.conversations.transcript import TranscriptEntry, cut_middle, load_transcript, render
-from alfred.db.models import Conversation
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.embedding import EmbeddingError
 from alfred.llm.protocols import ChatModel, Embedder

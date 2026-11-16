@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.archive.prompts import _SUMMARY_PROMPT
 from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
-from alfred.db.models import Conversation
+from alfred.conversations.tables import Conversation
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.llm.embedding import _EmbeddingUnreachable
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text

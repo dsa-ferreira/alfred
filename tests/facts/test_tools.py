@@ -78,7 +78,7 @@ async def test_remember_refuses_empty_or_long_text(
 
 async def test_remember_a_duplicate(sessions: async_sessionmaker[AsyncSession]) -> None:
     """Saved and embedded; the duplicate check runs later, in the background."""
-    from alfred.db.models import Fact
+    from alfred.facts.tables import Fact
 
     tools = fact_tools(sessions, FakeEmbedder(default=[1.0, 0.0]))
     await remember(tools, {"text": "allergic to shellfish"})

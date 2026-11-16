@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.attachments import notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
-from alfred.db.models import Attachment, AttachmentPage, QueueItem
+from alfred.attachments.tables import Attachment, AttachmentPage
 from alfred.turns.queue import Queue
+from alfred.turns.tables import QueueItem
 from tests.attachments.files import image_bytes, text_pdf
 from tests.helpers import DIOGO, FakeStore
 

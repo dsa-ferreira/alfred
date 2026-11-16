@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent import notices as agent_notices
 from alfred.agent.prompts import _NO_REPLY
-from alfred.db.models import InputRequest
 from alfred.kernel.access import AllowList
 from alfred.kernel.questions import Question
 from alfred.kernel.users import User, Users
@@ -18,6 +17,7 @@ from alfred.turns.inputs import notices as inputs_notices
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests, RequestRow
+from alfred.turns.tables import InputRequest
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import tool_rows
 from tests.fakes import ignore, no_typing

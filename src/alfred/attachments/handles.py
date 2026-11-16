@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alfred.db.models import Attachment, AttachmentPage
+from alfred.attachments.tables import Attachment, AttachmentPage
 
 # A page "has text" from this many characters on, so a stray page number on
 # a scanned page doesn't count as a text layer.

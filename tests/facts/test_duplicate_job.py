@@ -11,10 +11,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
-from alfred.db.models import Fact
 from alfred.facts.duplicate_job import FactDuplicateJob
 from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.store import FactStore
+from alfred.facts.tables import Fact
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.turns.queue import Queue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, make_sweeper, text
@@ -278,7 +278,7 @@ async def test_sweeper_checks_only_while_the_queue_is_quiet(
         assert model.requests == []  # ...the check does
         from sqlalchemy import update
 
-        from alfred.db.models import QueueItem
+        from alfred.turns.tables import QueueItem
 
         async with sessions.begin() as session:
             await session.execute(update(QueueItem).values(status="done"))

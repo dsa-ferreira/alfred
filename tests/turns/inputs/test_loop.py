@@ -9,13 +9,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.conversations.store import History
-from alfred.db.models import QueueItem
 from alfred.kernel.access import _confirm_question
 from alfred.kernel.users import User, Users
 from alfred.telegram.questions import ended_html
 from alfred.turns.inputs import notices
 from alfred.turns.inputs.loop import _expire_once, run_expiry_loop
 from alfred.turns.inputs.store import InputRequests, RequestRow
+from alfred.turns.tables import QueueItem
 from tests.helpers import ANA, DIOGO, add_queue_item
 
 USERS = Users((DIOGO, ANA))

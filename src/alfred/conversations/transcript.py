@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
-from alfred.db.models import Conversation, Entry
+from alfred.conversations.tables import Conversation, Entry
 
 _QUOTES = "\"'“”‘’`"
 

@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.conversations.idle import IdleCloser
 from alfred.conversations.store import History
-from alfred.db.models import Conversation, Entry, QueueItem
+from alfred.conversations.tables import Conversation, Entry
+from alfred.turns.tables import QueueItem
 from tests.fakes import QuietQueue, ignore
 from tests.helpers import add_queue_item, make_sweeper
 

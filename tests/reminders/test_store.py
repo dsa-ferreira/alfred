@@ -6,9 +6,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.db.models import QueueItem, Reminder
 from alfred.reminders.store import Reminders
+from alfred.reminders.tables import Reminder
 from alfred.reminders.when import parse_rule
+from alfred.turns.tables import QueueItem
 
 NOW = datetime(2026, 11, 9, 16, 47, tzinfo=UTC)
 
