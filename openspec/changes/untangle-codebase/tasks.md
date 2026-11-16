@@ -40,7 +40,7 @@ commit(s). No task changes what a test asserts.
 
 - [x] 5.1 Add a typed `Checkpoint` with `to_json`/`from_json` (design D7), with tests that round-trip it and read stored 0.16.0 and 0.16.1 JSON; verify `to_json` writes the same keys as before
 - [x] 5.2 Use `Checkpoint` in `Waiting`, `Agent` and the resume path in place of `resume.turn["..."]`; verify `grep -rn 'resume.turn\[' src/alfred` finds nothing and the input request tests pass
-- [ ] 5.3 Replace `History.recent()`'s optional filters with two methods (current window, a checkpoint's window); verify the history and turn tests pass with only call sites changed
+- [x] 5.3 Replace `History.recent()`'s optional filters with two methods (current window, a checkpoint's window); verify the history and turn tests pass with only call sites changed
 - [ ] 5.4 Move `_resumed_before`, taking the answered request, and `_park` from `Worker` into one class in `alfred/inputs/`, with their tests; verify `Worker` has no parking logic left and the input request tests pass
 
 ## 6. The turn attempt

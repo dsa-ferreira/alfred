@@ -308,15 +308,14 @@ class Agent:
             )
         else:
             # The entries the turn parked with, whatever was recorded since and
-            # whichever other parked turns ended meanwhile. Turns parked by
-            # 0.16.0 saved no ids: their window up to the newest entry.
-            entries = await self._history.recent(
+            # whichever other parked turns ended meanwhile.
+            entries = await self._history.parked_window(
                 user.name,
                 cfg.history.max_entries,
                 conversation_id=checkpoint.conversation_id,
-                upto_entry_id=checkpoint.upto_entry_id or 0,
-                turn_item_id=turn.queue_item_id,
+                upto_entry_id=checkpoint.upto_entry_id,
                 entry_ids=checkpoint.entry_ids,
+                turn_item_id=turn.queue_item_id,
             )
         state = _State(
             brain,

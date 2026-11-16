@@ -810,7 +810,14 @@ async def test_recent_up_to_an_entry(sessions: async_sessionmaker[AsyncSession])
     upto = await history.append("ana", "assistant", "Shall I?")
     await history.append("ana", "notice", "backup done", source="backup")
     conversation_id = await history.current_conversation_id("ana")
-    entries = await history.recent("ana", 30, conversation_id=conversation_id, upto_entry_id=upto)
+    entries = await history.parked_window(
+        "ana",
+        30,
+        conversation_id=conversation_id,
+        upto_entry_id=upto,
+        entry_ids=None,
+        turn_item_id=None,
+    )
     assert [e.text for e in entries] == ["add Dune", "Shall I?"]
     assert {e.conversation_id for e in entries} == {conversation_id}
     # Without them, the newest entries of the current conversation.
@@ -828,10 +835,16 @@ async def test_recent_reads_an_archived_conversation_by_id(
         await session.execute(update(Entry).values(created_at=func.now() - timedelta(hours=2)))
     await history.append("ana", "notice", "later", source="backup")
     assert await history.current_conversation_id("ana") != conversation_id
-    entries = await history.recent("ana", 30, conversation_id=conversation_id, upto_entry_id=upto)
+    window = {
+        "conversation_id": conversation_id,
+        "upto_entry_id": upto,
+        "entry_ids": None,
+        "turn_item_id": None,
+    }
+    entries = await history.parked_window("ana", 30, **window)
     assert [e.text for e in entries] == ["anything to add?"]
     # Never another user's conversation.
-    assert await history.recent("diogo", 30, conversation_id=conversation_id) == []
+    assert await history.parked_window("diogo", 30, **window) == []
 
 
 async def test_other_parked_turns_are_left_out(
@@ -882,8 +895,7 @@ async def test_recent_by_entry_ids(sessions: async_sessionmaker[AsyncSession]) -
     await history.append("ana", "user", "two")
     third = await history.append("ana", "user", "three")
     conversation_id = await history.current_conversation_id("ana")
-    entries = await history.recent(
-        "ana", 30, conversation_id=conversation_id, entry_ids=[first, third]
-    )
+    window = {"conversation_id": conversation_id, "upto_entry_id": third, "turn_item_id": None}
+    entries = await history.parked_window("ana", 30, entry_ids=[first, third], **window)
     assert [e.text for e in entries] == ["one", "three"]
-    assert await history.recent("ana", 30, conversation_id=conversation_id, entry_ids=[]) == []
+    assert await history.parked_window("ana", 30, entry_ids=[], **window) == []

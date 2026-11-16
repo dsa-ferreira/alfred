@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import ColumnElement, func, select, true, update
+from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -163,91 +163,51 @@ class History:
         return entry_id
 
     async def recent(
+        self, user: str, limit: int, *, turn_item_id: int | None = None
+    ) -> list[HistoryEntry]:
+        """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
+
+        A recall counts as one entry, however long its transcript. With
+        ``turn_item_id`` (the queue item of the turn reading it), the entries
+        of other turns still waiting for their user's answer are left out,
+        before the limit: they have no reply yet, and this turn must not act
+        on them.
+        """
+        where = [Conversation.ended_at.is_(None)]
+        if turn_item_id is not None:
+            where.append(_not_parked(turn_item_id))
+        return await self._read(user, limit, where)
+
+    async def parked_window(
         self,
         user: str,
         limit: int,
         *,
-        conversation_id: int | None = None,
-        upto_entry_id: int | None = None,
-        turn_item_id: int | None = None,
-        entry_ids: Sequence[int] | None = None,
+        conversation_id: int | None,
+        upto_entry_id: int | None,
+        entry_ids: Sequence[int] | None,
+        turn_item_id: int | None,
     ) -> list[HistoryEntry]:
-        """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
+        """The context a turn parked with, read again to resume it.
 
-        A recall counts as one entry, however long its transcript.
-
-        A resumed turn reads the context it parked with: ``conversation_id``
-        reads that conversation of ``user``'s even if it has been archived
-        since, and ``upto_entry_id`` leaves out entries added after that one.
-
-        With ``turn_item_id`` (the queue item of the turn reading it), the
-        entries of other turns still waiting for their user's answer are
-        left out, before the limit: they have no reply yet, and this turn
-        must not act on them. ``entry_ids`` reads exactly those entries
-        (of ``conversation_id``): the context a turn parked with.
+        ``conversation_id`` is read even if it has been archived since, and
+        entries added after ``upto_entry_id`` are left out (``None``: the turn
+        had no entries). ``entry_ids`` are exactly the entries it had, whatever
+        other parked turns did meanwhile; turns parked by 0.16.0 saved none
+        (``None``), and read their window up to ``upto_entry_id``. Other
+        parked turns' entries are left out, as in :meth:`recent`.
         """
-        if conversation_id is None:
-            which = Conversation.ended_at.is_(None)
-        else:
-            which = Conversation.id == conversation_id
-        recalled = aliased(Conversation)
-        async with self._sessions() as session:
-            newest = (
-                select(
-                    Entry.id,
-                    Entry.kind,
-                    Entry.source,
-                    Entry.text,
-                    Entry.recalled_conversation_id,
-                    Entry.reminder_id,
-                    Entry.reminder_due_at,
-                    Entry.created_at,
-                    Entry.conversation_id,
-                )
-                .join(Conversation, Conversation.id == Entry.conversation_id)
-                .where(which, Conversation.user_name == user)
-                .where(Entry.id <= upto_entry_id if upto_entry_id is not None else true())
-                .where(_not_parked(turn_item_id) if turn_item_id is not None else true())
-                .where(Entry.id.in_(entry_ids) if entry_ids is not None else true())
-                .order_by(Entry.id.desc())
-                .limit(limit)
-                .subquery()
-            )
-            rows = await session.execute(
-                select(
-                    newest.c.kind,
-                    newest.c.source,
-                    newest.c.text,
-                    newest.c.recalled_conversation_id,
-                    recalled.title,
-                    recalled.summary,
-                    newest.c.reminder_id,
-                    # The entry's own occurrence: a repeating reminder's row
-                    # has moved on.
-                    newest.c.reminder_due_at,
-                    newest.c.created_at,
-                    newest.c.id,
-                    Reminder.created_by,
-                    newest.c.conversation_id,
-                )
-                .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
-                .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
-                .order_by(newest.c.id)
-            )
-            entries = [
-                HistoryEntry(
-                    *row[:-2],
-                    reminder_set_by=row[-2] if row[-2] not in (None, user) else None,
-                    conversation_id=row[-1],
-                )
-                for row in rows
-            ]
-            user_ids = [e.entry_id for e in entries if e.kind == "user" and e.entry_id]
-            refs = await refs_by_entry(session, user_ids)
-        return [
-            dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
-            for e in entries
+        where = [
+            Conversation.ended_at.is_(None)
+            if conversation_id is None
+            else Conversation.id == conversation_id,
+            Entry.id <= (upto_entry_id or 0),
         ]
+        if turn_item_id is not None:
+            where.append(_not_parked(turn_item_id))
+        if entry_ids is not None:
+            where.append(Entry.id.in_(entry_ids))
+        return await self._read(user, limit, where)
 
     async def reset(self, user: str) -> _Reset:
         """Archive ``user``'s current conversation and start a new one for them."""
@@ -343,6 +303,66 @@ class History:
             if not ids:
                 return None
             return max(ids), await current_id(session, user, lock=False)
+
+    async def _read(
+        self, user: str, limit: int, where: list[ColumnElement[bool]]
+    ) -> list[HistoryEntry]:
+        """The newest ``limit`` of ``user``'s entries that match ``where``, oldest first."""
+        recalled = aliased(Conversation)
+        async with self._sessions() as session:
+            newest = (
+                select(
+                    Entry.id,
+                    Entry.kind,
+                    Entry.source,
+                    Entry.text,
+                    Entry.recalled_conversation_id,
+                    Entry.reminder_id,
+                    Entry.reminder_due_at,
+                    Entry.created_at,
+                    Entry.conversation_id,
+                )
+                .join(Conversation, Conversation.id == Entry.conversation_id)
+                .where(Conversation.user_name == user, *where)
+                .order_by(Entry.id.desc())
+                .limit(limit)
+                .subquery()
+            )
+            rows = await session.execute(
+                select(
+                    newest.c.kind,
+                    newest.c.source,
+                    newest.c.text,
+                    newest.c.recalled_conversation_id,
+                    recalled.title,
+                    recalled.summary,
+                    newest.c.reminder_id,
+                    # The entry's own occurrence: a repeating reminder's row
+                    # has moved on.
+                    newest.c.reminder_due_at,
+                    newest.c.created_at,
+                    newest.c.id,
+                    Reminder.created_by,
+                    newest.c.conversation_id,
+                )
+                .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
+                .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
+                .order_by(newest.c.id)
+            )
+            entries = [
+                HistoryEntry(
+                    *row[:-2],
+                    reminder_set_by=row[-2] if row[-2] not in (None, user) else None,
+                    conversation_id=row[-1],
+                )
+                for row in rows
+            ]
+            user_ids = [e.entry_id for e in entries if e.kind == "user" and e.entry_id]
+            refs = await refs_by_entry(session, user_ids)
+        return [
+            dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
+            for e in entries
+        ]
 
 
 @dataclass(frozen=True)
