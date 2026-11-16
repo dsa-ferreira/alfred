@@ -61,7 +61,7 @@ commit(s). No task changes what a test asserts.
 
 ## 9. Final checks
 
-- [ ] 9.1 Re-run the package import graph and the layout check over the whole tree; verify no package pair imports each other and `make lint` and `make test` pass
+- [x] 9.1 Re-run the package import graph and the layout check over the whole tree; verify no package pair imports each other and `make lint` and `make test` pass
 - [ ] 9.2 Build the image (`make image`, after bumping the version as usual) and run it against a parked turn created by the previous image; verify the turn resumes
 
 ## Workflow follow-up
