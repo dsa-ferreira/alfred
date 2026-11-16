@@ -26,10 +26,10 @@ import uvicorn
 from aiogram import Bot
 
 from alfred.agent.brains import Brains
+from alfred.agent.inline import InlineAttachments
 from alfred.agent.model import ModelClient
 from alfred.agent.turn import Agent
 from alfred.api import create_app
-from alfred.attachments.inline import InlineAttachments
 from alfred.attachments.intake import Intake
 from alfred.attachments.store import S3Store
 from alfred.attachments.sweeper import OrphanSweeper

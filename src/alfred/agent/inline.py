@@ -19,8 +19,7 @@ from collections.abc import Sequence
 from alfred.agent.messages import Inline
 from alfred.attachments import Unreadable
 from alfred.attachments.handles import AttachmentRef, handle
-from alfred.attachments.images import for_model_async
-from alfred.attachments.pdf import render_page_async
+from alfred.attachments.loading import load_image
 from alfred.attachments.store import ObjectStore, StoreError
 from alfred.config import AttachmentsConfig
 from alfred.history import HistoryEntry
@@ -53,14 +52,6 @@ class ImageCache:
         except (StoreError, Unreadable, ValueError) as exc:
             log.warning("attachment #%s is not available: %s", ref.id, exc)
             return None
-
-
-async def load_image(store: ObjectStore, ref: AttachmentRef, page: int, max_px: int) -> ModelImage:
-    """Fetch the file and prepare it; raises :class:`StoreError` or :class:`Unreadable`."""
-    data = await store.get(ref.object_key)
-    if ref.kind == "pdf":
-        return await render_page_async(data, page, max_px)
-    return await for_model_async(data, max_px)
 
 
 class InlineAttachments:

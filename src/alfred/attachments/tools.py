@@ -28,11 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.brains import Brains
 from alfred.attachments import Unreadable
 from alfred.attachments.handles import AttachmentRef, handle, has_text, ref_query
-from alfred.attachments.inline import load_image
+from alfred.attachments.loading import load_image
 from alfred.attachments.store import ObjectStore, StoreError
 from alfred.config import AttachmentsConfig
+from alfred.db.conversations import current_id
 from alfred.db.models import Attachment, AttachmentPage, Entry
-from alfred.history import current_id
 from alfred.tools.base import (
     AttemptContext,
     LocalToolset,

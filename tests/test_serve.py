@@ -16,7 +16,7 @@ from aiogram.types import User
 from pydantic import SecretStr
 
 import alfred.app
-from alfred.attachments.inline import InlineAttachments
+from alfred.agent.inline import InlineAttachments
 from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools

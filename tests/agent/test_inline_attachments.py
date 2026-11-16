@@ -11,9 +11,9 @@ from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
+from alfred.agent.inline import InlineAttachments
 from alfred.agent.messages import strip_stamp
 from alfred.agent.turn import Agent
-from alfred.attachments.inline import InlineAttachments
 from alfred.config import AttachmentsConfig, BrainEntry
 from alfred.history import History
 from alfred.tools.base import TurnInput
