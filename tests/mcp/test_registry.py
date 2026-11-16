@@ -8,13 +8,27 @@ from contextlib import asynccontextmanager
 
 import pytest
 from mcp import Client
+from mcp.types import (
+    CreateMessageRequest,
+    CreateMessageRequestParams,
+    ElicitRequest,
+    ElicitRequestFormParams,
+    ElicitRequestURLParams,
+    ElicitResult,
+    InputRequiredResult,
+    SamplingMessage,
+    TextContent,
+)
 
 from alfred.config import McpServer
-from alfred.mcp.registry import build_turn_tools, call_tool, tool_name
+from alfred.mcp.registry import build_turn_tools, call_tool, classify, tool_name
+from alfred.tools.base import ToolOutcome
 from tests.mcp.servers import (
     COOKBOOK_INSTRUCTIONS,
     config,
+    counting,
     in_process,
+    make_asking,
     make_cookbook,
     make_mcparr,
 )
@@ -296,3 +310,152 @@ async def test_truncated_result() -> None:
     assert outcome.ok
     full = json.dumps({"result": "x" * 10_000})
     assert outcome.text == full[:100] + f"\n[truncated: {len(full) - 100} more characters]"
+
+
+# --- Server questions (change add-user-input-requests) -------------------------------
+
+
+async def ask(tool: str, arguments: str = "{}") -> tuple[ToolOutcome, list[str], list[str]]:
+    """Call an asking mcparr tool: the outcome, the connections opened, the bodies that ran."""
+    ran: list[str] = []
+    opened: list[str] = []
+    connect = counting(in_process({"mcparr": make_asking(ran=ran)}), opened)
+    turn = await build_turn_tools([MCPARR], connect, 5)
+    opened.clear()
+    outcome = await call_tool(
+        turn, f"mcparr_{tool}", arguments, connect=connect, call_timeout_s=5, max_chars=999
+    )
+    return outcome, opened, ran
+
+
+def buttons(outcome: ToolOutcome) -> list[tuple[str, object]]:
+    assert outcome.need is not None, outcome
+    return [(o.label, o.answer) for o in outcome.need.question.options]
+
+
+async def test_empty_form_gives_yes_and_no() -> None:
+    outcome, _, ran = await ask("add_media", '{"title": "Dune"}')
+    assert buttons(outcome) == [
+        ("Yes", {"action": "accept", "content": {}}),
+        ("No", {"action": "decline"}),
+    ]
+    assert outcome.need is not None
+    question, state = outcome.need.question, outcome.need.state
+    assert question.body == "mcparr asks: Add 'Dune' to the library?"
+    assert question.detail == "mcparr_add_media"
+    assert state["via"] == "mcp" and state["round"] == 1
+    assert state["key"] == "tests.mcp.servers:confirm_add" and state["request_state"]
+    assert ran == []
+    # Every answer is a valid ElicitResult.
+    for _, answer in buttons(outcome):
+        ElicitResult.model_validate(answer)
+
+
+async def test_one_boolean_gives_yes_no_cancel() -> None:
+    outcome, _, _ = await ask("replace")
+    assert buttons(outcome) == [
+        ("Yes", {"action": "accept", "content": {"sure": True}}),
+        ("No", {"action": "accept", "content": {"sure": False}}),
+        ("Cancel", {"action": "decline"}),
+    ]
+
+
+async def test_choices_give_one_button_each_and_cancel() -> None:
+    outcome, _, _ = await ask("pick_quality")
+    assert buttons(outcome) == [
+        ("1080p", {"action": "accept", "content": {"quality": "1080p"}}),
+        ("4K", {"action": "accept", "content": {"quality": "4K"}}),
+        ("Cancel", {"action": "decline"}),
+    ]
+
+
+def _elicit(schema: dict) -> InputRequiredResult:
+    return InputRequiredResult(
+        input_requests={
+            "k": ElicitRequest(
+                params=ElicitRequestFormParams(message="Pick", requested_schema=schema)
+            )
+        },
+        request_state="s",
+    )
+
+
+def test_titled_choices_use_their_titles() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "quality": {
+                "type": "string",
+                "oneOf": [{"const": "hd", "title": "1080p"}, {"const": "uhd", "title": "4K"}],
+            }
+        },
+    }
+    outcome = classify("mcparr", "mcparr_pick", _elicit(schema), 1)
+    assert buttons(outcome) == [
+        ("1080p", {"action": "accept", "content": {"quality": "hd"}}),
+        ("4K", {"action": "accept", "content": {"quality": "uhd"}}),
+        ("Cancel", {"action": "decline"}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool", "what"),
+    [
+        ("name_it", "a string field"),
+        ("two_fields", "2 fields"),
+        ("nine_choices", "9 choices"),
+        ("batched", "2 questions at once"),
+    ],
+)
+async def test_questions_alfred_cant_show(tool: str, what: str) -> None:
+    outcome, opened, ran = await ask(tool)
+    assert outcome == ToolOutcome(
+        False,
+        f"Error: mcparr asked for input alfred can't show ({what}); the call did not complete.",
+    )
+    # Nothing was sent back: one connection, and the tool never ran.
+    assert opened == ["mcparr"] and ran == []
+
+
+async def test_sampling_request_is_an_error_result() -> None:
+    # The server refuses it first, as alfred declares no sampling.
+    outcome, opened, ran = await ask("summarise")
+    assert not outcome.ok and outcome.need is None and "sampling" in outcome.text
+    assert opened == ["mcparr"] and ran == []
+
+
+def test_url_and_sampling_requests_cant_be_shown() -> None:
+    url = InputRequiredResult(
+        input_requests={
+            "k": ElicitRequest(
+                params=ElicitRequestURLParams(
+                    message="Log in", url="https://example.com", elicitation_id="e"
+                )
+            )
+        },
+        request_state="s",
+    )
+    sampling = InputRequiredResult(
+        input_requests={
+            "k": CreateMessageRequest(
+                params=CreateMessageRequestParams(
+                    messages=[
+                        SamplingMessage(role="user", content=TextContent(type="text", text="x"))
+                    ],
+                    max_tokens=5,
+                )
+            )
+        },
+    )
+    assert "(url mode)" in classify("mcparr", "t", url, 1).text
+    assert "(a sampling/createMessage request)" in classify("mcparr", "t", sampling, 1).text
+
+
+async def test_ordinary_calls_are_unchanged() -> None:
+    connect = in_process({"mcparr": make_mcparr()})
+    turn = await build_turn_tools([MCPARR], connect, 5)
+    outcome = await call_tool(
+        turn, "mcparr_add_media", '{"title": "Dune"}', connect=connect, call_timeout_s=5,
+        max_chars=999,
+    )  # fmt: skip
+    assert outcome == ToolOutcome(True, json.dumps({"result": "added Dune"}))

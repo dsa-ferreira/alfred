@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -62,6 +62,7 @@ class HistoryEntry:
     attachments: tuple[AttachmentRef, ...] = ()
     # For reminder entries: who set it, when not the conversation's user.
     reminder_set_by: str | None = None
+    conversation_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -187,11 +188,27 @@ class History:
             self._on_archive()
         return entry_id
 
-    async def recent(self, user: str, limit: int) -> list[HistoryEntry]:
+    async def recent(
+        self,
+        user: str,
+        limit: int,
+        *,
+        conversation_id: int | None = None,
+        upto_entry_id: int | None = None,
+    ) -> list[HistoryEntry]:
         """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
 
         A recall counts as one entry, however long its transcript.
+
+        A resumed turn reads the context it parked with (change
+        add-user-input-requests, design D3): ``conversation_id`` reads that
+        conversation of ``user``'s even if it has been archived since, and
+        ``upto_entry_id`` leaves out entries added after that one.
         """
+        if conversation_id is None:
+            which = Conversation.ended_at.is_(None)
+        else:
+            which = Conversation.id == conversation_id
         recalled = aliased(Conversation)
         async with self._sessions() as session:
             newest = (
@@ -204,9 +221,11 @@ class History:
                     Entry.reminder_id,
                     Entry.reminder_due_at,
                     Entry.created_at,
+                    Entry.conversation_id,
                 )
                 .join(Conversation, Conversation.id == Entry.conversation_id)
-                .where(Conversation.ended_at.is_(None), Conversation.user_name == user)
+                .where(which, Conversation.user_name == user)
+                .where(Entry.id <= upto_entry_id if upto_entry_id is not None else true())
                 .order_by(Entry.id.desc())
                 .limit(limit)
                 .subquery()
@@ -226,6 +245,7 @@ class History:
                     newest.c.created_at,
                     newest.c.id,
                     Reminder.created_by,
+                    newest.c.conversation_id,
                 )
                 .outerjoin(recalled, recalled.id == newest.c.recalled_conversation_id)
                 .outerjoin(Reminder, Reminder.id == newest.c.reminder_id)
@@ -233,8 +253,9 @@ class History:
             )
             entries = [
                 HistoryEntry(
-                    *row[:-1],
-                    reminder_set_by=row[-1] if row[-1] not in (None, user) else None,
+                    *row[:-2],
+                    reminder_set_by=row[-2] if row[-2] not in (None, user) else None,
+                    conversation_id=row[-1],
                 )
                 for row in rows
             ]
@@ -281,7 +302,7 @@ class History:
 
         Returns ``None`` and changes nothing if it is no longer current, its
         user wrote after ``cutoff`` (or never), or one of its user's
-        queue items is waiting or running.
+        queue items is queued, running, or waiting for their answer.
         """
         async with self._sessions.begin() as session:
             # Lock first: this waits for an append in flight (it holds FOR
@@ -301,9 +322,11 @@ class History:
             )
             if newest is None or newest > cutoff:
                 return None
+            # A turn waiting for its user's answer is busy too, until it is
+            # answered, cancelled or expires (change add-user-input-requests).
             busy = await session.scalar(
                 select(QueueItem.id)
-                .where(QueueItem.status == "pending", QueueItem.user_name == user)
+                .where(QueueItem.status.in_(("pending", "waiting")), QueueItem.user_name == user)
                 .limit(1)
             )
             if busy is not None:

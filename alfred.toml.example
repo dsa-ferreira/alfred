@@ -31,6 +31,11 @@ tools = ["alfred_*", "cookbook_*", "mcparr_find_media", "mcparr_add_media"]
 # Per-server token variables for this user, so a server can tell users apart.
 # A server not listed here is called with its own token_env. Default: none.
 mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }
+# Tools whose calls on this user's turns wait for their "Do it" first, in the
+# same syntax as tools (default: none). alfred sends a message with the tool and
+# its exact arguments, and the buttons Do it and Cancel. It doesn't offer a tool:
+# only names tools also matches can be confirmed.
+confirm = ["mcparr_add_media"]
 
 [ai]
 # OpenAI-compatible server; alfred posts to {base_url}/v1/chat/completions.
@@ -124,6 +129,13 @@ default_time = "09:00"
 # Checks for due reminders run on the clock: every whole minute and every
 # check_interval_s within it (at most 60). Reminders are queued at their minute.
 check_interval_s = 30
+
+[input_requests]
+# Minutes a question to a user (a confirmation, or a question from an MCP server)
+# waits for an answer before its turn ends without running the call. Counted
+# from when the question was sent; expired requests are checked on the
+# [reminders] check_interval_s clock.
+expire_after_min = 60
 
 # Photos, image files and PDFs from users. Default: off, text only.
 # The files are kept in an S3-compatible bucket (Garage); the key comes from

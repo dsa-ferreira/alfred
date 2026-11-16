@@ -863,3 +863,78 @@ def test_fact_duplicate_distance_between_0_and_1(tmp_path: Path, value: str) -> 
 def test_fact_sizes_must_be_positive(tmp_path: Path, key: str) -> None:
     found = problems(MINIMAL + f"\n[memory]\n{key} = 0\n", tmp_path)
     assert any(f"memory.{key}" in p for p in found)
+
+
+# --- Confirm list and input requests (change add-user-input-requests) --------------
+
+
+def test_confirm_and_expiry_defaults(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL)))
+    assert config.users.admin.confirm.entries == ()
+    assert config.input_requests.expire_after_min == 60
+
+
+def test_confirm_list_is_read(tmp_path: Path) -> None:
+    text = MINIMAL + ANA + 'confirm = ["mcparr_add_media", "alfred_remind_*"]\n'
+    text += "\n[input_requests]\nexpire_after_min = 15\n"
+    config = load_config(env_for(write(tmp_path, text)))
+    ana, diogo = config.users.get("ana"), config.users.admin
+    assert ana is not None
+    assert ana.confirm.matches("mcparr_add_media") and ana.confirm.matches("alfred_remind_set")
+    assert not ana.confirm.matches("mcparr_find_media")
+    # One user's confirm list doesn't touch another's.
+    assert not diogo.confirm.matches("mcparr_add_media")
+    assert config.input_requests.expire_after_min == 15
+
+
+@pytest.mark.parametrize(
+    ("entry", "why"),
+    [("add_media", "must be *"), ("alfred_nope", "is not an alfred tool"), ("sonarr_*", "must")],
+)
+def test_confirm_entries_follow_the_tools_rules(tmp_path: Path, entry: str, why: str) -> None:
+    found = problems(MINIMAL + ANA + f'confirm = ["{entry}"]\n', tmp_path)
+    assert any(
+        "users[1] (ana)" in p and f"confirm entry {entry!r}" in p and why in p for p in found
+    ), found
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_expiry_must_be_positive(tmp_path: Path, value: str) -> None:
+    found = problems(MINIMAL + f"\n[input_requests]\nexpire_after_min = {value}\n", tmp_path)
+    assert any(p.startswith("input_requests.expire_after_min:") for p in found), found
+
+
+def test_confirm_entry_the_tools_list_hides_is_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    text = MINIMAL + COOKBOOK + ANA + 'confirm = ["cookbook_*", "mcparr_find_media"]\n'
+    with caplog.at_level("WARNING", logger="alfred.config"):
+        config = load_config(env_for(write(tmp_path, text), ALFRED_MCP_TOKEN_COOKBOOK="c"))
+    assert config.users.get("ana") is not None
+    warnings = [r.getMessage() for r in caplog.records]
+    assert any("ana" in w and "'cookbook_*'" in w for w in warnings), warnings
+    # mcparr_find_media is on her tools list, so it's not warned about.
+    assert not any("mcparr_find_media" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    ("tools", "confirm"),
+    [
+        ('["*"]', '"*"'),
+        ('["mcparr_*"]', '"mcparr_add_media"'),
+        ('["mcparr_add_media"]', '"mcparr_*"'),
+    ],
+)
+def test_reachable_confirm_entries_are_not_warned(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, tools: str, confirm: str
+) -> None:
+    text = MINIMAL + ANA.replace('["alfred_*", "mcparr_find_media"]', tools)
+    text += f"confirm = [{confirm}]\n"
+    with caplog.at_level("WARNING", logger="alfred.config"):
+        load_config(env_for(write(tmp_path, text)))
+    assert not caplog.records
+
+
+def test_minimal_user_confirms_nothing(tmp_path: Path) -> None:
+    config = load_config(env_for(write(tmp_path, MINIMAL)))
+    assert not config.users.admin.confirm.matches("mcparr_add_media")

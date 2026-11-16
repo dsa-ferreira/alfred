@@ -259,6 +259,16 @@ class OpenWebTools:
         # Not cut to tool_result_max_chars: fetch sizes its own chunks.
         return await self._tools.call(self._turn, name, raw_arguments)
 
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        raise NotImplementedError  # the web tools never ask the user
+
 
 def _start(value: Any) -> int | None:
     if value is None or value == "":

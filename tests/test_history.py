@@ -862,3 +862,36 @@ async def test_retried_reminder_stays_where_it_was_recorded(
     assert again == first
     assert await conversation_of(sessions, reply) == await conversation_of(sessions, first)
     assert archives == []
+
+
+# --- the context a parked turn resumes with (change add-user-input-requests) ---------
+
+
+async def test_recent_up_to_an_entry(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    await history.append("ana", "user", "add Dune")
+    upto = await history.append("ana", "assistant", "Shall I?")
+    await history.append("ana", "notice", "backup done", source="backup")
+    conversation_id = await history.current_conversation_id("ana")
+    entries = await history.recent("ana", 30, conversation_id=conversation_id, upto_entry_id=upto)
+    assert [e.text for e in entries] == ["add Dune", "Shall I?"]
+    assert {e.conversation_id for e in entries} == {conversation_id}
+    # Without them, the newest entries of the current conversation.
+    assert [e.text for e in await history.recent("ana", 30)][-1] == "backup done"
+
+
+async def test_recent_reads_an_archived_conversation_by_id(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = History(sessions, idle_after=timedelta(hours=1))
+    upto = await history.append("ana", "ask_prompt", "anything to add?", source="jellyfin")
+    conversation_id = await history.current_conversation_id("ana")
+    # Closed as unattended when a later arrival found it stale.
+    async with sessions.begin() as session:
+        await session.execute(update(Entry).values(created_at=func.now() - timedelta(hours=2)))
+    await history.append("ana", "notice", "later", source="backup")
+    assert await history.current_conversation_id("ana") != conversation_id
+    entries = await history.recent("ana", 30, conversation_id=conversation_id, upto_entry_id=upto)
+    assert [e.text for e in entries] == ["anything to add?"]
+    # Never another user's conversation.
+    assert await history.recent("diogo", 30, conversation_id=conversation_id) == []

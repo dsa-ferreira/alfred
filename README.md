@@ -62,11 +62,13 @@ allow-list (see [Users](#users)).
                        └───────────────┬─────────────────┘
                                        │
                                    Postgres
-          (conversations, entries, queue, tool calls, reminders, facts)
+   (conversations, entries, queue, tool calls, reminders, facts, questions)
 ```
 
 One process, one event loop: the bot, the API, the queue worker, the memory
-sweeper and the due-reminder loop run as five asyncio tasks. Only one AI turn runs at a time.
+sweeper, the due-reminder loop and the question expiry loop run as six asyncio
+tasks. Only one AI turn runs at a time; a turn waiting for its user's answer
+doesn't hold the worker.
 
 ## Configuration
 
@@ -89,6 +91,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `users.address` | string | `"sir"` | How alfred addresses the user: at greetings, acknowledgements, bad news and interruptions, seldom otherwise. Also ends the fixed notices (failures, unsupported messages) sent to the user. Used as written. |
 | `users.admin` | boolean | `false` | Exactly one user is the admin: the default target of `/notify` and `/ask`, the only one offered brain switching, and told about a brain fallback on anyone's turn. |
 | `users.tools` | list of strings | `[]` | The user's tool allow-list: exact tool names as the model sees them (`alfred_web_search`, `mcparr_find_media`), a prefix ending in `*` (`alfred_*`, `cookbook_*`), or `*` for every tool. Entries must be `*` or start with `alfred_` or a configured server's name and `_`; an exact `alfred_` name must exist. An exact MCP name the server doesn't expose is logged as a warning. Empty: no tools. |
+| `users.confirm` | list of strings | `[]` | Tools whose calls on this user's turns wait for their **Do it** first (see [Confirmations and server questions](#confirmations-and-server-questions)). Same syntax and startup checks as `users.tools`. It never offers a tool: an entry `users.tools` can never match is logged as a warning. Empty: nothing waits. |
 | `users.mcp_tokens` | table | none | `server = "ALFRED_..."`: the variable holding this user's bearer token for that MCP server. Servers not listed get their own `token_env`. Tokens may repeat. |
 | `ai.base_url` | URL | `"http://ai.lan"` | OpenAI-compatible server. alfred posts to `{base_url}/v1/chat/completions`. |
 | `ai.model` | string | `"gemma4:26b-a4b-it-qat"` | Model name sent with every request, and the brain alfred starts on. |
@@ -125,6 +128,7 @@ reported together and alfred exits. Error messages never contain secret values.
 | `web.fetch_max_bytes` | integer | `5000000` | Largest page download, in bytes. A bigger page is refused as too large. |
 | `reminders.default_time` | `HH:MM` | `"09:00"` | Time of a reminder set for a date with no clock time ("on Friday"), in `ai.timezone`. A value that is not a 24-hour `HH:MM` stops alfred at startup. |
 | `reminders.check_interval_s` | number | `30` | Seconds between checks for due reminders, at most `60`. Checks run on the clock, at every whole minute and every `check_interval_s` within it (`:00` and `:30` for 30), so a reminder is queued at the start of its minute. Checking makes no AI requests. |
+| `input_requests.expire_after_min` | number | `60` | Minutes a question to a user (a confirmation, or a question from an MCP server) waits for an answer, counted from when it was sent. Then its turn ends without running the call, and the question message says it expired. Checked on the `reminders.check_interval_s` clock. |
 | `attachments.endpoint_url` | URL | required in `[attachments]` | S3-compatible endpoint (the homelab's Garage) where photos, image files and PDFs are kept. Without an `[attachments]` section alfred reads text only and needs no object store. |
 | `attachments.bucket` | string | required in `[attachments]` | Bucket for the files, under `attachments/<random id>`. |
 | `attachments.region` | string | `"garage"` | Region name used to sign requests; Garage's default is `garage`. |
@@ -192,6 +196,11 @@ Messages from anyone else, and from group chats, are ignored without a reply.
 - **Per-user MCP tokens.** `mcp_tokens` names a variable per server with that
   user's bearer token, so a server can tell users apart. Without one, the
   server's own `token_env` is used.
+- **Confirm list.** `confirm` names, in the same syntax as `tools`, the tools
+  whose calls on this user's turns wait for their **Do it** (see
+  [Confirmations and server questions](#confirmations-and-server-questions)).
+  Trust is per user: ana may confirm every film added on her turns while
+  diogo's turns add them at once.
 
 ```toml
 [[users]]
@@ -205,6 +214,7 @@ name = "ana"
 telegram_user_id = 987654321
 address = "madam"
 tools = ["alfred_*", "cookbook_*", "mcparr_find_media", "mcparr_add_media"]
+confirm = ["mcparr_add_media"]
 mcp_tokens = { mcparr = "ALFRED_MCP_TOKEN_MCPARR_ANA" }
 ```
 
@@ -342,6 +352,10 @@ Results are cut to `ai.tool_result_max_chars`.
 Local tools use the reserved `alfred_` prefix (for example
 `alfred_end_conversation`) and are handled by alfred itself, which is why no
 MCP server may be named `alfred`.
+
+A server may ask the user something in the middle of a call (form
+elicitation, protocol 2026-07-28): alfred shows it as buttons and repeats the
+call with the answer (see [Server questions](#server-questions)).
 
 ### Context size
 
@@ -593,6 +607,97 @@ the others and ends when its last recipient leaves.
 A delivered reminder and what you were told are kept in the conversation,
 labelled with the due time of that occurrence, so you can answer it: "snooze
 15 minutes" sets a new reminder with the same text.
+
+## Confirmations and server questions
+
+Some tool calls wait for the user before they go ahead: those on the user's
+confirm list, and those whose MCP server asks the user something. The turn
+stops at that call, and alfred sends the user a question message with
+buttons. Other users' messages, `/ask` turns and reminders go ahead while it
+waits. When the user taps a button, the turn picks up from that call, and the
+model carries on and answers as usual.
+
+### Confirm list
+
+```toml
+[[users]]
+name = "ana"
+# ...
+confirm = ["mcparr_add_media", "cookbook_*"]
+```
+
+A call to a tool `confirm` matches doesn't run. alfred's question shows the
+tool's name as the model sees it and its exact arguments, written by alfred
+from the call itself, not by the model:
+
+```
+For your request:
+Run mcparr_add_media with these arguments?
+{
+  "title": "Dune",
+  "year": 2021
+}
+[ Do it ] [ Cancel ]
+```
+
+**Do it** runs the call and gives the model its result. **Cancel** doesn't
+run it; the model is told the user declined and not to call it again unless
+asked. When the model asks for two listed calls in one reply, the second is
+asked about after the first is answered. Arguments too long for one Telegram
+message are cut, with a marker saying so.
+
+### Server questions
+
+A server can answer a call by asking the user. alfred shows the server's
+message, labelled with the server's name, when it fits buttons:
+
+- no fields: **Yes** and **No**;
+- one yes/no field: **Yes**, **No** and **Cancel**;
+- one field with a list of at most 8 choices: one button each, and **Cancel**.
+
+The answer goes back to the server in the same call, and the call's result
+goes to the model. A server may ask again; the turn then waits again. Text or
+number fields, several fields, several questions at once, URL mode, sampling
+and roots requests can't be shown: the call ends with an error the model
+sees, and nothing is sent back to the server.
+
+A server keeps the question's state for its own time, 600 seconds by default
+in the MCP Python SDK (`RequestStateSecurity`), and with its default key it
+forgets it on a restart. An answer that comes later gives the model an error
+saying it could not be used; the model may call the tool again, which asks
+again. A shared key and a longer TTL are set on the server, not in alfred.
+
+### What asked, and who answers
+
+Turns started by a message, by `/ask` and by a reminder can all wait; the
+question goes to the turn's user and says what asked: "For your request:",
+"For a request from jellyfin:" or "For reminder #12 (call mum):". The
+resumed turn ends as its kind always does: a reply, a `[service]` message
+(or nothing, for `NO_REPLY`), or the reminder's message.
+
+Only the turn's user can answer, in their private chat with the bot. Each
+question is answered once: a double tap, or a tap on an old message, only
+tells the user it is no longer open. Taps from anyone else do nothing and
+are logged with the sender's Telegram ID only. The typing indicator is not
+shown while a turn waits; it comes back from the tap until the reply.
+
+### Ending without an answer
+
+- **A new message** from the user, text or attachment, cancels all of their
+  waiting turns before it is queued. `/memory` doesn't.
+- **Expiry.** A question is open for `input_requests.expire_after_min`
+  minutes (default 60).
+
+Either way the call doesn't run and no reply is sent. The question message
+is edited to say why, and the conversation records a fixed reply from alfred
+saying what was not done, so the model knows on later turns ("Nothing was
+done: I did not run mcparr_add_media, as you sent a new message before
+answering my question, madam."). For a reminder, that is the reminder's
+delivered message.
+
+Waiting turns and their buttons survive a restart. A confirmed call is
+marked as started before it runs: if alfred stops during it, the call is not
+run again, and the user is told the request may have partly completed.
 
 ## Attachments
 

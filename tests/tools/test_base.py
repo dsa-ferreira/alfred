@@ -5,15 +5,20 @@ from typing import Any
 import pytest
 
 from alfred.tools.base import (
+    CONFIRM,
+    DECLINED,
     AllowList,
     AttemptContext,
+    Confirmed,
     Gated,
     LocalToolset,
     PromptNote,
+    Question,
     ToolOutcome,
     TurnInput,
     chat_only,
     dispatch,
+    dispatch_resume,
     safe_call,
 )
 from tests.helpers import DIOGO
@@ -168,3 +173,139 @@ def test_gate_passes_attempts_through() -> None:
     ctx = AttemptContext(CHAT)
     Gated(Attempts("a", "x"), AllowList.of("*")).new_attempt(ctx)
     assert seen == [ctx]
+
+
+# --- input requests (change add-user-input-requests) -------------------------------
+
+
+class Counting(LocalToolset):
+    """Records each call; can ask its own question through ``need``."""
+
+    def __init__(self, *names: str) -> None:
+        self.definitions = [definition(n) for n in names]
+        self.calls: list[tuple[str, Any]] = []
+        self.resumed: list[tuple[str, Any, Any]] = []
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        self.calls.append((name, raw_arguments))
+        return ToolOutcome(True, f"ran {name}")
+
+
+class Asking(Counting):
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        self.resumed.append((name, state, answer))
+        return ToolOutcome(True, f"resumed {name} with {answer}")
+
+
+ARGS = '{"title": "Dune", "year": 2021}'
+
+
+async def test_resume_on_a_local_toolset_is_an_error_result() -> None:
+    outcome = await dispatch_resume(
+        [Counting("x")], "x", None, {"via": "mine"}, True, AttemptContext(CHAT)
+    )
+    assert outcome == ToolOutcome(False, "Error: tool 'x' failed: NotImplementedError")
+
+
+async def test_resume_of_an_unknown_tool() -> None:
+    outcome = await dispatch_resume([Counting("x")], "y", None, {}, True, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(False, "Error: unknown tool 'y'.")
+
+
+async def test_gated_resume_refuses_a_name_the_list_no_longer_matches() -> None:
+    inner = Asking("mcparr_add_media")
+    gate = Gated(inner, AllowList.of("mcparr_find_media"))
+    outcome = await gate.resume("mcparr_add_media", ARGS, {"via": "mcp"}, {}, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(False, "Error: unknown tool 'mcparr_add_media'.")
+    assert inner.resumed == []
+
+
+async def test_gated_resume_passes_an_allowed_name_through() -> None:
+    inner = Asking("mcparr_add_media")
+    gate = Gated(inner, AllowList.of("mcparr_*"))
+    outcome = await gate.resume("mcparr_add_media", ARGS, {"via": "mcp"}, 1, AttemptContext(CHAT))
+    assert outcome.text == "resumed mcparr_add_media with 1"
+
+
+def confirmed(inner: LocalToolset, *confirm: str, tools: str = "*") -> Confirmed:
+    return Confirmed(Gated(inner, AllowList.of(tools)), AllowList.of(*confirm))
+
+
+async def test_listed_call_waits_without_running() -> None:
+    inner = Counting("mcparr_add_media")
+    outcome = await confirmed(inner, "mcparr_add_media").call(
+        "mcparr_add_media", ARGS, AttemptContext(CHAT)
+    )
+    assert inner.calls == []
+    assert outcome.need is not None
+    question = outcome.need.question
+    assert "mcparr_add_media" in question.body
+    assert question.detail == '{\n  "title": "Dune",\n  "year": 2021\n}'
+    assert [(o.label, o.answer) for o in question.options] == [("Do it", True), ("Cancel", False)]
+    assert outcome.need.state == {"via": "confirm"}
+    # The question survives being stored.
+    assert Question.from_json(question.to_json()) == question
+
+
+async def test_unlisted_call_runs() -> None:
+    inner = Counting("mcparr_find_media", "mcparr_add_media")
+    outcome = await confirmed(inner, "mcparr_add_media").call(
+        "mcparr_find_media", "{}", AttemptContext(CHAT)
+    )
+    assert outcome == ToolOutcome(True, "ran mcparr_find_media")
+
+
+async def test_unparseable_arguments_go_to_the_inner_error() -> None:
+    class Strict(Counting):
+        async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+            self.calls.append((name, raw_arguments))
+            return ToolOutcome(False, "Error: the arguments are not valid JSON.")
+
+    inner = Strict("x")
+    outcome = await confirmed(inner, "x").call("x", "{not json", AttemptContext(CHAT))
+    assert outcome.need is None and not outcome.ok
+    assert inner.calls == [("x", "{not json")]
+
+
+async def test_resume_true_runs_the_call_once() -> None:
+    inner = Counting("x")
+    outcome = await confirmed(inner, "x").resume("x", ARGS, CONFIRM, True, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(True, "ran x")
+    assert inner.calls == [("x", ARGS)]
+
+
+async def test_resume_false_declines() -> None:
+    inner = Counting("x")
+    outcome = await confirmed(inner, "x").resume("x", ARGS, CONFIRM, False, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(False, DECLINED)
+    assert inner.calls == []
+
+
+async def test_other_states_go_to_the_inner_resume() -> None:
+    inner = Asking("x")
+    outcome = await confirmed(inner, "x").resume(
+        "x", ARGS, {"via": "mcp"}, {"action": "accept"}, AttemptContext(CHAT)
+    )
+    assert outcome.text == "resumed x with {'action': 'accept'}"
+    assert inner.calls == []
+
+
+async def test_confirm_list_never_offers_a_tool() -> None:
+    inner = Counting("mcparr_find_media", "mcparr_add_media")
+    toolset = confirmed(inner, "mcparr_*", tools="mcparr_find_media")
+    assert [d["function"]["name"] for d in toolset.definitions] == ["mcparr_find_media"]
+    outcome = await dispatch([toolset], "mcparr_add_media", ARGS, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(False, "Error: unknown tool 'mcparr_add_media'.")
+
+
+async def test_another_users_confirm_list_doesnt_apply() -> None:
+    inner = Counting("mcparr_add_media")
+    outcome = await dispatch([confirmed(inner)], "mcparr_add_media", ARGS, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(True, "ran mcparr_add_media")

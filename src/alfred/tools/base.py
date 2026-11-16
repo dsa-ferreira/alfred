@@ -12,15 +12,24 @@ it needs for that turn, is told when a new attempt starts (after a brain
 fallback), and handles the calls to its tools.
 
 ```
-turn:     opened = [Gated(t.open(turn), turn.user.tools) for t in toolsets], minus the Nones
+turn:     opened = [Confirmed(Gated(t.open(turn), user.tools), user.confirm)
+                    for t in toolsets], minus the Nones
 attempt:  ctx = AttemptContext(...); o.new_attempt(ctx) for each opened
 call:     dispatch(opened, name, args, ctx)  # first that handles the name
+answer:   dispatch_resume(opened, name, args, need.state, answer, ctx)
 ```
 
 Every opened toolset is wrapped in :class:`Gated` with the turn user's
 :class:`AllowList` (change add-multiple-users, design D3): a tool the list
 doesn't match is neither offered nor callable. No toolset checks the list
 itself, except to leave out prompt notes about tools the list hides.
+Outside that, :class:`Confirmed` holds back the calls the user's confirm list
+matches until the user says yes (change add-user-input-requests, design D2).
+
+A call may return a need for the user's answer (``ToolOutcome.need``)
+instead of a result. The turn then waits; once answered, the same toolset's
+``resume`` gets the call again with the answer and returns its result, as if
+the call had just finished.
 
 The order of the toolsets is the order their definitions are offered in, and
 the first one that handles a name wins a clash.
@@ -100,6 +109,22 @@ class TurnInput:
     repeat_label: str | None = None
     quiet_ok: bool = False
     user: User = field(kw_only=True)
+    # Set when a parked turn goes on with its user's answer (change
+    # add-user-input-requests, design D3).
+    resume: Resume | None = field(default=None, kw_only=True)
+
+
+@dataclass(frozen=True)
+class Resume:
+    """A parked turn's saved progress, and the answer it goes on with.
+
+    ``turn`` is what the agent saved when it parked (JSON); ``state`` and
+    ``answer`` go back to the toolset that asked.
+    """
+
+    turn: dict[str, Any]
+    state: dict[str, Any]
+    answer: Any
 
 
 @dataclass(frozen=True)
@@ -118,11 +143,69 @@ class ModelImage:
 
 
 @dataclass(frozen=True)
+class Option:
+    """A button: its label, and the JSON-able answer the toolset gets back when it's chosen."""
+
+    label: str
+    answer: Any
+
+
+@dataclass(frozen=True)
+class Question:
+    """What a waiting call asks its user (change add-user-input-requests, design D2).
+
+    ``title`` says what asked for it (the user's request, a service, a
+    reminder) and is filled in by the worker; ``body`` is the question,
+    ``detail`` preformatted text shown under it (the arguments as JSON).
+    """
+
+    body: str
+    options: tuple[Option, ...]
+    detail: str | None = None
+    title: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "body": self.body,
+            "detail": self.detail,
+            "options": [{"label": o.label, "answer": o.answer} for o in self.options],
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> Question:
+        return cls(
+            body=data["body"],
+            options=tuple(Option(o["label"], o["answer"]) for o in data["options"]),
+            detail=data.get("detail"),
+            title=data.get("title", ""),
+        )
+
+
+@dataclass(frozen=True)
+class InputNeed:
+    """A call that waits for its user's answer: the question, and what resuming it needs.
+
+    ``state`` is JSON-able and handed back to the toolset's ``resume``.
+    """
+
+    question: Question
+    state: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class ToolOutcome:
     ok: bool
     text: str
     # Sent to the model with the text, as image parts of the tool message (design D5).
     images: tuple[ModelImage, ...] = ()
+    # Set instead of a result when the call waits for the user (``ok`` and
+    # ``text`` are then unused).
+    need: InputNeed | None = None
+
+    @classmethod
+    def waiting(cls, need: InputNeed) -> ToolOutcome:
+        return cls(False, "waiting for the user's answer", need=need)
 
 
 def parse_arguments(raw: str | dict[str, Any] | None) -> dict[str, Any] | str:
@@ -186,6 +269,17 @@ class OpenToolset(Protocol):
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome: ...
 
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        """Go on with a call that returned ``need``, now that its user chose ``answer``."""
+        ...
+
 
 class Toolset(Protocol):
     async def open(self, turn: TurnInput) -> OpenToolset | None:
@@ -220,6 +314,17 @@ class LocalToolset:
         return any(d["function"]["name"] == name for d in self.definitions)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        raise NotImplementedError
+
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        # Only a toolset that returns a need has anything to resume.
         raise NotImplementedError
 
 
@@ -258,6 +363,94 @@ class Gated:
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         return await self.inner.call(name, raw_arguments, attempt)
 
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        # The allow-list may have changed while the turn waited.
+        if not self.handles(name):
+            return unknown_tool(name)
+        return await self.inner.resume(name, raw_arguments, state, answer, attempt)
+
+
+DO_IT = "Do it"
+CANCEL = "Cancel"
+DECLINED = "The user declined this call; it did not run. Don't call it again unless they ask."
+# The resume state of a confirmation.
+CONFIRM: dict[str, Any] = {"via": "confirm"}
+
+
+class Confirmed:
+    """An open toolset whose calls the user's confirm list matches wait for a yes (design D2).
+
+    The outermost wrapper, around :class:`Gated`: it offers and handles what
+    the gate does, so the confirm list never offers a tool. A matching call
+    with arguments that parse returns a need (the tool name, the arguments
+    as indented JSON, **Do it** and **Cancel**) instead of running; arguments
+    that don't parse go straight through, as nothing can run. On resume,
+    ``True`` makes the call and ``False`` declines it; any other state is the
+    inner toolset's own question (an MCP server's) and passes through.
+    """
+
+    def __init__(self, inner: OpenToolset, confirm: AllowList) -> None:
+        self.inner = inner
+        self._confirm = confirm
+
+    @property
+    def definitions(self) -> list[dict[str, Any]]:
+        return self.inner.definitions
+
+    @property
+    def prompt_notes(self) -> Sequence[PromptNote]:
+        return self.inner.prompt_notes
+
+    def group_of(self, name: str) -> str:
+        return self.inner.group_of(name)
+
+    def new_attempt(self, attempt: AttemptContext) -> None:
+        self.inner.new_attempt(attempt)
+
+    def handles(self, name: str) -> bool:
+        return self.inner.handles(name)
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        if self._confirm.matches(name):
+            arguments = parse_arguments(raw_arguments)
+            if isinstance(arguments, dict):
+                return ToolOutcome.waiting(InputNeed(confirm_question(name, arguments), CONFIRM))
+        return await self.inner.call(name, raw_arguments, attempt)
+
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        if state.get("via") != CONFIRM["via"]:
+            return await self.inner.resume(name, raw_arguments, state, answer, attempt)
+        if answer is True:
+            return await self.inner.call(name, raw_arguments, attempt)
+        return ToolOutcome(False, DECLINED)
+
+
+def confirm_question(name: str, arguments: dict[str, Any]) -> Question:
+    """The confirmation of a call: its model-facing name and its exact arguments."""
+    return Question(
+        f"Run {name} with these arguments?",
+        (Option(DO_IT, True), Option(CANCEL, False)),
+        detail=json.dumps(arguments, ensure_ascii=False, indent=2),
+    )
+
+
+def unknown_tool(name: str) -> ToolOutcome:
+    return ToolOutcome(False, f"Error: unknown tool {name!r}.")
+
 
 def find(opened: Sequence[OpenToolset], name: str) -> OpenToolset | None:
     """The first open toolset that handles ``name``."""
@@ -281,5 +474,24 @@ async def dispatch(
     """Route a call to the first open toolset that handles it."""
     toolset = find(opened, name)
     if toolset is None:
-        return ToolOutcome(False, f"Error: unknown tool {name!r}.")
+        return unknown_tool(name)
     return await safe_call(toolset, name, raw_arguments, attempt)
+
+
+async def dispatch_resume(
+    opened: Sequence[OpenToolset],
+    name: str,
+    raw_arguments: Any,
+    state: dict[str, Any],
+    answer: Any,
+    attempt: AttemptContext,
+) -> ToolOutcome:
+    """Route an answered call back to the first open toolset that handles it, like ``dispatch``."""
+    toolset = find(opened, name)
+    if toolset is None:
+        return unknown_tool(name)
+    try:
+        return await toolset.resume(name, raw_arguments, state, answer, attempt)
+    except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
+        log.exception("tool %s failed on resume", name)
+        return ToolOutcome(False, f"Error: tool {name!r} failed: {type(exc).__name__}")

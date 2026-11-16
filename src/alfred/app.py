@@ -1,8 +1,9 @@
 """``alfred serve``: the bot, the service API, the AI worker, the memory sweeper,
-the due-reminder loop, with ``[attachments]`` the orphan file sweeper, and with
-``[history] idle_close_after_h`` the idle conversation closer.
+the due-reminder loop, the input request expiry loop, with ``[attachments]``
+the orphan file sweeper, and with ``[history] idle_close_after_h`` the idle
+conversation closer.
 
-Five asyncio tasks (more with those) share the database engine and the
+Six asyncio tasks (more with those) share the database engine and the
 queue's in-process signal (design D1). SIGTERM or SIGINT stops them all; a turn in progress is
 interrupted and its item stays ``pending``, so it runs again after restart,
 a summary in progress is simply made again later, and a reminder claim is
@@ -38,6 +39,9 @@ from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.users import warn_unknown_users
 from alfred.history import History
 from alfred.idle import IdleCloser
+from alfred.inputs.callbacks import Taps
+from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
+from alfred.inputs.store import InputRequests
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
 from alfred.memory.duplicates import FactDuplicateJob
@@ -66,6 +70,11 @@ from alfred.tools.dates import DateTools
 from alfred.web.tools import WebTools
 
 log = logging.getLogger(__name__)
+
+# The tasks stopped by cancelling them; the API and polling stop on their own.
+CANCELLED_ON_STOP = frozenset(
+    {"worker", "memory", "reminders", "input-requests", "attachments", "idle"}
+)
 
 
 class _Server(uvicorn.Server):
@@ -157,6 +166,10 @@ async def serve(config: Config) -> None:
         else None
     )
     history = History(sessions, idle_after=idle_after, on_archive=summaries.changed.set)
+    # Turns waiting for their user's answer (change add-user-input-requests):
+    # a user's new message cancels theirs before it is queued.
+    inputs = InputRequests(sessions, history, config.users)
+    queue.before_user_message = cancel_on_new_message(inputs, outbox, config.users)
     # User facts (change add-user-facts): extraction after the summaries, then
     # embedding, which needs no quiet queue, then the duplicate check.
     facts = FactStore(config, sessions, embedder)
@@ -222,6 +235,9 @@ async def serve(config: Config) -> None:
         typing=outbox.typing,
         reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
+        inputs=inputs,
+        questions=outbox,
+        expire_after=timedelta(minutes=config.input_requests.expire_after_min),
     )
     dispatcher = make_dispatcher(
         config.users,
@@ -229,6 +245,7 @@ async def serve(config: Config) -> None:
         intake=intake,
         album_wait_s=config.attachments.album_wait_s if config.attachments else 2,
         memory=MemoryCommand(facts, ZoneInfo(config.ai.timezone)),
+        on_tap=Taps(config.users, inputs, outbox, queue.activity.notify),
     )
     await register_commands(bot)
     server = _Server(
@@ -263,6 +280,11 @@ async def serve(config: Config) -> None:
         asyncio.create_task(
             run_due_loop(reminders.store, queue.activity.notify, config.reminders.check_interval_s),
             name="reminders",
+        ),
+        # On the reminders' clock; no setting of its own (design D5).
+        asyncio.create_task(
+            run_expiry_loop(inputs, outbox, config.users, config.reminders.check_interval_s),
+            name="input-requests",
         ),
     }
     if orphans is not None:
@@ -318,7 +340,7 @@ async def serve(config: Config) -> None:
         with contextlib.suppress(RuntimeError):  # polling may already be stopped
             await dispatcher.stop_polling()
         for task in tasks:
-            if task.get_name() in ("worker", "memory", "reminders", "attachments", "idle"):
+            if task.get_name() in CANCELLED_ON_STOP:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()

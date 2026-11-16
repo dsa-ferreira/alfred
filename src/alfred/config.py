@@ -15,6 +15,7 @@ a secret value.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import os
 import re
 import tomllib
@@ -40,6 +41,8 @@ from pydantic import (
 )
 
 from alfred.tools.base import AllowList
+
+log = logging.getLogger(__name__)
 
 CONFIG_ENV = "ALFRED_CONFIG"
 DEFAULT_CONFIG_PATH = "alfred.toml"
@@ -273,6 +276,13 @@ class AttachmentsConfig(_Section):
         return value
 
 
+class InputRequestsConfig(_Section):
+    """Turns waiting for their user's answer (change add-user-input-requests, design D9)."""
+
+    # Counted from when the question was sent.
+    expire_after_min: PositiveFloat = 60
+
+
 class MCPConfig(_Section):
     list_timeout_s: PositiveFloat = 10
     call_timeout_s: PositiveFloat = 60
@@ -311,6 +321,9 @@ class UserEntry(_Section):
     admin: bool = False
     # Model-facing tool names, ``prefix*`` patterns, or ``*``.
     tools: list[Annotated[str, Field(min_length=1)]] = []
+    # Tools whose calls on this user's turns wait for their confirmation, in
+    # the same syntax (change add-user-input-requests, design D9).
+    confirm: list[Annotated[str, Field(min_length=1)]] = []
     # MCP server name -> the variable holding this user's token for it.
     mcp_tokens: dict[Name, TokenEnv] = {}
 
@@ -326,6 +339,7 @@ class FileConfig(_Section):
     memory: MemoryConfig = MemoryConfig()
     web: WebConfig = WebConfig()
     reminders: RemindersConfig = RemindersConfig()
+    input_requests: InputRequestsConfig = InputRequestsConfig()
     # None: attachments are off and alfred reads text only.
     attachments: AttachmentsConfig | None = None
     mcp: MCPConfig = MCPConfig()
@@ -363,6 +377,8 @@ class User:
     tools: AllowList = AllowList()
     # MCP server name -> this user's token, where it isn't the server's own.
     mcp_tokens: Mapping[str, SecretStr] = field(default_factory=dict)
+    # The tools whose calls wait for this user's confirmation.
+    confirm: AllowList = AllowList()
 
 
 @dataclass(frozen=True)
@@ -415,6 +431,7 @@ class Config:
     memory: MemoryConfig = MemoryConfig()
     web: WebConfig = WebConfig()
     reminders: RemindersConfig = RemindersConfig()
+    input_requests: InputRequestsConfig = InputRequestsConfig()
     attachments: AttachmentsConfig | None = None
     # Set exactly when ``attachments`` is.
     s3_key: S3Key | None = None
@@ -487,6 +504,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
 
     if problems or parsed is None:
         raise ConfigError(problems)
+    _warn_hidden_confirms(parsed.users)
 
     return Config(
         users=Users(
@@ -498,6 +516,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
                     u.admin,
                     AllowList(tuple(u.tools)),
                     {s: SecretStr(user_tokens[(u.name, s)]) for s in u.mcp_tokens},
+                    AllowList(tuple(u.confirm)),
                 )
                 for u in parsed.users
             )
@@ -508,6 +527,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         memory=parsed.memory,
         web=parsed.web,
         reminders=parsed.reminders,
+        input_requests=parsed.input_requests,
         attachments=parsed.attachments,
         s3_key=s3_key if parsed.attachments is not None else None,
         mcp=parsed.mcp,
@@ -635,7 +655,6 @@ def _check_users(users: list[dict[str, Any]], server_names: set[str]) -> list[st
         problems.append(
             "users " + ", ".join(admins) + " are all admins; exactly one admin is required"
         )
-    known_tools: frozenset[str] | None = None
     for i, user in enumerate(users):
         label = _label("users", user, i)
         tokens = user.get("mcp_tokens")
@@ -646,25 +665,49 @@ def _check_users(users: list[dict[str, Any]], server_names: set[str]) -> list[st
                         f"{label}: mcp_tokens names {server!r}, "
                         "which is not a configured MCP server"
                     )
-        tools = user.get("tools")
-        for entry in tools if isinstance(tools, list) else ():
-            if not isinstance(entry, str) or not entry or entry == ALL_TOOLS:
-                continue  # wrong types are reported by the model validation
-            if entry.startswith("alfred_"):
-                if entry.endswith("*"):
-                    continue
-                if known_tools is None:
-                    from alfred.tools.catalog import alfred_tool_names
-
-                    known_tools = alfred_tool_names()
-                if entry not in known_tools:
-                    problems.append(f"{label}: tools entry {entry!r} is not an alfred tool")
-            elif not any(entry.startswith(f"{server}_") for server in server_names):
-                problems.append(
-                    f"{label}: tools entry {entry!r} must be *, or start with alfred_ or "
-                    "with a configured MCP server's name and _"
-                )
+        # The confirm list has the allow-list's syntax and rules (design D9).
+        for key in ("tools", "confirm"):
+            entries = user.get(key)
+            for entry in entries if isinstance(entries, list) else ():
+                problem = _tool_entry_problem(entry, server_names)
+                if problem is not None:
+                    problems.append(f"{label}: {key} entry {entry!r} {problem}")
     return problems
+
+
+def _tool_entry_problem(entry: object, server_names: set[str]) -> str | None:
+    """Why an allow-list or confirm-list entry is wrong, or ``None``."""
+    if not isinstance(entry, str) or not entry or entry == ALL_TOOLS:
+        return None  # wrong types are reported by the model validation
+    if entry.startswith("alfred_"):
+        if entry.endswith("*"):
+            return None
+        from alfred.tools.catalog import alfred_tool_names
+
+        return None if entry in alfred_tool_names() else "is not an alfred tool"
+    if any(entry.startswith(f"{server}_") for server in server_names):
+        return None
+    return "must be *, or start with alfred_ or with a configured MCP server's name and _"
+
+
+def _warn_hidden_confirms(users: list[UserEntry]) -> None:
+    """Log confirm entries the user's allow-list can never match (design D9).
+
+    Not an error: the entry is harmless, only useless until the allow-list
+    changes.
+    """
+    for user in users:
+        tools = AllowList(tuple(user.tools))
+        for entry in user.confirm:
+            reachable = (
+                tools.may_match_prefix(entry[:-1]) if entry.endswith("*") else tools.matches(entry)
+            )
+            if not reachable:
+                log.warning(
+                    "user %s: confirm entry %r matches no tool their tools list offers",
+                    user.name,
+                    entry,
+                )
 
 
 def _who(entry: Mapping[str, Any], index: int) -> str:

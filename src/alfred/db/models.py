@@ -27,6 +27,10 @@ conversation.
   ``reminder``/``reminder_reply`` entries point at the row through
   ``reminder_id`` and carry the delivered occurrence's ``reminder_due_at``.
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
+- ``input_requests``: a parked turn's question to its user and the turn's
+  saved progress (change add-user-input-requests, design D4). Its queue item
+  is ``waiting`` while the request is ``open``; at most one request per item
+  is live (``open``, ``answered`` or ``running``).
 - ``attachments``: users' photos, image files and PDFs (change
   add-attachments, design D1). The bytes are in the object store under
   ``object_key``; the row is written with its queue item and linked to the
@@ -90,7 +94,12 @@ SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summ
 ENTRY_TSV = "to_tsvector('english', text)"
 QUEUE_KINDS = ("user", "ask", "reminder")
 REMINDER_STATUSES = ("pending", "fired", "cancelled")
-QUEUE_STATUSES = ("pending", "done", "failed")
+# ``waiting``: parked for its user's answer; ``cancelled``: ended without one
+# (change add-user-input-requests, design D4).
+QUEUE_STATUSES = ("pending", "done", "failed", "waiting", "cancelled")
+INPUT_REQUEST_STATUSES = ("open", "answered", "running", "done", "cancelled", "expired")
+# Live requests: at most one per queue item.
+LIVE_INPUT_REQUESTS = "status IN ('open', 'answered', 'running')"
 ATTACHMENT_KINDS = ("image", "pdf")
 END_REASONS = ("user", "idle", "unattended")
 REPEAT_RULES = ("daily", "weekdays", "weekends", "weekly")
@@ -280,6 +289,48 @@ class TurnToolCall(Base):
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     result_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InputRequest(Base):
+    __tablename__ = "input_requests"
+    __table_args__ = (
+        CheckConstraint(_in("status", INPUT_REQUEST_STATUSES), name="status"),
+        # One live request per turn (design D4).
+        Index(
+            "uq_input_requests_live_per_item",
+            "queue_item_id",
+            unique=True,
+            postgresql_where=text(LIVE_INPUT_REQUESTS),
+        ),
+        # The expiry loop and the new-message cancel look for open requests.
+        Index("ix_input_requests_open", "user_name", postgresql_where=text("status = 'open'")),
+    )
+
+    # In the buttons' callback data.
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    queue_item_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("queue_items.id"), nullable=False
+    )
+    # Whose turn it is; every query filters on it.
+    user_name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    # The model-facing call that waits.
+    tool: Mapped[str] = mapped_column(String(128), nullable=False)
+    arguments: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    # The rendered question: title, body, detail, options.
+    question: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    # The toolset's resume state (for MCP: the key and ``request_state``).
+    state: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    # The chosen option's answer, once answered.
+    answer: Mapped[Any] = mapped_column(JSONB, nullable=True)
+    # The turn's saved progress: tail, call, counters, conversation, upto.
+    turn: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    # ``new_message``, ``expired`` or ``not_delivered``.
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Attachment(Base):

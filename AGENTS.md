@@ -40,10 +40,19 @@ Everything the model can call is a toolset. The contract lives in
   override `offered` if it is not for every turn (`chat_only` for turns
   started by a user's chat message). Override `open` / `new_attempt` only
   for per-turn or per-attempt state (see `web/tools.py`).
-- Don't check the user's tool allow-list yourself: `turn.py` wraps every
-  opened toolset in `Gated` (`alfred.tools.base`), which hides and refuses
-  the names the turn user's `AllowList` doesn't match. Only prompt notes
-  about tools the list hides need care (see `attachments/tools.py`).
+- Don't check the user's tool allow-list or confirm list yourself: `turn.py`
+  wraps every opened toolset in `Confirmed(Gated(...))` (`alfred.tools.base`).
+  `Gated` hides and refuses the names the turn user's `AllowList` doesn't
+  match; `Confirmed` holds back the calls their confirm list matches until
+  they tap **Do it**. Only prompt notes about tools the list hides need care
+  (see `attachments/tools.py`).
+- A toolset that needs the user's answer mid-call returns
+  `ToolOutcome.waiting(InputNeed(question, state))` and implements
+  `resume(name, raw_arguments, state, answer, attempt)`: the turn is parked,
+  and once the user taps an option, `resume` gets the call again with that
+  option's `answer` (see `mcp/toolset.py`). `state` and `answer` must be
+  JSON-able: they are stored while the turn waits. `LocalToolset.resume`
+  raises `NotImplementedError`, which becomes an error result.
 - Whose turn it is is `turn.user` (`attempt.turn.user` in `call`). Data a
   tool reads or writes belongs to that user; filter by `user.name` in the
   query, never in the prompt.
@@ -89,6 +98,29 @@ Docs: <https://py.sdk.modelcontextprotocol.io/>. alfred is only an MCP
   `is_error=True`; protocol-level failures (unknown tool, bad request) raise
   `mcp.shared.exceptions.MCPError`. Transport failures raise httpx2 errors.
   [Testing](https://py.sdk.modelcontextprotocol.io/get-started/testing/)
+- **Servers asking the user (protocol 2026-07-28).** A server may answer
+  `tools/call` with `InputRequiredResult` (`input_requests` keyed by the
+  server, plus an opaque `request_state`). alfred drives this itself:
+  - The capability is declared by passing `elicitation_callback` to `Client`
+    (`mcp/client.py` `new_client`); without one the server fails the call
+    with "did not declare the form elicitation capability". The SDK declares
+    form and URL mode together; alfred refuses URL requests itself.
+  - `client.session.call_tool(..., allow_input_required=True)` returns the
+    `InputRequiredResult` instead of running the callback loop of
+    `Client.call_tool`. The answer goes back on a *fresh* connection with
+    `input_responses={key: ElicitResult(...)}` and the same `request_state`
+    and arguments.
+  - The server refuses a stale `request_state` (TTL, 600 s by default; a
+    restart with the default process-local key; changed arguments) with
+    `MCPError` `-32602`. Leaving the `Client` context wraps it in an
+    exception group.
+  - **The same `request_state` can be replayed, and the tool then runs
+    again.** Only alfred's own status changes stop a second answer.
+  - The session-level call skips `Client.call_tool`'s recovery from
+    `HEADER_MISMATCH` (`-32020`). Checked over Streamable HTTP: a fresh
+    connection that hasn't listed the tool gets it only for tools with
+    `x-mcp-header` arguments (the client can't send their `Mcp-Param-*`
+    headers). alfred re-lists and resends once, as the SDK does.
 - **Testing.** `Client(server)` with an `mcp.server.MCPServer` instance
   connects in process (no HTTP, no auth). The Streamable HTTP path (and the
   `Authorization` header) is tested through `server.streamable_http_app()`

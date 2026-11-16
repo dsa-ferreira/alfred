@@ -207,3 +207,28 @@ async def test_unattended_conversation_is_summarised_without_fact_requests(
         task.cancel()
     assert len(summary_model.requests) == 1
     assert fact_model.requests == []
+
+
+async def test_a_waiting_turn_holds_idle_close_until_it_expires(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A turn waiting for its user's answer is busy (change add-user-input-requests)."""
+    from alfred.config import Users
+    from alfred.inputs.store import InputRequests
+    from alfred.tools.base import Option, Question
+    from tests.helpers import ANA, DIOGO
+
+    clock = Clock()
+    idle = closer(sessions, clock)
+    cid = await wrote(sessions, "ana", clock.now - timedelta(hours=7))
+    item = await add_queue_item(sessions, user="ana")
+    requests = InputRequests(sessions, History(sessions), Users((DIOGO, ANA)))
+    await requests.park(
+        item, "ana", tool="t", arguments={}, question=Question("?", (Option("Yes", True),)),
+        state={}, turn={}, expires_at=timedelta(minutes=-1),
+    )  # fmt: skip
+    assert await idle.close_once() == 60
+    assert await ended(sessions, cid) is None
+    await requests.expire_due()  # the expiry loop ends it
+    await idle.close_once()
+    assert await ended(sessions, cid) == "idle"

@@ -8,6 +8,11 @@ instructions, kept only when one of the server's tools passes the
 allow-list, and the names of servers that couldn't be listed, reach the
 system prompt as prompt notes. Calls go through the turn's routing map;
 results are cut to ``[ai] tool_result_max_chars``.
+
+A server's question to the user comes back as a need for input; ``resume``
+repeats the call with the user's answer on a fresh connection (change
+add-user-input-requests, design D6). A resumed turn opens the toolset anew,
+so the routes it uses are those of that turn's listing.
 """
 
 from __future__ import annotations
@@ -17,7 +22,13 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from alfred.mcp.client import Connector
-from alfred.mcp.registry import ServerInstructions, TurnTools, build_turn_tools, call_tool
+from alfred.mcp.registry import (
+    ServerInstructions,
+    TurnTools,
+    build_turn_tools,
+    call_tool,
+    resume_tool,
+)
 from alfred.tools.base import AllowList, AttemptContext, PromptNote, ToolOutcome, TurnInput
 
 if TYPE_CHECKING:
@@ -121,6 +132,20 @@ class McpTools:
             max_chars=self._max_chars,
         )
 
+    async def _resume(
+        self, tools: TurnTools, name: str, raw_arguments: Any, state: dict[str, Any], answer: Any
+    ) -> ToolOutcome:
+        return await resume_tool(
+            tools,
+            name,
+            raw_arguments,
+            state,
+            answer,
+            connect=self._connect,
+            call_timeout_s=self._call_timeout_s,
+            max_chars=self._max_chars,
+        )
+
 
 class OpenMcpTools:
     """One turn's listing: its tools, routes and prompt notes."""
@@ -143,3 +168,13 @@ class OpenMcpTools:
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         return await self._owner._call(self.tools, name, raw_arguments)
+
+    async def resume(
+        self,
+        name: str,
+        raw_arguments: Any,
+        state: dict[str, Any],
+        answer: Any,
+        attempt: AttemptContext,
+    ) -> ToolOutcome:
+        return await self._owner._resume(self.tools, name, raw_arguments, state, answer)

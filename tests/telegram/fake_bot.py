@@ -93,3 +93,30 @@ def message_update(*, user_id: int = OWNER, chat_type: str = "private", **conten
             },
         }
     )
+
+
+def callback_update(
+    data: str, *, user_id: int = OWNER, chat_type: str = "private", message_id: int = 500
+) -> Update:
+    """A tap on a button of alfred's message ``message_id``."""
+    global _update_id
+    _update_id += 1
+    chat_id = user_id if chat_type == "private" else -100123
+    return Update.model_validate(
+        {
+            "update_id": _update_id,
+            "callback_query": {
+                "id": f"cb{_update_id}",
+                "from": {"id": user_id, "is_bot": False, "first_name": "X"},
+                "chat_instance": "ci",
+                "data": data,
+                "message": {
+                    "message_id": message_id,
+                    "date": 0,
+                    "chat": {"id": chat_id, "type": chat_type},
+                    "from": {"id": 1, "is_bot": True, "first_name": "alfred"},
+                    "text": "question",
+                },
+            },
+        }
+    )

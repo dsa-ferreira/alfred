@@ -34,6 +34,8 @@ def test_example_loads() -> None:
     ana = config.users.get("ana")
     assert ana is not None and ana.tools.matches("cookbook_get_recipe")
     assert not ana.tools.matches("mcparr_search_missing")
+    assert ana.confirm.matches("mcparr_add_media") and not config.users.admin.confirm.entries
+    assert config.input_requests.expire_after_min == 60
     assert [s.token.get_secret_value() for s in config.servers_for(ana)] == ["d", "c"]
 
 

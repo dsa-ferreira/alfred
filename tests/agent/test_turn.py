@@ -13,10 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona, is_no_reply
-from alfred.agent.turn import Agent, Fallback, TurnFailed
+from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
 from alfred.history import STAMP, History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.base import AttemptContext, LocalToolset, ModelImage, ToolOutcome, TurnInput
+from alfred.reminders.store import Reminders
+from alfred.reminders.tools import REMIND_SET
+from alfred.tools.base import (
+    DECLINED,
+    AllowList,
+    AttemptContext,
+    LocalToolset,
+    ModelImage,
+    ToolOutcome,
+    TurnInput,
+)
 from alfred.tools.brains import SET_MODEL
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
@@ -39,6 +49,7 @@ from tests.agent.turn_helpers import (
     owner_turn,
     reminder_tools,
     reminder_turn,
+    resumed,
     tool_rows,
     two_brains,
     web_tools,
@@ -53,7 +64,7 @@ from tests.helpers import (
     make_config,
     text,
 )
-from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook
+from tests.mcp.servers import COOKBOOK_INSTRUCTIONS, in_process, make_cookbook, make_mcparr
 
 MR_FERREIRA = dataclasses.replace(DIOGO, address="Mr. Ferreira")
 
@@ -598,3 +609,178 @@ async def test_quiet_reminder_turn_is_told_about_no_reply(
     await agent(sessions, quiet, now=DUE).run(await reminder_turn(sessions, quiet_ok=True))
     assert NO_REPLY not in loud.requests[0][0][0]["content"]
     assert NO_REPLY in quiet.requests[0][0][0]["content"]
+
+
+# --- waiting for the user's answer (change add-user-input-requests) ------------------
+
+CONFIRMS_ADD = dataclasses.replace(DIOGO, confirm=AllowList.of("mcparr_add_media"))
+FIND = ("mcparr_get_downloads", "{}")
+ADD = ("mcparr_add_media", '{"title": "Dune"}')
+REMIND = (REMIND_SET, '{"text": "watch Dune", "in_minutes": 60}')
+
+
+def confirming(sessions: async_sessionmaker[AsyncSession], model: FakeModel, **kw: object) -> Agent:
+    return agent(sessions, model, reminders=reminder_tools(sessions, Clock(NOW)), **kw)
+
+
+async def parked_turn(
+    sessions: async_sessionmaker[AsyncSession], model: FakeModel
+) -> tuple[Agent, TurnInput, TurnResult]:
+    """A turn whose user confirms mcparr_add_media; the model's script decides the calls."""
+    alfred = confirming(sessions, model)
+    turn = await owner_turn(sessions, "add Dune and remind me", CONFIRMS_ADD)
+    return alfred, turn, await alfred.run(turn)
+
+
+async def test_turn_parks_at_a_listed_call(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([calls(FIND, ADD, REMIND)])
+    _, _, result = await parked_turn(sessions, model)
+    waiting = result.waiting
+    assert waiting is not None and result.reply == ""
+    assert (waiting.call.name, waiting.call_index) == ("mcparr_add_media", 1)
+    assert [c.name for c in waiting.remaining] == [REMIND_SET]
+    # The tail: the assistant message with the three calls, and find's result.
+    assert [m["role"] for m in waiting.tail] == ["assistant", "tool"]
+    assert len(waiting.tail[0]["tool_calls"]) == 3
+    assert "Dune" in waiting.tail[1]["content"]
+    assert (waiting.requests_used, waiting.seq) == (1, 2)
+    assert waiting.upto_entry_id is not None and waiting.conversation_id is not None
+    # find ran, the park is recorded, remind didn't run.
+    rows = await tool_rows(sessions)
+    assert [(r.tool, r.ok, r.result_excerpt) for r in rows][1:] == [
+        ("mcparr_add_media", False, "waiting for the user's answer")
+    ]
+    assert rows[0].tool == "mcparr_get_downloads" and rows[0].ok
+    assert await Reminders(sessions).pending("diogo") == []
+
+
+async def test_do_it_runs_the_call_and_the_turn_goes_on(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(FIND, ADD, REMIND), text("Added Dune; I'll remind you.")])
+    alfred, turn, parked = await parked_turn(sessions, model)
+    result = await alfred.run(resumed(turn, parked, True))
+    assert result.reply == "Added Dune; I'll remind you."
+    assert result.side_effects_possible and result.waiting is None
+    rows = await tool_rows(sessions)
+    assert [(r.seq, r.tool, r.ok) for r in rows] == [
+        (1, "mcparr_get_downloads", True),
+        (2, "mcparr_add_media", False),
+        (3, "mcparr_add_media", True),
+        (4, REMIND_SET, True),
+    ]
+    # The model saw add's real result, then remind's, after the same assistant message.
+    messages = model.requests[1][0]
+    assert [m["role"] for m in messages[-4:]] == ["assistant", "tool", "tool", "tool"]
+    assert "added Dune" in messages[-2]["content"]
+    assert [m.get("tool_call_id") for m in messages[-3:]] == ["c0", "c1", "c2"]
+    assert len(await Reminders(sessions).pending("diogo")) == 1
+
+
+async def test_cancel_declines_without_running(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(ADD), text("As you wish, I won't add it.")])
+    alfred, turn, parked = await parked_turn(sessions, model)
+    result = await alfred.run(resumed(turn, parked, False))
+    assert result.reply == "As you wish, I won't add it."
+    assert model.requests[1][0][-1]["content"] == DECLINED
+    rows = await tool_rows(sessions)
+    assert [(r.tool, r.ok, r.result_excerpt) for r in rows][-1] == (
+        "mcparr_add_media",
+        False,
+        DECLINED,
+    )
+
+
+async def test_two_listed_calls_ask_one_after_the_other(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    alien = ("mcparr_add_media", '{"title": "Alien"}')
+    model = FakeModel([calls(ADD, alien), text("Both added.")])
+    alfred, turn, first = await parked_turn(sessions, model)
+    assert first.waiting is not None and first.waiting.call.arguments == ADD[1]
+    second = await alfred.run(resumed(turn, first, True))
+    assert second.waiting is not None
+    assert (second.waiting.call.arguments, second.waiting.call_index) == (alien[1], 1)
+    assert second.waiting.remaining == ()
+    # Dune's real result is in the tail now.
+    assert "added Dune" in second.waiting.tail[-1]["content"]
+    done = await alfred.run(resumed(turn, second, True))
+    assert done.reply == "Both added."
+    assert len(model.requests) == 2
+
+
+async def test_max_requests_counts_the_whole_turn(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(FIND), calls(ADD), calls(FIND)])
+    alfred = confirming(sessions, model, ai={"max_requests_per_turn": 3})
+    turn = await owner_turn(sessions, "add Dune", CONFIRMS_ADD)
+    parked = await alfred.run(turn)
+    assert parked.waiting is not None and parked.waiting.requests_used == 2
+    with pytest.raises(TurnFailed) as failed:
+        await alfred.run(resumed(turn, parked, True))
+    assert "stopped after 3 model requests" in failed.value.reason
+    assert len(model.requests) == 3
+
+
+async def test_ai_down_after_the_answer_is_not_retried(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(ADD), ModelUnreachable("ai.lan timed out")])
+    alfred, turn, parked = await parked_turn(sessions, model)
+    with pytest.raises(TurnFailed) as failed:
+        await alfred.run(resumed(turn, parked, True))
+    assert not failed.value.retryable and failed.value.side_effects_possible
+    assert failed.value.notice == notices.unreachable_mid("sir")
+
+
+async def test_entries_recorded_while_waiting_are_not_in_the_resumed_context(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([calls(ADD), text("Done.")])
+    alfred, turn, parked = await parked_turn(sessions, model)
+    history = History(sessions)
+    await history.append("diogo", "ask_prompt", "anything new?", source="jellyfin")
+    await history.append("diogo", "ask_reply", "Nothing.", source="jellyfin")
+    await alfred.run(resumed(turn, parked, True))
+    resumed_context = contents([m for m in model.requests[1][0] if m["role"] != "tool"][1:])
+    assert not any("anything new?" in c or "Nothing." in c for c in resumed_context if c)
+    assert any("add Dune and remind me" in c for c in resumed_context if c)
+
+
+async def test_images_in_the_tail_are_replaced_by_a_note(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    class Pictures(LocalToolset):
+        definitions = [{"type": "function", "function": {"name": "alfred_look", "parameters": {}}}]
+
+        async def call(
+            self, name: str, raw_arguments: object, attempt: AttemptContext
+        ) -> ToolOutcome:
+            image = ModelImage(b"png", "image/png")
+            return ToolOutcome(True, "two pictures", images=(image, image))
+
+    config = make_config(mcp_servers=[MCPARR])
+    alfred = Agent(
+        config,
+        FakeModel([calls(("alfred_look", "{}"), ADD)]),
+        History(sessions),
+        sessions,
+        toolsets=[
+            Pictures(),
+            *make_agent(
+                config,
+                FakeModel(),
+                History(sessions),
+                sessions,
+                in_process({"mcparr": make_mcparr()}),
+            )._toolsets,
+        ],
+        now=lambda: NOW,
+    )
+    turn = await owner_turn(sessions, "look, then add", CONFIRMS_ADD)
+    result = await alfred.run(turn)
+    assert result.waiting is not None
+    assert result.waiting.tail[1]["content"] == "two pictures\n[2 images not kept while waiting]"

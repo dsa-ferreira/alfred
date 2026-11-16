@@ -27,8 +27,8 @@ from alfred.web.fetch import make_http_client
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 TABLES = (
-    "attachment_pages, attachments, turn_tool_calls, entries, conversations, queue_items, "
-    "reminder_recipients, reminders, facts"
+    "input_requests, attachment_pages, attachments, turn_tool_calls, entries, conversations, "
+    "queue_items, reminder_recipients, reminders, facts"
 )
 POSTGRES_IMAGE = "docker.io/pgvector/pgvector:0.8.7-pg17-trixie"
 

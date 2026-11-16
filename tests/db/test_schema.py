@@ -833,3 +833,70 @@ def test_duplicate_check_upgrade_marks_existing_facts_checked(postgres_url: str)
         command.check(cfg)
     finally:
         engine.dispose()
+
+
+# --- input requests (migration 0010) ----------------------------------------------------
+
+_REQUEST = (
+    "INSERT INTO input_requests "
+    "(queue_item_id, user_name, status, tool, arguments, question, state, turn, expires_at) "
+    "VALUES (1, 'ana', '{}', 't', '{{}}', '{{}}', '{{}}', '{{}}', now())"
+)
+
+
+def test_input_request_checks(database_url: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("TRUNCATE input_requests, queue_items RESTART IDENTITY CASCADE"))
+            conn.execute(
+                text(
+                    "INSERT INTO queue_items (id, kind, user_name, text) "
+                    "VALUES (1, 'user', 'ana', 'x')"
+                )
+            )
+            for status in ("waiting", "cancelled", "pending"):
+                conn.execute(text(f"UPDATE queue_items SET status = '{status}' WHERE id = 1"))
+            conn.execute(text(_REQUEST.format("open")))
+            # One open and one done for the same item are fine...
+            conn.execute(text(_REQUEST.format("done")))
+            # ...a second live one is not.
+            for live in ("open", "answered", "running"):
+                with pytest.raises(IntegrityError), conn.begin_nested():
+                    conn.execute(text(_REQUEST.format(live)))
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text(_REQUEST.format("maybe")))
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(text("UPDATE queue_items SET status = 'parked' WHERE id = 1"))
+            conn.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_input_requests_downgrade(postgres_url: str) -> None:
+    from alembic import command
+
+    sa_url, cfg = _legacy_database(postgres_url, "input_requests_down")
+    with _admin("diogo"):
+        command.upgrade(cfg, "head")
+    engine = create_engine(sa_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE queue_items SET status = 'waiting' WHERE id = 7"))
+            conn.execute(
+                text(
+                    "INSERT INTO input_requests (queue_item_id, user_name, tool, arguments, "
+                    "question, state, turn, expires_at) "
+                    "VALUES (7, 'diogo', 't', '{}', '{}', '{}', '{}', now())"
+                )
+            )
+        command.downgrade(cfg, "0009")
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT status, finished_at IS NOT NULL FROM queue_items WHERE id = 7")
+            ).one() == ("failed", True)
+        assert "input_requests" not in inspect(engine).get_table_names()
+        command.upgrade(cfg, "head")
+        command.check(cfg)
+    finally:
+        engine.dispose()

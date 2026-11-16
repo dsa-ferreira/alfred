@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import html
 import logging
+import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from aiogram import Dispatcher
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
-from aiogram.methods import SendChatAction
+from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendChatAction
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,14 +19,20 @@ from alfred import notices
 from alfred.attachments.intake import DownloadFailed, Intake
 from alfred.config import AttachmentsConfig, Users
 from alfred.db.models import Attachment, QueueItem
+from alfred.history import History
+from alfred.inputs import render
+from alfred.inputs.callbacks import Taps
+from alfred.inputs.loop import cancel_on_new_message
+from alfred.inputs.store import InputRequests
 from alfred.memory.facts import FactStore
 from alfred.queue import Queue
 from alfred.telegram import bot as bot_module
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
+from alfred.tools.base import Option, Question, confirm_question
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
-from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore
-from tests.telegram.fake_bot import OWNER, TOKEN, make_bot, message_update
+from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore, add_queue_item
+from tests.telegram.fake_bot import OWNER, TOKEN, callback_update, make_bot, message_update
 
 PDF = "application/pdf"
 USERS = Users((DIOGO, ANA))
@@ -699,3 +708,282 @@ async def test_command_registration_failure_is_only_logged(
     session.on_request = fail
     await register_commands(bot)
     assert "could not register the bot commands" in caplog.text
+
+
+# --- Questions and buttons (change add-user-input-requests) --------------------------
+
+DUNE = confirm_question("mcparr_add_media", {"title": "Dune", "year": 2021})
+
+
+def titled(question: Question, title_: str = "For your request:") -> Question:
+    return dataclasses.replace(question, title=title_)
+
+
+async def test_confirmation_shows_the_real_call() -> None:
+    bot, session = make_bot()
+    message_id = await TelegramOutbox(bot).send_question(ANA, 7, titled(DUNE))
+    (sent,) = session.sent()
+    assert sent.chat_id == ANA_ID and sent.parse_mode == "HTML"
+    assert message_id == 1
+    assert sent.text == (
+        "<b>For your request:</b>\n"
+        "Run mcparr_add_media with these arguments?\n"
+        "<pre>{\n  &quot;title&quot;: &quot;Dune&quot;,\n  &quot;year&quot;: 2021\n}</pre>"
+    )
+    rows = sent.reply_markup.inline_keyboard  # type: ignore[union-attr]
+    assert [[(b.text, b.callback_data) for b in row] for row in rows] == [
+        [("Do it", "ir:7:0"), ("Cancel", "ir:7:1")]
+    ]
+
+
+def test_titles_say_what_asked() -> None:
+    assert render.title("user") == "For your request:"
+    assert render.title("ask", source="jellyfin") == "For a request from jellyfin:"
+    label = render.reminder_label(12, "call mum")
+    assert render.title("reminder", reminder=label) == "For reminder #12 (call mum):"
+
+
+async def test_request_from_a_service() -> None:
+    bot, session = make_bot()
+    question = titled(DUNE, render.title("ask", source="jellyfin"))
+    await TelegramOutbox(bot).send_question(DIOGO, 3, question)
+    assert "jellyfin" in session.sent()[0].text
+
+
+async def test_long_arguments_are_cut_and_the_buttons_still_sent() -> None:
+    bot, session = make_bot()
+    long = confirm_question("cookbook_create_recipe", {"steps": "x" * 10_000})
+    await TelegramOutbox(bot).send_question(DIOGO, 4, titled(long))
+    (sent,) = session.sent()
+    visible = html.unescape(re.sub(r"<[^>]+>", "", sent.text))
+    assert len(visible) <= 4096 - render.OUTCOME_RESERVE
+    assert "more characters]" in visible
+    assert sent.reply_markup is not None
+    # With the outcome line added, the edit still fits.
+    edited = html.unescape(re.sub(r"<[^>]+>", "", render.outcome_html(titled(long), "Confirmed.")))
+    assert len(edited) <= 4096
+
+
+def test_at_most_two_buttons_a_row() -> None:
+    options = tuple(Option(str(i), i) for i in range(5))
+    markup = render.keyboard(9, Question("Pick", options))
+    assert [len(row) for row in markup.inline_keyboard] == [2, 2, 1]
+    assert markup.inline_keyboard[2][0].callback_data == "ir:9:4"
+    assert render.parse_callback("ir:9:4") == (9, 4)
+    assert render.parse_callback("ir:x:1") is None and render.parse_callback(None) is None
+
+
+async def test_edit_removes_the_buttons() -> None:
+    bot, session = make_bot()
+    await TelegramOutbox(bot).edit_question(ANA, 55, "done")
+    (edit,) = [r for r in session.requests if isinstance(r, EditMessageText)]
+    assert (edit.chat_id, edit.message_id, edit.text) == (ANA_ID, 55, "done")
+    assert edit.reply_markup is None
+
+
+async def test_failed_edit_is_only_logged(caplog: pytest.LogCaptureFixture) -> None:
+    bot, session = make_bot()
+
+    def refuse(method: object) -> None:
+        if isinstance(method, EditMessageText):
+            raise TelegramBadRequest(method, "message to edit not found")  # type: ignore[arg-type]
+
+    session.on_request = refuse
+    with caplog.at_level(logging.WARNING):
+        await TelegramOutbox(bot).edit_question(ANA, 55, "done")
+    assert "could not edit question message 55" in caplog.text
+
+
+def test_callback_queries_are_received() -> None:
+    assert bot_module.ALLOWED_UPDATES == ["message", "callback_query"]
+
+
+# --- taps ----------------------------------------------------------------------
+
+
+class Wakes:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def __call__(self) -> None:
+        self.count += 1
+
+
+async def tap_setup(
+    sessions: async_sessionmaker[AsyncSession], *, expires_at: datetime | None = None
+) -> tuple[Any, Any, Dispatcher, InputRequests, int, int, Wakes]:
+    bot, session = make_bot()
+    requests = InputRequests(sessions, History(sessions), USERS)
+    wakes = Wakes()
+    taps = Taps(USERS, requests, TelegramOutbox(bot), wakes)
+    dispatcher = make_dispatcher(USERS, Queue(sessions), on_tap=taps)
+    item = await add_queue_item(sessions, "user", "add Dune", user="ana")
+    request = await requests.park(
+        item, "ana", tool="mcparr_add_media", arguments={"title": "Dune"},
+        question=titled(DUNE), state={"via": "confirm"}, turn={},
+        expires_at=expires_at or datetime.now(UTC) + timedelta(hours=1),
+    )  # fmt: skip
+    await requests.set_message(request, "ana", 500)
+    return bot, session, dispatcher, requests, item, request, wakes
+
+
+def answers(session: Any) -> list[AnswerCallbackQuery]:
+    return [r for r in session.requests if isinstance(r, AnswerCallbackQuery)]
+
+
+def edits(session: Any) -> list[EditMessageText]:
+    return [r for r in session.requests if isinstance(r, EditMessageText)]
+
+
+async def item_status(sessions: async_sessionmaker[AsyncSession], item: int) -> str:
+    async with sessions() as session:
+        row = await session.get(QueueItem, item)
+        assert row is not None
+        return row.status
+
+
+async def test_tap_acknowledged_and_applied(sessions: async_sessionmaker[AsyncSession]) -> None:
+    bot, session, dispatcher, _, item, request, wakes = await tap_setup(sessions)
+    await dispatcher.feed_update(bot, callback_update(f"ir:{request}:0", user_id=ANA_ID))
+    (answer,) = answers(session)
+    assert answer.text == "Do it"
+    assert await item_status(sessions, item) == "pending"
+    assert wakes.count == 1  # the worker is woken
+    (edit,) = edits(session)
+    assert edit.message_id == 500 and edit.text.endswith("<i>Confirmed.</i>")
+    assert edit.reply_markup is None
+
+
+async def test_tap_from_a_stranger(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    bot, session, dispatcher, _, item, request, wakes = await tap_setup(sessions)
+    with caplog.at_level(logging.INFO):
+        await dispatcher.feed_update(bot, callback_update(f"ir:{request}:0", user_id=999))
+    assert len(answers(session)) == 1 and edits(session) == []
+    assert await item_status(sessions, item) == "waiting" and wakes.count == 0
+    assert "999" in caplog.text and f"ir:{request}" not in caplog.text
+
+
+async def test_tap_in_a_group_is_ignored(sessions: async_sessionmaker[AsyncSession]) -> None:
+    bot, session, dispatcher, _, item, request, _ = await tap_setup(sessions)
+    update = callback_update(f"ir:{request}:0", user_id=ANA_ID, chat_type="group")
+    await dispatcher.feed_update(bot, update)
+    assert await item_status(sessions, item) == "waiting"
+
+
+async def test_someone_else_taps(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    bot, session, dispatcher, _, item, request, wakes = await tap_setup(sessions)
+    with caplog.at_level(logging.INFO):
+        await dispatcher.feed_update(bot, callback_update(f"ir:{request}:0", user_id=OWNER))
+    assert answers(session)[0].text == "That question isn't yours to answer."
+    assert await item_status(sessions, item) == "waiting" and wakes.count == 0
+    assert str(OWNER) in caplog.text
+
+
+async def test_double_tap(sessions: async_sessionmaker[AsyncSession]) -> None:
+    bot, session, dispatcher, _, item, request, wakes = await tap_setup(sessions)
+    await dispatcher.feed_update(bot, callback_update(f"ir:{request}:0", user_id=ANA_ID))
+    await dispatcher.feed_update(bot, callback_update(f"ir:{request}:1", user_id=ANA_ID))
+    assert [a.text for a in answers(session)] == ["Do it", "That question is no longer open."]
+    assert wakes.count == 1 and len(edits(session)) == 1
+
+
+async def test_tap_on_an_old_message(sessions: async_sessionmaker[AsyncSession]) -> None:
+    yesterday = datetime.now(UTC) - timedelta(days=1)
+    bot, session, dispatcher, _, item, request, wakes = await tap_setup(
+        sessions, expires_at=yesterday
+    )
+    await dispatcher.feed_update(bot, callback_update(f"ir:{request}:0", user_id=ANA_ID))
+    assert answers(session)[0].text == "That question is no longer open."
+    assert await item_status(sessions, item) == "cancelled" and wakes.count == 0
+    (edit,) = edits(session)
+    assert edit.text.endswith("<i>Expired: no answer in time.</i>")
+
+
+async def test_tap_with_bad_data(sessions: async_sessionmaker[AsyncSession]) -> None:
+    bot, session, dispatcher, *_ = await tap_setup(sessions)
+    await dispatcher.feed_update(bot, callback_update("nonsense", user_id=ANA_ID))
+    assert answers(session)[0].text == "That question is no longer open."
+
+
+# --- a new message cancels waiting turns -----------------------------------------
+
+
+async def waiting_for_diogo(
+    sessions: async_sessionmaker[AsyncSession], bot: Any
+) -> tuple[Queue, InputRequests, int]:
+    """A queue wired as serve wires it, and diogo's parked turn: (queue, store, item id)."""
+    requests = InputRequests(sessions, History(sessions), USERS)
+    queue = Queue(sessions)
+    queue.before_user_message = cancel_on_new_message(requests, TelegramOutbox(bot), USERS)
+    item = await add_queue_item(sessions, "user", "add Dune")
+    request = await requests.park(
+        item, "diogo", tool="mcparr_add_media", arguments={"title": "Dune"},
+        question=titled(DUNE), state={"via": "confirm"}, turn={},
+        expires_at=timedelta(hours=1),
+    )  # fmt: skip
+    await requests.set_message(request, "diogo", 700)
+    return queue, requests, item
+
+
+async def test_text_message_cancels_the_waiting_turn(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, session = make_bot()
+    queue, _, item = await waiting_for_diogo(sessions, bot)
+    dispatcher = make_dispatcher(USERS, queue)
+    await dispatcher.feed_update(bot, message_update(text="never mind"))
+    assert await item_status(sessions, item) == "cancelled"
+    (edit,) = edits(session)
+    assert edit.message_id == 700
+    assert edit.text.endswith("<i>Cancelled: you sent a new message.</i>")
+    assert [i.text for i in await queued(sessions)] == ["add Dune", "never mind"]
+
+
+async def test_attachment_message_cancels_the_waiting_turn(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, _ = make_bot()
+    queue, _, item = await waiting_for_diogo(sessions, bot)
+    intake = Intake(
+        AttachmentsConfig(endpoint_url="http://garage.lan:3900", bucket="alfred"),
+        FakeStore(),
+        queue,
+        FakeDownloader({"p1": image_bytes(800, 600)}),
+    )
+    dispatcher = make_dispatcher(USERS, queue, intake=intake)
+    await dispatcher.feed_update(bot, message_update(**photo("p1", caption="this instead")))
+    assert await item_status(sessions, item) == "cancelled"
+
+
+async def test_memory_command_leaves_the_turn_waiting(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    from zoneinfo import ZoneInfo
+
+    from alfred.telegram.bot import MemoryCommand
+    from tests.helpers import FakeEmbedder, make_config
+
+    bot, session = make_bot()
+    queue, requests, item = await waiting_for_diogo(sessions, bot)
+    store = FactStore(make_config(), sessions, FakeEmbedder(default=[1.0]))
+    dispatcher = make_dispatcher(
+        USERS, queue, memory=MemoryCommand(store, ZoneInfo("Europe/Lisbon"))
+    )
+    await dispatcher.feed_update(bot, message_update(text="/memory"))
+    assert await item_status(sessions, item) == "waiting"
+    assert len(await requests.open_for("diogo")) == 1 and edits(session) == []
+
+
+async def test_another_users_message_leaves_the_turn_waiting(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    bot, _ = make_bot()
+    queue, _, item = await waiting_for_diogo(sessions, bot)
+    await make_dispatcher(USERS, queue).feed_update(
+        bot, message_update(user_id=ANA_ID, text="hello")
+    )
+    assert await item_status(sessions, item) == "waiting"

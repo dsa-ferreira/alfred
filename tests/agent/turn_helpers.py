@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelReply
 from alfred.agent.prompts import CALCULATE, DATE, operating_rules
-from alfred.agent.turn import Agent
+from alfred.agent.turn import Agent, TurnResult
 from alfred.config import User, Users
 from alfred.db.models import TurnToolCall
 from alfred.history import History, strip_stamp
@@ -25,7 +26,7 @@ from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.base import TurnInput
+from alfred.tools.base import Resume, TurnInput
 from alfred.tools.brains import SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
@@ -219,3 +220,12 @@ async def reminder_turn(
         quiet_ok=quiet_ok,
         user=user,
     )
+
+
+def resumed(turn: TurnInput, result: TurnResult, answer: object) -> TurnInput:
+    """``turn`` going on after its user chose ``answer``, as stored in the database."""
+    waiting = result.waiting
+    assert waiting is not None, result
+    saved = json.loads(json.dumps(waiting.to_json()))
+    state = json.loads(json.dumps(waiting.need.state))
+    return dataclasses.replace(turn, resume=Resume(saved, state, answer))

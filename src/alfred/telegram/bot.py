@@ -17,6 +17,10 @@ the ``unsupported`` notice. Without them, anything but text gets
 ``text_only``. The parts of an album arrive as separate messages sharing a
 ``media_group_id``: they are collected until no part has come for
 ``album_wait_s`` and then received as one message (design D3).
+
+Button taps (callback queries) on alfred's question messages go to the tap
+handler (change add-user-input-requests, design D7); the outbox sends those
+questions with their buttons and edits them once they are over.
 """
 
 from __future__ import annotations
@@ -33,17 +37,19 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BotCommand, Message
+from aiogram.types import BotCommand, CallbackQuery, Message
 
 from alfred import notices
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
 from alfred.config import User, Users
+from alfred.inputs.render import keyboard, question_html
 from alfred.queue import Queue
 from alfred.telegram.formatting import split_for_telegram, split_markdown
+from alfred.tools.base import Question
 
 log = logging.getLogger(__name__)
 
-ALLOWED_UPDATES = ["message"]
+ALLOWED_UPDATES = ["message", "callback_query"]
 
 # Telegram shows a chat action for about 5 seconds; resend a little sooner so
 # a slow request leaves no gap (design D2).
@@ -200,8 +206,16 @@ def make_dispatcher(
     intake: Intake | None = None,
     album_wait_s: float = 2,
     memory: MemoryCommand | None = None,
+    on_tap: Callable[[CallbackQuery], Awaitable[None]] | None = None,
 ) -> Dispatcher:
     dispatcher = Dispatcher()
+    if on_tap is not None:
+        tap = on_tap
+
+        # A plain coroutine function: aiogram runs other callables in a thread.
+        @dispatcher.callback_query()
+        async def on_callback(callback: CallbackQuery) -> None:
+            await tap(callback)
 
     def sender(message: Message) -> User | None:
         """The configured user who sent ``message`` in their private chat, if any."""
@@ -285,6 +299,31 @@ class TelegramOutbox:
                     raise
                 log.warning("Telegram rejected the formatting; resending as plain text")
                 await self._bot.send_message(chat_id, markdown, parse_mode=None)
+
+    async def send_question(self, user: User, request_id: int, question: Question) -> int:
+        """Send a question with its buttons; returns its message ID. Raises if not delivered."""
+        sent = await self._bot.send_message(
+            user.telegram_user_id,
+            question_html(question),
+            parse_mode="HTML",
+            reply_markup=keyboard(request_id, question),
+        )
+        return sent.message_id
+
+    async def edit_question(self, user: User, message_id: int, html: str) -> None:
+        """Replace a question message's text and remove its buttons. Failures are only logged."""
+        try:
+            await self._bot.edit_message_text(
+                html, chat_id=user.telegram_user_id, message_id=message_id, parse_mode="HTML"
+            )
+        except Exception as exc:
+            log.warning(
+                "could not edit question message %s for %s: %s: %s",
+                message_id,
+                user.name,
+                type(exc).__name__,
+                exc,
+            )
 
     @contextlib.asynccontextmanager
     async def typing(self, user: User) -> AsyncIterator[None]:
