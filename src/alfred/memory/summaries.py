@@ -41,15 +41,15 @@ from alfred.memory.transcript import (
 
 log = logging.getLogger(__name__)
 
-EMPTY_TITLE = "Empty conversation"
-EMPTY_SUMMARY = "Nothing was said in this conversation."
+_EMPTY_TITLE = "Empty conversation"
+_EMPTY_SUMMARY = "Nothing was said in this conversation."
 
 
 class _Preempted:
     """The summary request was cancelled because a queue item arrived."""
 
 
-PREEMPTED = _Preempted()
+_PREEMPTED = _Preempted()
 
 
 class Model(Protocol):
@@ -120,7 +120,7 @@ class Summaries:
 
         if summary is None:
             made = await self._make_summary(conversation_id, preempt)
-            if made is None or made is PREEMPTED:
+            if made is None or made is _PREEMPTED:
                 return None
             title, summary = made
             async with self._sessions.begin() as session:
@@ -160,7 +160,7 @@ class Summaries:
         ``PREEMPTED`` (and nothing recorded) when ``preempt`` won."""
         entries = await self.transcript_entries(conversation_id)
         if not entries:
-            return EMPTY_TITLE, EMPTY_SUMMARY
+            return _EMPTY_TITLE, _EMPTY_SUMMARY
         transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
         request = asyncio.ensure_future(self._model.complete_streamed(summary_messages(transcript)))
         try:
@@ -174,7 +174,7 @@ class Summaries:
                     log.info(
                         "conversation %s: summary request gave way to the queue", conversation_id
                     )
-                    return PREEMPTED
+                    return _PREEMPTED
             reply = await request
             log.info("conversation %s summary: %s", conversation_id, token_counts(reply.usage))
             parsed = parse_summary(reply.content or "")

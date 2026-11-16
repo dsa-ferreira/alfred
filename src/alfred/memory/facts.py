@@ -51,13 +51,13 @@ from alfred.tools.base import (
 
 log = logging.getLogger(__name__)
 
-Origin = Literal["told", "learned"]
+_Origin = Literal["told", "learned"]
 
 _ACTIVE = Fact.removed_at.is_(None)
 
 
 @dataclass(frozen=True)
-class FactRow:
+class _FactRow:
     id: int
     text: str
     origin: str
@@ -65,28 +65,28 @@ class FactRow:
 
 
 # The most facts one duplicate check compares a new fact with (design D2).
-DUPLICATE_CANDIDATES = 5
+_DUPLICATE_CANDIDATES = 5
 
 
 @dataclass(frozen=True)
-class DuplicateCheck:
+class _DuplicateCheck:
     """A fact pending its duplicate check, and the user's facts close enough to compare."""
 
-    fact: FactRow
+    fact: _FactRow
     user_name: str
     # Nearest first.
-    candidates: list[FactRow]
+    candidates: list[_FactRow]
 
 
 @dataclass(frozen=True)
-class Duplicate:
+class _Duplicate:
     """Two facts found to say the same thing: ``removed`` is marked a duplicate of ``kept``."""
 
     kept: int
     removed: int
 
 
-class FactsNotFound(Exception):
+class _FactsNotFound(Exception):
     """Ids that aren't the user's active facts (unknown, removed or another user's)."""
 
     def __init__(self, ids: list[int]) -> None:
@@ -102,7 +102,7 @@ async def lock_user(session: AsyncSession, user_name: str) -> None:
     )
 
 
-async def mark_removed(
+async def _mark_removed(
     session: AsyncSession,
     user_name: str,
     ids: Iterable[int],
@@ -110,8 +110,8 @@ async def mark_removed(
     now: datetime,
     *,
     replaced_by: int | None = None,
-    origin: Origin | None = None,
-) -> list[FactRow]:
+    origin: _Origin | None = None,
+) -> list[_FactRow]:
     """Mark those of ``ids`` that are ``user_name``'s active facts removed; returns them.
 
     ``origin`` limits it to facts of that origin. Call it under
@@ -129,14 +129,14 @@ async def mark_removed(
         .values(removed_at=now, removed_reason=reason, replaced_by=replaced_by)
         .returning(Fact.id, Fact.text, Fact.origin, Fact.created_at)
     )
-    return sorted((FactRow(*r) for r in rows), key=lambda f: f.id)
+    return sorted((_FactRow(*r) for r in rows), key=lambda f: f.id)
 
 
 async def insert_fact(
     session: AsyncSession,
     user_name: str,
     fact_text: str,
-    origin: Origin,
+    origin: _Origin,
     *,
     conversation_id: int | None = None,
 ) -> int:
@@ -171,7 +171,7 @@ class FactStore:
         """Facts embedded with any other model are embedded again."""
         return self._embedder.model
 
-    async def list(self, user_name: str) -> list[FactRow]:
+    async def list(self, user_name: str) -> list[_FactRow]:
         """``user_name``'s active facts, in id order."""
         async with self._sessions() as session:
             rows = await session.execute(
@@ -179,17 +179,17 @@ class FactStore:
                 .where(Fact.user_name == user_name, _ACTIVE)
                 .order_by(Fact.id)
             )
-            return [FactRow(*r) for r in rows]
+            return [_FactRow(*r) for r in rows]
 
     async def add(
         self,
         user_name: str,
         fact_text: str,
-        origin: Origin,
+        origin: _Origin,
         conversation_id: int | None = None,
         *,
         replaces: Iterable[int] = (),
-    ) -> tuple[int, list[FactRow]]:
+    ) -> tuple[int, list[_FactRow]]:
         """Store a fact for ``user_name``, replacing ``replaces``; returns its id and those.
 
         Every id in ``replaces`` must be one of the user's active facts, of
@@ -209,17 +209,17 @@ class FactStore:
                 )
                 missing = [i for i in wanted if i not in found]
                 if missing:
-                    raise FactsNotFound(missing)
+                    raise _FactsNotFound(missing)
             fact_id = await insert_fact(
                 session, user_name, fact_text, origin, conversation_id=conversation_id
             )
-            replaced = await mark_removed(
+            replaced = await _mark_removed(
                 session, user_name, wanted, "replaced", self._now(), replaced_by=fact_id
             )
         self.changed.set()
         return fact_id, replaced
 
-    async def forget(self, user_name: str, ids: Iterable[int]) -> tuple[list[FactRow], list[int]]:
+    async def forget(self, user_name: str, ids: Iterable[int]) -> tuple[list[_FactRow], list[int]]:
         """Remove those of ``ids`` that are ``user_name``'s active facts.
 
         Returns the facts removed and, in order, the ids not found (unknown,
@@ -228,7 +228,7 @@ class FactStore:
         wanted = sorted(set(ids))
         async with self._sessions.begin() as session:
             await lock_user(session, user_name)
-            removed = await mark_removed(session, user_name, wanted, "forgotten", self._now())
+            removed = await _mark_removed(session, user_name, wanted, "forgotten", self._now())
         gone = {f.id for f in removed}
         return removed, [i for i in wanted if i not in gone]
 
@@ -244,7 +244,7 @@ class FactStore:
         self, session: AsyncSession, user_name: str, new_id: int, ids: Iterable[int]
     ) -> list[int]:
         """:meth:`replace` inside the caller's transaction, which holds the user's lock."""
-        removed = await mark_removed(
+        removed = await _mark_removed(
             session, user_name, ids, "replaced", self._now(), replaced_by=new_id, origin="learned"
         )
         return [f.id for f in removed]
@@ -296,7 +296,7 @@ class FactStore:
         self.changed.set()  # its duplicate check may be due now
         return stored is not None
 
-    async def duplicate_candidates(self, fact_id: int) -> DuplicateCheck | None:
+    async def duplicate_candidates(self, fact_id: int) -> _DuplicateCheck | None:
         """The user's other active facts within the duplicate distance, nearest first.
 
         ``None`` unless the fact is active and embedded with the configured
@@ -313,7 +313,7 @@ class FactStore:
             ).first()
             if found is None:
                 return None
-            fact = FactRow(*found[:4])
+            fact = _FactRow(*found[:4])
             user_name = found[4]
             vector = await session.scalar(select(Fact.embedding).where(Fact.id == fact_id))
             if vector is None:
@@ -330,9 +330,9 @@ class FactStore:
                     distance <= self._config.memory.facts_duplicate_max_distance,
                 )
                 .order_by(distance, Fact.id)
-                .limit(DUPLICATE_CANDIDATES)
+                .limit(_DUPLICATE_CANDIDATES)
             )
-            return DuplicateCheck(fact, user_name, [FactRow(*r) for r in rows])
+            return _DuplicateCheck(fact, user_name, [_FactRow(*r) for r in rows])
 
     # --- The duplicate check's state (change fix-fact-removals, design D1, D2) ----------
 
@@ -369,8 +369,8 @@ class FactStore:
         return max(0.0, (soonest - self._now()).total_seconds())
 
     async def finish_duplicate_check(
-        self, check: DuplicateCheck, same: Iterable[int]
-    ) -> list[Duplicate] | None:
+        self, check: _DuplicateCheck, same: Iterable[int]
+    ) -> list[_Duplicate] | None:
         """Remove the duplicates the model named and mark the fact checked.
 
         Only candidates still active count. For each, a ``told`` fact stays
@@ -380,7 +380,7 @@ class FactStore:
         """
         fact_id = check.fact.id
         allowed = {f.id for f in check.candidates}
-        removed: list[Duplicate] = []
+        removed: list[_Duplicate] = []
         async with self._sessions.begin() as session:
             await lock_user(session, check.user_name)
             origin = await session.scalar(
@@ -399,7 +399,7 @@ class FactStore:
                 if other_origin is None:
                     continue
                 pair = _winner((fact_id, origin), (other, other_origin))
-                await mark_removed(
+                await _mark_removed(
                     session,
                     check.user_name,
                     [pair.removed],
@@ -495,11 +495,11 @@ class FactStore:
             self.changed.set()
 
 
-def _winner(new: tuple[int, str], old: tuple[int, str]) -> Duplicate:
+def _winner(new: tuple[int, str], old: tuple[int, str]) -> _Duplicate:
     """Which of two duplicates stays: a ``told`` fact over a ``learned`` one, else the older."""
     (a, a_origin), (b, b_origin) = new, old
     kept = (a if a_origin == "told" else b) if a_origin != b_origin else min(a, b)
-    return Duplicate(kept=kept, removed=b if kept == a else a)
+    return _Duplicate(kept=kept, removed=b if kept == a else a)
 
 
 class FactEmbeddingJob:
@@ -532,14 +532,14 @@ class FactEmbeddingJob:
 
 # --- Tools (design D8) ------------------------------------------------------------------
 
-REMEMBER = "alfred_remember"
-FORGET = "alfred_forget"
-NAMES = (REMEMBER, FORGET)
+_REMEMBER = "alfred_remember"
+_FORGET = "alfred_forget"
+NAMES = (_REMEMBER, _FORGET)
 
-REMEMBER_TOOL: dict[str, Any] = {
+_REMEMBER_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": REMEMBER,
+        "name": _REMEMBER,
         "description": (
             "Remember a lasting fact about the user for future conversations: use it when "
             "the user asks you to remember something about themselves, or corrects something "
@@ -564,10 +564,10 @@ REMEMBER_TOOL: dict[str, Any] = {
     },
 }
 
-FORGET_TOOL: dict[str, Any] = {
+_FORGET_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": FORGET,
+        "name": _FORGET,
         "description": "Forget facts about the user, by their ids, when the user asks you to.",
         "parameters": {
             "type": "object",
@@ -584,11 +584,11 @@ FORGET_TOOL: dict[str, Any] = {
 }
 
 
-def facts_note(remember: bool, forget: bool) -> str | None:
+def _facts_note(remember: bool, forget: bool) -> str | None:
     """How the ids in the facts block are used, naming only the tools offered."""
     uses = [
-        *([f"`{FORGET}` to forget facts the user wants forgotten"] if forget else []),
-        *([f"`replaces` of `{REMEMBER}` when a fact corrects one"] if remember else []),
+        *([f"`{_FORGET}` to forget facts the user wants forgotten"] if forget else []),
+        *([f"`replaces` of `{_REMEMBER}` when a fact corrects one"] if remember else []),
     ]
     if not uses:
         return None
@@ -621,7 +621,7 @@ class FactTools(LocalToolset):
         if isinstance(arguments, str):
             return ToolOutcome(False, arguments)
         user = attempt.turn.user.name
-        if name == REMEMBER:
+        if name == _REMEMBER:
             return await self._remember(user, arguments.get("text"), arguments.get("replaces"))
         return await self._forget(user, arguments.get("ids"))
 
@@ -641,7 +641,7 @@ class FactTools(LocalToolset):
             return ToolOutcome(False, "Error: `replaces` must be a list of fact ids.")
         try:
             fact_id, replaced = await self.facts.add(user, fact_text, "told", replaces=ids)
-        except FactsNotFound as exc:
+        except _FactsNotFound as exc:
             return ToolOutcome(
                 False,
                 f"Error: fact ids not found: {_ids(exc.ids)}. Nothing was saved or replaced.",
@@ -674,11 +674,11 @@ class FactTools(LocalToolset):
 class _OpenFactTools(LocalToolset):
     def __init__(self, tools: FactTools, turn: TurnInput, *, forget: bool) -> None:
         self._tools = tools
-        self.definitions = [REMEMBER_TOOL, *([FORGET_TOOL] if forget else [])]
+        self.definitions = [_REMEMBER_TOOL, *([_FORGET_TOOL] if forget else [])]
         if forget:
             # Only facts in the context have ids the model can see.
             allow = turn.user.tools
-            note = facts_note(allow.matches(REMEMBER), allow.matches(FORGET))
+            note = _facts_note(allow.matches(_REMEMBER), allow.matches(_FORGET))
             self.prompt_notes = (PromptNote(note),) if note else ()
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:

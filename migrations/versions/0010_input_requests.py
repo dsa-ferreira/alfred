@@ -27,13 +27,13 @@ down_revision: str | Sequence[str] | None = "0009"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-OLD_STATUSES = "status IN ('pending', 'done', 'failed')"
-NEW_STATUSES = "status IN ('pending', 'done', 'failed', 'waiting', 'cancelled')"
+_OLD_STATUSES = "status IN ('pending', 'done', 'failed')"
+_NEW_STATUSES = "status IN ('pending', 'done', 'failed', 'waiting', 'cancelled')"
 
 
 def upgrade() -> None:
     op.drop_constraint(op.f("ck_queue_items_status"), "queue_items", type_="check")
-    op.create_check_constraint(op.f("ck_queue_items_status"), "queue_items", NEW_STATUSES)
+    op.create_check_constraint(op.f("ck_queue_items_status"), "queue_items", _NEW_STATUSES)
 
     op.create_table(
         "input_requests",
@@ -91,4 +91,4 @@ def downgrade() -> None:
         "WHERE status IN ('waiting', 'cancelled')"
     )
     op.drop_constraint(op.f("ck_queue_items_status"), "queue_items", type_="check")
-    op.create_check_constraint(op.f("ck_queue_items_status"), "queue_items", OLD_STATUSES)
+    op.create_check_constraint(op.f("ck_queue_items_status"), "queue_items", _OLD_STATUSES)

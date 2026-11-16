@@ -16,7 +16,7 @@ from mcp.types import CreateMessageResult, SamplingMessage, TextContent
 from pydantic import BaseModel, SecretStr
 
 from alfred.config import McpServer
-from alfred.mcp.client import Connector, new_client
+from alfred.mcp.client import Connector, _new_client
 
 
 class Download(BaseModel):
@@ -97,7 +97,7 @@ def in_process(servers: Mapping[str, MCPServer | Exception]) -> Connector:
         target = servers[server.name]
         if isinstance(target, Exception):
             raise target
-        async with new_client(target) as client:
+        async with _new_client(target) as client:
             yield client
 
     return connect

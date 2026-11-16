@@ -72,7 +72,7 @@ from alfred.web.tools import WebTools
 log = logging.getLogger(__name__)
 
 # The tasks stopped by cancelling them; the API and polling stop on their own.
-CANCELLED_ON_STOP = frozenset(
+_CANCELLED_ON_STOP = frozenset(
     {"worker", "memory", "reminders", "input-requests", "attachments", "idle"}
 )
 
@@ -95,7 +95,7 @@ def configure_logging(level: str) -> None:
         logging.getLogger(name).setLevel(max(logging.WARNING, logging.getLogger().level))
 
 
-def build_toolsets(
+def _build_toolsets(
     config: Config,
     connect: Connector,
     *,
@@ -210,7 +210,7 @@ async def serve(config: Config) -> None:
         model,
         history,
         sessions,
-        toolsets=build_toolsets(
+        toolsets=_build_toolsets(
             config,
             http_connector(),
             brains=brains,
@@ -340,7 +340,7 @@ async def serve(config: Config) -> None:
         with contextlib.suppress(RuntimeError):  # polling may already be stopped
             await dispatcher.stop_polling()
         for task in tasks:
-            if task.get_name() in CANCELLED_ON_STOP:
+            if task.get_name() in _CANCELLED_ON_STOP:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()

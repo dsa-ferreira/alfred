@@ -37,7 +37,7 @@ class DownloadFailed(Exception):
     """Telegram didn't hand over the file."""
 
 
-class Downloader(Protocol):
+class _Downloader(Protocol):
     async def download(self, file_id: str) -> bytes:
         """The file's bytes; raises :class:`DownloadFailed`."""
         ...
@@ -54,7 +54,7 @@ class IncomingFile:
 
 
 @dataclass
-class Received:
+class _Received:
     """What became of a message: the queue item (if any) and the notices to send."""
 
     item_id: int | None = None
@@ -73,7 +73,7 @@ class Intake:
         config: AttachmentsConfig,
         store: ObjectStore,
         queue: Queue,
-        downloader: Downloader,
+        downloader: _Downloader,
     ) -> None:
         self._config = config
         self._store = store
@@ -86,20 +86,20 @@ class Intake:
         text: str,
         files: Sequence[IncomingFile],
         telegram_message_id: int | None = None,
-    ) -> Received:
+    ) -> _Received:
         """Queue ``text`` with the usable ``files``, in order, as ``user``'s message.
 
         The notices are in ``user``'s form of address.
         """
         address = user.address
-        result = Received()
+        result = _Received()
         ready: list[_Ready] = []
         for file in files:
             try:
                 found = await self._take(file, address)
             except DownloadFailed as exc:
                 log.warning("message %s: download failed: %s", telegram_message_id, exc)
-                return Received(notices=[notices.not_kept(address)])
+                return _Received(notices=[notices.not_kept(address)])
             if isinstance(found, str):
                 result.notices.append(found)
             else:
@@ -112,7 +112,7 @@ class Intake:
                 await self._store.put(item.attachment.object_key, item.data, item.attachment.mime)
         except StoreError:
             # Already logged, without secrets. Objects put so far are orphans.
-            return Received(notices=[notices.not_kept(address)])
+            return _Received(notices=[notices.not_kept(address)])
 
         attachments = [r.attachment for r in ready]
         result.item_id = await self._queue.enqueue_user(

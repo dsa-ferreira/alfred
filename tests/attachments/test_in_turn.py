@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
-from alfred.attachments.tools import READ_DOCUMENT, TEXT_ONLY_NOTE, VIEW_ATTACHMENT, VISION_NOTE
+from alfred.attachments.tools import _TEXT_ONLY_NOTE, _VISION_NOTE, READ_DOCUMENT, VIEW_ATTACHMENT
 from alfred.config import BrainEntry
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
@@ -17,7 +17,7 @@ from alfred.tools.brains import SET_MODEL
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.tools.dates import DATE
-from alfred.web.tools import WEB_FETCH, WEB_SEARCH
+from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.test_turn import MCP_TOOLS
 from tests.agent.turn_helpers import (
     GEMMA,
@@ -68,8 +68,8 @@ async def test_tool_order_with_attachments(
     )
     await a.run(TurnInput("chat", "hi", item, user=DIOGO))
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
-        WEB_SEARCH,
-        WEB_FETCH,
+        _WEB_SEARCH,
+        _WEB_FETCH,
         END_CONVERSATION,
         SEARCH_CONVERSATIONS,
         RECALL_CONVERSATION,
@@ -113,7 +113,7 @@ async def test_owner_turn_views_an_earlier_photo(
 
     assert result.reply == "9 November, sir."
     system = model.requests[0][0][0]["content"]
-    assert VISION_NOTE in system
+    assert _VISION_NOTE in system
     tool_result = model.requests[1][0][-1]
     assert tool_result["role"] == "tool"
     assert tool_result["content"][0]["text"].startswith('[attachment #1: image "receipt.jpg"]')
@@ -133,6 +133,6 @@ async def test_text_only_brain_explains_no_view_tool(
     )
     await a.run(TurnInput("chat", "hi", item, user=DIOGO))
     system = model.requests[0][0][0]["content"]
-    assert TEXT_ONLY_NOTE in system and VIEW_ATTACHMENT not in system
+    assert _TEXT_ONLY_NOTE in system and VIEW_ATTACHMENT not in system
     names = {t["function"]["name"] for t in model.requests[0][1]}
     assert READ_DOCUMENT in names and VIEW_ATTACHMENT not in names

@@ -10,10 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.config import Users
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import (
+    _REMIND_SET,
+    _REMINDER_CANCEL,
+    _REMINDERS_LIST,
     NAMES,
-    REMIND_SET,
-    REMINDER_CANCEL,
-    REMINDERS_LIST,
     ReminderTools,
 )
 from alfred.tools.base import AttemptContext, TurnInput
@@ -49,7 +49,7 @@ def test_definitions(tools: ReminderTools) -> None:
     set_description = next(
         d["function"]["description"]
         for d in tools.definitions
-        if d["function"]["name"] == REMIND_SET
+        if d["function"]["name"] == _REMIND_SET
     )
     # The reminder vs to-do split is repeated where the model chooses.
     assert "'task' or 'todo'" in set_description
@@ -57,7 +57,7 @@ def test_definitions(tools: ReminderTools) -> None:
 
 
 async def test_relative_time(tools: ReminderTools) -> None:
-    outcome = await tools.call(REMIND_SET, {"text": "check the oven", "in_minutes": 90}, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, {"text": "check the oven", "in_minutes": 90}, AS_DIOGO)
     assert outcome.ok
     assert outcome.text.startswith("Reminder set for today at 18:17: check the oven. ")
     # No number and no countdown for the model to repeat.
@@ -69,7 +69,7 @@ async def test_relative_time(tools: ReminderTools) -> None:
 
 async def test_arguments_as_json_text(tools: ReminderTools) -> None:
     outcome = await tools.call(
-        REMIND_SET, json.dumps({"text": "call mum", "at": "17:00"}), AS_DIOGO
+        _REMIND_SET, json.dumps({"text": "call mum", "at": "17:00"}), AS_DIOGO
     )
     assert outcome.ok
     assert outcome.text.startswith("Reminder set for today at 17:00: call mum.")
@@ -83,7 +83,7 @@ async def test_arguments_as_json_text(tools: ReminderTools) -> None:
     ],
 )
 async def test_both_or_neither(tools: ReminderTools, arguments: dict[str, object]) -> None:
-    outcome = await tools.call(REMIND_SET, arguments, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, arguments, AS_DIOGO)
     assert not outcome.ok
     assert "exactly one" in outcome.text
     assert await tools.store.pending("diogo") == []
@@ -91,21 +91,21 @@ async def test_both_or_neither(tools: ReminderTools, arguments: dict[str, object
 
 @pytest.mark.parametrize("text", ["", "   "])
 async def test_empty_text(tools: ReminderTools, text: str) -> None:
-    outcome = await tools.call(REMIND_SET, {"text": text, "in_minutes": 5}, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, {"text": text, "in_minutes": 5}, AS_DIOGO)
     assert not outcome.ok
     assert outcome.text.startswith("Error:")
     assert await tools.store.pending("diogo") == []
 
 
 async def test_in_the_past(tools: ReminderTools) -> None:
-    outcome = await tools.call(REMIND_SET, {"text": "x", "at": "2026-11-08 10:00"}, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, {"text": "x", "at": "2026-11-08 10:00"}, AS_DIOGO)
     assert not outcome.ok
     assert "already passed" in outcome.text
     assert await tools.store.pending("diogo") == []
 
 
 async def test_unreadable_time(tools: ReminderTools) -> None:
-    outcome = await tools.call(REMIND_SET, {"text": "x", "at": "five pm"}, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, {"text": "x", "at": "five pm"}, AS_DIOGO)
     assert not outcome.ok
     assert '"HH:MM"' in outcome.text and '"YYYY-MM-DD"' in outcome.text
 
@@ -114,9 +114,9 @@ async def test_unreadable_time(tools: ReminderTools) -> None:
 
 
 async def test_list_two_reminders(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "check the oven", "in_minutes": 90}, AS_DIOGO)
-    await tools.call(REMIND_SET, {"text": "call mum", "at": "17:00"}, AS_DIOGO)
-    outcome = await tools.call(REMINDERS_LIST, {}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "check the oven", "in_minutes": 90}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "call mum", "at": "17:00"}, AS_DIOGO)
+    outcome = await tools.call(_REMINDERS_LIST, {}, AS_DIOGO)
     assert outcome.ok
     assert outcome.text.splitlines()[1:] == [
         "#2 Monday 9 November 2026, 17:00 (in 13 min): call mum",
@@ -125,7 +125,7 @@ async def test_list_two_reminders(tools: ReminderTools) -> None:
 
 
 async def test_list_nothing_set(tools: ReminderTools) -> None:
-    outcome = await tools.call(REMINDERS_LIST, None, AS_DIOGO)
+    outcome = await tools.call(_REMINDERS_LIST, None, AS_DIOGO)
     assert outcome.ok
     assert outcome.text == "There are no reminders set."
 
@@ -134,45 +134,45 @@ async def test_list_nothing_set(tools: ReminderTools) -> None:
 
 
 async def test_cancel_a_set_reminder(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "call mum", "at": "17:00"}, AS_DIOGO)
-    outcome = await tools.call(REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "call mum", "at": "17:00"}, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
     assert outcome.ok
     assert "call mum" in outcome.text and "17:00" in outcome.text
     assert await tools.store.pending("diogo") == []
 
 
 async def test_cancel_already_delivered(tools: ReminderTools, clock: Clock) -> None:
-    await tools.call(REMIND_SET, {"text": "call mum", "in_minutes": 5}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "call mum", "in_minutes": 5}, AS_DIOGO)
     await tools.store.claim_due(clock.now + timedelta(minutes=5))
-    outcome = await tools.call(REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
     assert not outcome.ok
     assert "#1 was already delivered" in outcome.text
 
 
 async def test_cancel_twice(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "call mum", "in_minutes": 5}, AS_DIOGO)
-    await tools.call(REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
-    outcome = await tools.call(REMINDER_CANCEL, {"id": "1"}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "call mum", "in_minutes": 5}, AS_DIOGO)
+    await tools.call(_REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": "1"}, AS_DIOGO)
     assert not outcome.ok
     assert "already cancelled" in outcome.text
 
 
 @pytest.mark.parametrize("value", [99, "#99"])
 async def test_cancel_unknown(tools: ReminderTools, value: object) -> None:
-    outcome = await tools.call(REMINDER_CANCEL, {"id": value}, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": value}, AS_DIOGO)
     assert not outcome.ok
     assert outcome.text == "Error: there is no reminder #99."
 
 
 @pytest.mark.parametrize("arguments", [{}, {"id": "soon"}, {"id": True}])
 async def test_cancel_bad_id(tools: ReminderTools, arguments: dict[str, object]) -> None:
-    outcome = await tools.call(REMINDER_CANCEL, arguments, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, arguments, AS_DIOGO)
     assert not outcome.ok
     assert "reminder number" in outcome.text
 
 
 async def test_bad_json(tools: ReminderTools) -> None:
-    outcome = await tools.call(REMIND_SET, "{not json", AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, "{not json", AS_DIOGO)
     assert not outcome.ok
     assert "not valid JSON" in outcome.text
 
@@ -185,22 +185,22 @@ async def test_offered_by_turn_kind(tools: ReminderTools) -> None:
     assert await tools.open(TurnInput("chat", "hi", 1, user=DIOGO)) is tools
     assert await tools.open(TurnInput("ask", "93%", 2, "disk-check", user=DIOGO)) is None
     reminder_turn = await tools.open(TurnInput("reminder", "brief me", 3, user=DIOGO))
-    assert reminder_turn is not None and _names(reminder_turn) == {REMINDERS_LIST}
-    assert reminder_turn.handles(REMINDERS_LIST)
-    assert not reminder_turn.handles(REMIND_SET) and not reminder_turn.handles(REMINDER_CANCEL)
+    assert reminder_turn is not None and _names(reminder_turn) == {_REMINDERS_LIST}
+    assert reminder_turn.handles(_REMINDERS_LIST)
+    assert not reminder_turn.handles(_REMIND_SET) and not reminder_turn.handles(_REMINDER_CANCEL)
     assert all(tools.handles(name) for name in NAMES)
     assert not tools.handles("alfred_web_fetch")
 
 
 async def test_reminder_turn_lists_the_recipients_reminders(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
-    await tools.call(REMIND_SET, {"text": "gym", "at": "19:00"}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "gym", "at": "19:00"}, AS_DIOGO)
     turn = TurnInput("reminder", "brief me", 3, user=ANA)
     reminder_turn = await tools.open(turn)
     assert reminder_turn is not None
-    outcome = await reminder_turn.call(REMINDERS_LIST, {}, AttemptContext(turn))
+    outcome = await reminder_turn.call(_REMINDERS_LIST, {}, AttemptContext(turn))
     assert outcome.ok and "buy milk" in outcome.text and "gym" not in outcome.text
-    refused = await reminder_turn.call(REMIND_SET, {"text": "x"}, AttemptContext(turn))
+    refused = await reminder_turn.call(_REMIND_SET, {"text": "x"}, AttemptContext(turn))
     assert not refused.ok
 
 
@@ -210,21 +210,21 @@ async def test_reminder_turn_respects_the_allow_list(tools: ReminderTools) -> No
     reminder_turn = await tools.open(TurnInput("reminder", "brief me", 3, user=DIOGO))
     assert reminder_turn is not None
     gated = Gated(reminder_turn, AllowList.of("alfred_remind_set", "alfred_web_*"))
-    assert gated.definitions == [] and not gated.handles(REMINDERS_LIST)
+    assert gated.definitions == [] and not gated.handles(_REMINDERS_LIST)
 
 
 # --- for: reminding other users (change add-multiple-users) --------------------------
 
 
 def test_for_lists_the_users(tools: ReminderTools) -> None:
-    (remind_set,) = [d for d in tools.definitions if d["function"]["name"] == REMIND_SET]
+    (remind_set,) = [d for d in tools.definitions if d["function"]["name"] == _REMIND_SET]
     users = remind_set["function"]["parameters"]["properties"]["for"]
     assert users["type"] == "array" and users["items"]["enum"] == ["diogo", "ana"]
 
 
 async def test_remind_another_user(tools: ReminderTools) -> None:
     outcome = await tools.call(
-        REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO
+        _REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO
     )
     assert outcome.ok
     assert outcome.text.startswith("Reminder set for today at 18:00, to remind ana: buy milk.")
@@ -235,7 +235,7 @@ async def test_remind_another_user(tools: ReminderTools) -> None:
 
 async def test_remind_both(tools: ReminderTools) -> None:
     arguments = {"text": "dinner with my parents", "at": "20:00", "for": ["ana", "diogo", "ana"]}
-    outcome = await tools.call(REMIND_SET, arguments, AS_ANA)
+    outcome = await tools.call(_REMIND_SET, arguments, AS_ANA)
     assert outcome.ok and "to remind ana, diogo" in outcome.text
     [row] = await tools.store.pending("diogo")
     assert (row.created_by, row.recipients) == ("ana", ("ana", "diogo"))
@@ -246,20 +246,20 @@ async def test_for_defaults_to_the_turns_user(tools: ReminderTools) -> None:
         arguments = {"text": "yoga", "in_minutes": 10}
         if value is not None:
             arguments["for"] = value
-        outcome = await tools.call(REMIND_SET, arguments, AS_ANA)
+        outcome = await tools.call(_REMIND_SET, arguments, AS_ANA)
         assert outcome.ok and "to remind" not in outcome.text
     assert all(r.only_for("ana") for r in await tools.store.pending("ana"))
     assert await tools.store.pending("diogo") == []
 
 
 async def test_for_a_single_name(tools: ReminderTools) -> None:
-    outcome = await tools.call(REMIND_SET, {"text": "x", "in_minutes": 5, "for": "Ana "}, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, {"text": "x", "in_minutes": 5, "for": "Ana "}, AS_DIOGO)
     assert outcome.ok and "to remind ana" in outcome.text
 
 
 async def test_unknown_user(tools: ReminderTools) -> None:
     outcome = await tools.call(
-        REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["bob"]}, AS_DIOGO
+        _REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["bob"]}, AS_DIOGO
     )
     assert not outcome.ok
     assert "'bob'" in outcome.text and "diogo, ana" in outcome.text
@@ -268,21 +268,21 @@ async def test_unknown_user(tools: ReminderTools) -> None:
 
 @pytest.mark.parametrize("value", [[1], {"ana": True}, 7])
 async def test_for_must_be_names(tools: ReminderTools, value: object) -> None:
-    outcome = await tools.call(REMIND_SET, {"text": "x", "in_minutes": 5, "for": value}, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, {"text": "x", "in_minutes": 5, "for": value}, AS_DIOGO)
     assert not outcome.ok and "for must be a list of user names" in outcome.text
 
 
 async def test_list_shows_who_set_it_and_who_for(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
     await tools.call(
-        REMIND_SET, {"text": "dinner", "at": "20:00", "for": ["ana", "diogo"]}, AS_DIOGO
+        _REMIND_SET, {"text": "dinner", "at": "20:00", "for": ["ana", "diogo"]}, AS_DIOGO
     )
-    await tools.call(REMIND_SET, {"text": "yoga", "at": "21:00"}, AS_ANA)
-    ana = (await tools.call(REMINDERS_LIST, {}, AS_ANA)).text.splitlines()
+    await tools.call(_REMIND_SET, {"text": "yoga", "at": "21:00"}, AS_ANA)
+    ana = (await tools.call(_REMINDERS_LIST, {}, AS_ANA)).text.splitlines()
     assert ana[1].endswith("buy milk (set by diogo; for ana)")
     assert ana[2].endswith("dinner (set by diogo; for ana, diogo)")
     assert ana[3].endswith("yoga")
-    diogo = (await tools.call(REMINDERS_LIST, {}, AS_DIOGO)).text.splitlines()
+    diogo = (await tools.call(_REMINDERS_LIST, {}, AS_DIOGO)).text.splitlines()
     assert len(diogo) == 3
     assert diogo[1].endswith("buy milk (for ana)")
     assert diogo[2].endswith("dinner (for ana, diogo)")
@@ -290,10 +290,10 @@ async def test_list_shows_who_set_it_and_who_for(tools: ReminderTools) -> None:
 
 async def test_cancel_by_a_recipient(tools: ReminderTools) -> None:
     await tools.call(
-        REMIND_SET, {"text": "dinner", "at": "20:00", "for": ["ana", "diogo"]}, AS_DIOGO
+        _REMIND_SET, {"text": "dinner", "at": "20:00", "for": ["ana", "diogo"]}, AS_DIOGO
     )
     [row] = await tools.store.pending("ana")
-    outcome = await tools.call(REMINDER_CANCEL, {"id": row.id}, AS_ANA)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": row.id}, AS_ANA)
     assert outcome.ok and "dinner" in outcome.text and "20:00" in outcome.text
     assert outcome.text.endswith("it stays set for diogo.")
     assert await tools.store.pending("ana") == []
@@ -301,17 +301,17 @@ async def test_cancel_by_a_recipient(tools: ReminderTools) -> None:
 
 
 async def test_cancel_by_the_last_recipient(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
+    await tools.call(_REMIND_SET, {"text": "buy milk", "at": "18:00", "for": ["ana"]}, AS_DIOGO)
     [row] = await tools.store.pending("ana")
-    outcome = await tools.call(REMINDER_CANCEL, {"id": row.id}, AS_ANA)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": row.id}, AS_ANA)
     assert outcome.ok and outcome.text.startswith(f"Reminder #{row.id} cancelled")
     assert await tools.store.pending("diogo") == []
 
 
 async def test_cancel_not_involved_is_unknown(tools: ReminderTools) -> None:
-    await tools.call(REMIND_SET, {"text": "yoga", "at": "21:00"}, AS_ANA)
+    await tools.call(_REMIND_SET, {"text": "yoga", "at": "21:00"}, AS_ANA)
     [row] = await tools.store.pending("ana")
-    outcome = await tools.call(REMINDER_CANCEL, {"id": row.id}, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": row.id}, AS_DIOGO)
     assert not outcome.ok and outcome.text == f"Error: there is no reminder #{row.id}."
     assert [r.id for r in await tools.store.pending("ana")] == [row.id]
 
@@ -320,7 +320,7 @@ async def test_cancel_not_involved_is_unknown(tools: ReminderTools) -> None:
 
 
 def test_repeat_parameters(tools: ReminderTools) -> None:
-    (remind_set,) = [d for d in tools.definitions if d["function"]["name"] == REMIND_SET]
+    (remind_set,) = [d for d in tools.definitions if d["function"]["name"] == _REMIND_SET]
     function = remind_set["function"]
     properties = function["parameters"]["properties"]
     assert properties["repeat"]["enum"] == ["daily", "weekdays", "weekends", "weekly"]
@@ -333,7 +333,7 @@ def test_repeat_parameters(tools: ReminderTools) -> None:
 async def test_set_a_series(tools: ReminderTools, clock: Clock) -> None:
     clock.now = datetime(2026, 11, 15, 14, 47, tzinfo=LISBON)
     outcome = await tools.call(
-        REMIND_SET,
+        _REMIND_SET,
         {"text": "brief me on the weather", "repeat": "weekdays", "at": "08:00"},
         AS_DIOGO,
     )
@@ -350,7 +350,7 @@ async def test_set_a_series(tools: ReminderTools, clock: Clock) -> None:
 async def test_set_a_series_for_others(tools: ReminderTools, clock: Clock) -> None:
     clock.now = datetime(2026, 11, 17, 21, 0, tzinfo=LISBON)
     outcome = await tools.call(
-        REMIND_SET,
+        _REMIND_SET,
         {
             "text": "take the bins out",
             "repeat": "weekly",
@@ -381,7 +381,7 @@ async def test_set_a_series_for_others(tools: ReminderTools, clock: Clock) -> No
 async def test_series_errors_store_nothing(
     tools: ReminderTools, arguments: dict[str, object]
 ) -> None:
-    outcome = await tools.call(REMIND_SET, arguments, AS_DIOGO)
+    outcome = await tools.call(_REMIND_SET, arguments, AS_DIOGO)
     assert not outcome.ok and outcome.text.startswith("Error:")
     assert await tools.store.pending("diogo") == []
 
@@ -389,14 +389,14 @@ async def test_series_errors_store_nothing(
 async def test_list_a_quiet_series(tools: ReminderTools, clock: Clock) -> None:
     clock.now = datetime(2026, 11, 15, 20, 0, tzinfo=LISBON)
     await tools.call(
-        REMIND_SET,
+        _REMIND_SET,
         {"text": "brief me", "repeat": "weekdays", "at": "08:00", "quiet_ok": True},
         AS_DIOGO,
     )
     await tools.call(
-        REMIND_SET, {"text": "tell me if Dune is done", "at": "18:00", "quiet_ok": True}, AS_DIOGO
+        _REMIND_SET, {"text": "tell me if Dune is done", "at": "18:00", "quiet_ok": True}, AS_DIOGO
     )
-    outcome = await tools.call(REMINDERS_LIST, {}, AS_DIOGO)
+    outcome = await tools.call(_REMINDERS_LIST, {}, AS_DIOGO)
     assert outcome.text.splitlines()[1:] == [
         "#1 Monday 16 November 2026, 08:00 (in 12 h), every weekday at 08:00, may stay quiet: "
         "brief me",
@@ -407,11 +407,11 @@ async def test_list_a_quiet_series(tools: ReminderTools, clock: Clock) -> None:
 async def test_list_a_series_after_it_fired(tools: ReminderTools, clock: Clock) -> None:
     clock.now = datetime(2026, 11, 15, 20, 0, tzinfo=LISBON)
     await tools.call(
-        REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
+        _REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
     )
     await tools.store.claim_due(datetime(2026, 11, 16, 8, 0, tzinfo=LISBON))
     clock.now = datetime(2026, 11, 16, 9, 0, tzinfo=LISBON)
-    lines = (await tools.call(REMINDERS_LIST, {}, AS_DIOGO)).text.splitlines()[1:]
+    lines = (await tools.call(_REMINDERS_LIST, {}, AS_DIOGO)).text.splitlines()[1:]
     assert lines == [
         "#1 Tuesday 17 November 2026, 08:00 (in 23 h), every weekday at 08:00: brief me"
     ]
@@ -420,9 +420,9 @@ async def test_list_a_series_after_it_fired(tools: ReminderTools, clock: Clock) 
 async def test_cancel_a_series(tools: ReminderTools, clock: Clock) -> None:
     clock.now = datetime(2026, 11, 15, 20, 0, tzinfo=LISBON)
     await tools.call(
-        REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
+        _REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
     )
-    outcome = await tools.call(REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
+    outcome = await tools.call(_REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
     assert outcome.ok
     assert "every weekday at 08:00, next Monday 16 November 2026, 08:00" in outcome.text
     assert await tools.store.pending("diogo") == []

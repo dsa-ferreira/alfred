@@ -41,15 +41,15 @@ from alfred.memory.transcript import recall_label
 from alfred.reminders.when import format_when
 from alfred.tools.base import ModelImage
 
-EntryKind = Literal[
+_EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
 ]
-UTC_ZONE = ZoneInfo("UTC")
+_UTC_ZONE = ZoneInfo("UTC")
 # The first entry of something that arrives without the user: a new one may
 # close a conversation that has no user message (design D7). Never a reply.
-ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
+_ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
 # An input request whose turn is still waiting or going on (a parked turn).
-LIVE_STATUSES = ("open", "answered", "running")
+_LIVE_STATUSES = ("open", "answered", "running")
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,7 @@ class Inline:
 
 
 @dataclass(frozen=True)
-class Reset:
+class _Reset:
     """The conversation just archived (``None`` if there was none) and the new one."""
 
     archived_id: int | None
@@ -96,7 +96,7 @@ class Reset:
 
 
 @dataclass(frozen=True)
-class LastMessage:
+class _LastMessage:
     """A current conversation and when its user last wrote in it."""
 
     conversation_id: int
@@ -125,7 +125,7 @@ class History:
     async def append(
         self,
         user: str,
-        kind: EntryKind,
+        kind: _EntryKind,
         text_: str,
         source: str | None = None,
         queue_item_id: int | None = None,
@@ -153,7 +153,7 @@ class History:
                 )
                 if done is not None:
                     return done
-            if kind in ARRIVALS and self._idle_after is not None:
+            if kind in _ARRIVALS and self._idle_after is not None:
                 conversation_id = await current_id(session, user, lock=True, exclusive=True)
                 if await _unattended(session, conversation_id, self._idle_after):
                     await session.execute(
@@ -285,7 +285,7 @@ class History:
             for e in entries
         ]
 
-    async def reset(self, user: str) -> Reset:
+    async def reset(self, user: str) -> _Reset:
         """Archive ``user``'s current conversation and start a new one for them."""
         async with self._sessions.begin() as session:
             archived_id = await session.scalar(
@@ -297,11 +297,11 @@ class History:
             new = Conversation(user_name=user)
             session.add(new)
             await session.flush()
-            return Reset(archived_id, new.id)
+            return _Reset(archived_id, new.id)
 
     # --- idle close (change close-idle-conversations, design D3, D4) ----------
 
-    async def last_user_messages(self) -> list[LastMessage]:
+    async def last_user_messages(self) -> list[_LastMessage]:
         """Every current conversation with a message from its user, and the newest one's time.
 
         Notices, ``/ask`` turns and reminders don't count.
@@ -314,9 +314,9 @@ class History:
                 .group_by(Conversation.id, Conversation.user_name)
                 .order_by(Conversation.id)
             )
-            return [LastMessage(*row) for row in rows]
+            return [_LastMessage(*row) for row in rows]
 
-    async def close_idle(self, conversation_id: int, cutoff: datetime) -> Reset | None:
+    async def close_idle(self, conversation_id: int, cutoff: datetime) -> _Reset | None:
         """Archive a current conversation whose user hasn't written since ``cutoff``.
 
         Returns ``None`` and changes nothing if it is no longer current, its
@@ -358,7 +358,7 @@ class History:
             new = Conversation(user_name=user)
             session.add(new)
             await session.flush()
-            return Reset(conversation_id, new.id)
+            return _Reset(conversation_id, new.id)
 
     async def take_idle_marker(self, user: str) -> tuple[int, int] | None:
         """Claim ``user``'s pending idle-close marker: (archived id, current id), or ``None``.
@@ -390,7 +390,7 @@ def _not_parked(turn_item_id: int) -> ColumnElement[bool]:
         .where(
             InputRequest.queue_item_id == Entry.queue_item_id,
             InputRequest.queue_item_id != turn_item_id,
-            InputRequest.status.in_(LIVE_STATUSES),
+            InputRequest.status.in_(_LIVE_STATUSES),
         )
         .exists()
     )
@@ -448,13 +448,13 @@ async def current_id(
 
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-STAMP = re.compile(
+_STAMP = re.compile(
     r"\[(?:" + "|".join(_DAYS) + r") \d{1,2} (?:" + "|".join(_MONTHS) + r") \d{2}:\d{2}\]"
 )
-_LEADING_STAMP = re.compile(STAMP.pattern + r"\s*")
+_LEADING_STAMP = re.compile(_STAMP.pattern + r"\s*")
 
 
-def format_stamp(moment: datetime, zone: ZoneInfo) -> str:
+def _format_stamp(moment: datetime, zone: ZoneInfo) -> str:
     """``[Mon 9 Nov 14:05]``: absolute, so an entry's text never changes.
 
     English names without the locale, like the rest of alfred's prompts.
@@ -465,7 +465,7 @@ def format_stamp(moment: datetime, zone: ZoneInfo) -> str:
 
 def stamped(text_: str, moment: datetime | None, zone: ZoneInfo) -> str:
     """``text_`` after the time it arrived, or as is when that time is unknown."""
-    return text_ if moment is None else f"{format_stamp(moment, zone)} {text_}"
+    return text_ if moment is None else f"{_format_stamp(moment, zone)} {text_}"
 
 
 def strip_stamp(text_: str) -> str:
@@ -473,7 +473,7 @@ def strip_stamp(text_: str) -> str:
     return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
 
 
-def user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
+def _user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
     """What the user wrote, then the handles of what they sent with it."""
     handles = inline.handles if inline else [handle(a) for a in entry.attachments]
     return with_handles(entry.text, handles)
@@ -481,7 +481,7 @@ def user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
 
 def to_messages(
     entries: list[HistoryEntry],
-    zone: ZoneInfo = UTC_ZONE,
+    zone: ZoneInfo = _UTC_ZONE,
     inline: Mapping[int, Inline] | None = None,
 ) -> list[dict[str, Any]]:
     """Map entries to chat-completions messages.
@@ -516,7 +516,7 @@ def to_messages(
                     content = f"{label} Summary: {e.recalled_summary or '(no summary yet)'}"
             case "user":
                 extra = (inline or {}).get(e.entry_id) if e.entry_id is not None else None
-                content = user_text(e, extra)
+                content = _user_text(e, extra)
                 if extra is not None and extra.images:
                     text_part = {"type": "text", "text": stamped(content, e.created_at, zone)}
                     parts = [text_part, *(image.part() for image in extra.images)]

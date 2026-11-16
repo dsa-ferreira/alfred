@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred import notices
 from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelUnreachable
-from alfred.agent.prompts import NO_REPLY
+from alfred.agent.prompts import _NO_REPLY
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig, User, Users
@@ -25,9 +25,9 @@ from alfred.history import History, strip_stamp
 from alfred.inputs.loop import cancel_on_new_message
 from alfred.inputs.store import InputRequests
 from alfred.memory.summaries import Summaries
-from alfred.queue import Queue, Worker, reset_marker
+from alfred.queue import Queue, Worker, _reset_marker
 from alfred.reminders.store import Reminders
-from alfred.reminders.tools import REMIND_SET, ReminderTools
+from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.tools.base import AllowList, Question
 from alfred.tools.conversation import END_CONVERSATION
 from tests.agent.turn_helpers import tool_rows
@@ -327,13 +327,13 @@ async def test_unexpected_error_fails_item(sessions: async_sessionmaker[AsyncSes
 async def test_silent_ask_not_recorded(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
-    s = Setup(sessions, FakeModel([text(f"  {NO_REPLY}\n")]))
+    s = Setup(sessions, FakeModel([text(f"  {_NO_REPLY}\n")]))
     item_id = await s.queue.enqueue_ask("disk-check", "all fine", "diogo")
     with caplog.at_level("INFO"):
         await s.drain()
     assert s.outbox.sent == []
     assert await s.history.recent("diogo", 30) == []
-    assert "disk-check" in caplog.text and str(item_id) in caplog.text and NO_REPLY in caplog.text
+    assert "disk-check" in caplog.text and str(item_id) in caplog.text and _NO_REPLY in caplog.text
     assert (await s.items())[0].status == "done"
 
 
@@ -364,12 +364,12 @@ async def start_at_41(sessions: async_sessionmaker[AsyncSession]) -> None:
 
 
 def test_reset_marker() -> None:
-    assert reset_marker(41, 42) == "— #41 archived —\n— new conversation #42 —"
-    assert reset_marker(41, 42, idle=True) == (
+    assert _reset_marker(41, 42) == "— #41 archived —\n— new conversation #42 —"
+    assert _reset_marker(41, 42, idle=True) == (
         "— #41 closed after inactivity —\n— new conversation #42 —"
     )
-    assert reset_marker(None, 1) == "— new conversation #1 —"
-    assert reset_marker(None, 1, idle=True) == "— new conversation #1 —"
+    assert _reset_marker(None, 1) == "— new conversation #1 —"
+    assert _reset_marker(None, 1, idle=True) == "— new conversation #1 —"
 
 
 class BlockingModel:
@@ -587,7 +587,7 @@ async def test_fallback_before_the_failure_notice(
 async def test_fallback_on_a_no_reply_ask(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    s = Setup(sessions, FakeModel([BAD_MODEL, text(NO_REPLY)]), brains=on_bonsai())
+    s = Setup(sessions, FakeModel([BAD_MODEL, text(_NO_REPLY)]), brains=on_bonsai())
     await s.queue.enqueue_ask("disk-check", "93%", "diogo")
     await s.drain()
     assert s.outbox.sent == [FELL_BACK]
@@ -673,7 +673,7 @@ async def test_reminder_model_error(sessions: async_sessionmaker[AsyncSession]) 
     assert [i.status for i in await s.items()] == ["failed"]
 
 
-@pytest.mark.parametrize("answer", [NO_REPLY, f"  {NO_REPLY}\n"])
+@pytest.mark.parametrize("answer", [_NO_REPLY, f"  {_NO_REPLY}\n"])
 async def test_reminder_model_says_no_reply(
     sessions: async_sessionmaker[AsyncSession], answer: str
 ) -> None:
@@ -692,7 +692,7 @@ async def quiet_reminder(s: Setup, text_: str = "tell me if Dune is done") -> in
     return reminder_id
 
 
-@pytest.mark.parametrize("answer", [NO_REPLY, f"  {NO_REPLY}\n"])
+@pytest.mark.parametrize("answer", [_NO_REPLY, f"  {_NO_REPLY}\n"])
 async def test_quiet_reminder_says_no_reply(
     sessions: async_sessionmaker[AsyncSession], answer: str
 ) -> None:
@@ -702,7 +702,7 @@ async def test_quiet_reminder_says_no_reply(
     assert s.outbox.sent == []
     assert await recorded(s) == []
     assert [i.status for i in await s.items()] == ["done"]
-    assert NO_REPLY in s.model.requests[0][0][0]["content"]
+    assert _NO_REPLY in s.model.requests[0][0][0]["content"]
 
 
 async def test_quiet_reminder_fails(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -741,7 +741,7 @@ async def test_repeating_reminder_turn_uses_the_items_due_time(
     last = strip_stamp(s.model.requests[0][0][-1]["content"])
     assert last.startswith(f"[reminder:#{rid} due Tuesday 17 November 2026, 08:00; now ")
     assert last.endswith("; every weekday at 08:00] brief me")
-    assert NO_REPLY not in s.model.requests[0][0][0]["content"]
+    assert _NO_REPLY not in s.model.requests[0][0][0]["content"]
 
 
 async def test_reminder_unexpected_error(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -796,7 +796,7 @@ async def test_snooze(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel(
         [
             text("Your call to mum is due, sir."),
-            calls((REMIND_SET, '{"text": "call mum", "in_minutes": 15}')),
+            calls((_REMIND_SET, '{"text": "call mum", "in_minutes": 15}')),
             text("Very good. In 15 minutes."),
         ]
     )
@@ -1040,7 +1040,7 @@ class Ticks:
 
 
 async def test_arrivals_are_reported(sessions: async_sessionmaker[AsyncSession]) -> None:
-    from alfred.reminders.loop import claim_once
+    from alfred.reminders.loop import _claim_once
 
     queue = Queue(sessions)
     activity = queue.activity
@@ -1058,7 +1058,7 @@ async def test_arrivals_are_reported(sessions: async_sessionmaker[AsyncSession])
     activity.arrived.clear()
     reminders = Reminders(sessions)
     await reminders.set("call mum", datetime.now(UTC) - timedelta(minutes=1), "diogo", ["diogo"])
-    await claim_once(reminders, activity.notify, lambda: datetime.now(UTC))
+    await _claim_once(reminders, activity.notify, lambda: datetime.now(UTC))
     assert activity.arrived.is_set()
 
 
@@ -1368,7 +1368,7 @@ async def test_restart_while_waiting(sessions: async_sessionmaker[AsyncSession])
 async def test_resumed_ask_with_no_reply_sends_nothing(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    s = Waits(sessions, FakeModel([calls(ADD), text(NO_REPLY)]))
+    s = Waits(sessions, FakeModel([calls(ADD), text(_NO_REPLY)]))
     await s.queue.enqueue_ask("jellyfin", "add Dune if missing", "diogo")
     await s.drain()
     assert s.questions.sent[0][2].title == "For a request from jellyfin:"

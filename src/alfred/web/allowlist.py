@@ -39,7 +39,7 @@ def normalise(url: str) -> str | None:
     return urlunsplit((scheme, netloc, parts.path or "/", parts.query, ""))
 
 
-def find_urls(text: str) -> list[str]:
+def _find_urls(text: str) -> list[str]:
     """http(s) URLs written in ``text``, with trailing punctuation stripped."""
     return [match.group().rstrip(_TRAILING) for match in _URL.finditer(text)]
 
@@ -58,7 +58,7 @@ class Allowlist:
             self._urls.add(normal)
 
     def add_from_text(self, text: str) -> None:
-        for url in find_urls(text):
+        for url in _find_urls(text):
             self.add(url)
 
     def allows(self, url: str) -> bool:

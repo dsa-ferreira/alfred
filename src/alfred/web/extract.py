@@ -14,8 +14,8 @@ from dataclasses import dataclass
 import trafilatura
 from trafilatura.utils import decode_file
 
-HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
-TEXT_TYPES = frozenset({"text/plain"})
+_HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+_TEXT_TYPES = frozenset({"text/plain"})
 
 
 class NoReadableContent(Exception):
@@ -23,27 +23,27 @@ class NoReadableContent(Exception):
 
 
 @dataclass(frozen=True)
-class PageText:
+class _PageText:
     title: str | None
     text: str
 
 
 def supported(content_type: str) -> bool:
     """Whether a media type (``text/html``, without parameters) can be read."""
-    return content_type in HTML_TYPES or content_type in TEXT_TYPES
+    return content_type in _HTML_TYPES or content_type in _TEXT_TYPES
 
 
 async def extract(
     body: bytes, content_type: str, charset: str | None = None, url: str | None = None
-) -> PageText:
+) -> _PageText:
     """The readable text of a page. Raises :class:`NoReadableContent`.
 
     ``content_type`` must be :func:`supported`. trafilatura is CPU-bound, so
     HTML runs in a worker thread.
     """
-    if content_type in TEXT_TYPES:
-        page = PageText(None, _decode(body, charset).strip())
-    elif content_type in HTML_TYPES:
+    if content_type in _TEXT_TYPES:
+        page = _PageText(None, _decode(body, charset).strip())
+    elif content_type in _HTML_TYPES:
         page = await asyncio.to_thread(_extract_html, body, charset, url)
     else:
         raise ValueError(f"unsupported content type {content_type!r}")
@@ -52,7 +52,7 @@ async def extract(
     return page
 
 
-def _extract_html(body: bytes, charset: str | None, url: str | None) -> PageText:
+def _extract_html(body: bytes, charset: str | None, url: str | None) -> _PageText:
     # Without a charset header, trafilatura guesses it (meta tag, detection).
     html = _decode(body, charset) if charset else decode_file(body)
     # No url= here: trafilatura would join relative links to the site root
@@ -67,7 +67,7 @@ def _extract_html(body: bytes, charset: str | None, url: str | None) -> PageText
     )
     metadata = trafilatura.extract_metadata(html, default_url=url)
     title = metadata.title.strip() if metadata is not None and metadata.title else None
-    return PageText(title or None, (text or "").strip())
+    return _PageText(title or None, (text or "").strip())
 
 
 def _decode(body: bytes, charset: str | None) -> str:

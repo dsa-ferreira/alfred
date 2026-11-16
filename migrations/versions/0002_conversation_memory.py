@@ -25,11 +25,11 @@ down_revision: str | Sequence[str] | None = "0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-OLD_KINDS = "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply')"
-NEW_KINDS = "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply', 'recall')"
-SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
+_OLD_KINDS = "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply')"
+_NEW_KINDS = "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply', 'recall')"
+_SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
 
-MISSING_EXTENSION = (
+_MISSING_EXTENSION = (
     "the database has no 'vector' extension (pgvector). alfred's role can't create it; "
     "as a superuser, run: CREATE EXTENSION IF NOT EXISTS vector; in alfred's database, "
     "then migrate again"
@@ -39,7 +39,7 @@ MISSING_EXTENSION = (
 def upgrade() -> None:
     present = op.get_bind().scalar(sa.text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
     if not present:
-        raise MigrationError(MISSING_EXTENSION)
+        raise MigrationError(_MISSING_EXTENSION)
 
     op.add_column("conversations", sa.Column("title", sa.Text(), nullable=True))
     op.add_column("conversations", sa.Column("summary", sa.Text(), nullable=True))
@@ -60,7 +60,7 @@ def upgrade() -> None:
         sa.Column(
             "search_tsv",
             postgresql.TSVECTOR(),
-            sa.Computed(SEARCH_TSV, persisted=True),
+            sa.Computed(_SEARCH_TSV, persisted=True),
             nullable=True,
         ),
     )
@@ -73,7 +73,7 @@ def upgrade() -> None:
     )
 
     op.drop_constraint(op.f("ck_entries_kind"), "entries", type_="check")
-    op.create_check_constraint(op.f("ck_entries_kind"), "entries", NEW_KINDS)
+    op.create_check_constraint(op.f("ck_entries_kind"), "entries", _NEW_KINDS)
     op.add_column("entries", sa.Column("recalled_conversation_id", sa.BigInteger(), nullable=True))
     op.create_foreign_key(
         op.f("fk_entries_recalled_conversation_id_conversations"),
@@ -108,7 +108,7 @@ def downgrade() -> None:
     )
     op.drop_column("entries", "recalled_conversation_id")
     op.drop_constraint(op.f("ck_entries_kind"), "entries", type_="check")
-    op.create_check_constraint(op.f("ck_entries_kind"), "entries", OLD_KINDS)
+    op.create_check_constraint(op.f("ck_entries_kind"), "entries", _OLD_KINDS)
 
     op.drop_index("ix_conversations_search_tsv", table_name="conversations")
     for column in (

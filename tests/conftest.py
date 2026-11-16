@@ -54,12 +54,12 @@ def postgres_url() -> Iterator[str]:
 @pytest.fixture(scope="session")
 def database_url(postgres_url: str) -> str:
     """The migrated test database, as alfred's psycopg URL."""
-    from alfred.cli import main
+    from alfred.cli import _main
 
     mp = pytest.MonkeyPatch()
     mp.setenv("ALFRED_DATABASE_URL", postgres_url)
     try:
-        assert main(["migrate"]) == 0
+        assert _main(["migrate"]) == 0
     finally:
         mp.undo()
     return postgres_url.replace("postgresql://", "postgresql+psycopg://", 1)

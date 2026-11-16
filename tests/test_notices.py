@@ -35,7 +35,7 @@ NOTICES: dict[str, Callable[[str], str]] = {
 @pytest.mark.parametrize("name", list(NOTICES))
 def test_notice_ends_with_address_once(name: str, address: str) -> None:
     text = NOTICES[name](address)
-    assert text.removesuffix(notices.PARTIAL).endswith(f", {address}.")
+    assert text.removesuffix(notices._PARTIAL).endswith(f", {address}.")
     assert text.count(address) == 1
 
 
@@ -51,11 +51,11 @@ def test_notice_ends_with_address_once(name: str, address: str) -> None:
     ],
 )
 def test_partial_suffix(name: str, partial: bool) -> None:
-    assert NOTICES[name]("sir").endswith(notices.PARTIAL) == partial
+    assert NOTICES[name]("sir").endswith(notices._PARTIAL) == partial
 
 
 def test_partial_carries_no_address() -> None:
-    assert "sir" not in notices.PARTIAL
+    assert "sir" not in notices._PARTIAL
 
 
 def test_fallback_names_both_brains() -> None:

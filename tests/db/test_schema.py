@@ -51,9 +51,9 @@ def test_one_current_conversation_per_user(database_url: str) -> None:
 def test_models_match_migrations(database_url: str) -> None:
     from alembic import command
 
-    from alfred.db.migrate import alembic_config
+    from alfred.db.migrate import _alembic_config
 
-    command.check(alembic_config(database_url))
+    command.check(_alembic_config(database_url))
 
 
 # --- conversation memory (migration 0002) ---------------------------------------
@@ -146,11 +146,11 @@ def test_recall_not_twice_into_one_conversation(database_url: str) -> None:
 def test_migration_fails_clearly_without_vector(
     postgres_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from alfred.cli import main
+    from alfred.cli import _main
 
     url = _new_database(postgres_url, "no_vector", vector=False)
     monkeypatch.setenv("ALFRED_DATABASE_URL", url)
-    assert main(["migrate"]) == 1
+    assert _main(["migrate"]) == 1
     err = capsys.readouterr().err
     assert "'vector' extension" in err
     assert "CREATE EXTENSION IF NOT EXISTS vector" in err
@@ -160,11 +160,11 @@ def test_migration_fails_clearly_without_vector(
 def test_upgrade_downgrade_upgrade(postgres_url: str) -> None:
     from alembic import command
 
-    from alfred.db.migrate import alembic_config
+    from alfred.db.migrate import _alembic_config
 
     url = _new_database(postgres_url, "round_trip", vector=True)
     sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    cfg = alembic_config(sa_url)
+    cfg = _alembic_config(sa_url)
     command.upgrade(cfg, "head")
 
     engine = create_engine(sa_url)
@@ -249,11 +249,11 @@ def test_reminder_status_is_checked(database_url: str) -> None:
 def test_downgrade_to_0002(postgres_url: str) -> None:
     from alembic import command
 
-    from alfred.db.migrate import alembic_config
+    from alfred.db.migrate import _alembic_config
 
     url = _new_database(postgres_url, "reminders_round_trip", vector=True)
     sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    cfg = alembic_config(sa_url)
+    cfg = _alembic_config(sa_url)
     command.upgrade(cfg, "head")
 
     engine = create_engine(sa_url)
@@ -348,11 +348,11 @@ def test_attachment_kind_and_key_are_checked(database_url: str) -> None:
 def test_downgrade_to_0003(postgres_url: str) -> None:
     from alembic import command
 
-    from alfred.db.migrate import alembic_config
+    from alfred.db.migrate import _alembic_config
 
     url = _new_database(postgres_url, "attachments_round_trip", vector=True)
     sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    cfg = alembic_config(sa_url)
+    cfg = _alembic_config(sa_url)
     command.upgrade(cfg, "head")
 
     engine = create_engine(sa_url)
@@ -399,11 +399,11 @@ def _legacy_database(postgres_url: str, name: str) -> tuple[str, object]:
     """A database at 0004 holding one of everything a user owns. Returns its URL and config."""
     from alembic import command
 
-    from alfred.db.migrate import alembic_config
+    from alfred.db.migrate import _alembic_config
 
     url = _new_database(postgres_url, name, vector=True)
     sa_url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    cfg = alembic_config(sa_url)
+    cfg = _alembic_config(sa_url)
     command.upgrade(cfg, "0004")
     engine = create_engine(sa_url)
     try:
@@ -464,10 +464,10 @@ def test_users_migration_assigns_legacy_rows_to_the_admin(postgres_url: str) -> 
 def test_users_migration_of_an_empty_database_needs_no_admin(postgres_url: str) -> None:
     from alembic import command
 
-    from alfred.db.migrate import alembic_config
+    from alfred.db.migrate import _alembic_config
 
     url = _new_database(postgres_url, "users_empty", vector=True)
-    cfg = alembic_config(url.replace("postgresql://", "postgresql+psycopg://", 1))
+    cfg = _alembic_config(url.replace("postgresql://", "postgresql+psycopg://", 1))
     with _admin(None):
         command.upgrade(cfg, "head")
     command.check(cfg)
@@ -480,12 +480,12 @@ def test_users_migration_refuses_rows_without_a_valid_admin(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from alfred.cli import main
+    from alfred.cli import _main
 
     sa_url, _ = _legacy_database(postgres_url, "users_no_admin")
     monkeypatch.setenv("ALFRED_DATABASE_URL", sa_url.replace("+psycopg", ""))
     with _admin(value):
-        assert main(["migrate"]) == 1
+        assert _main(["migrate"]) == 1
     err = capsys.readouterr().err
     assert "ALFRED_MIGRATE_ADMIN" in err and "[[users]] name" in err
     engine = create_engine(sa_url)

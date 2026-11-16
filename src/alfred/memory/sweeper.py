@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class QueueState(Protocol):
+class _QueueState(Protocol):
     """What the sweeper needs to know about the queue (``alfred.queue.Queue``)."""
 
     activity: QueueActivity
@@ -52,7 +52,7 @@ class QueueState(Protocol):
     async def has_pending(self) -> bool: ...
 
 
-class Job(Protocol):
+class _Job(Protocol):
     """One kind of background work the sweeper does."""
 
     # Whether it sends model requests: they get ``preempt``.
@@ -77,7 +77,7 @@ class Job(Protocol):
         ...
 
 
-class ConversationSummaryJob:
+class _ConversationSummaryJob:
     """Title, summary and embedding of archived conversations (memory design D4)."""
 
     uses_model = True
@@ -149,16 +149,16 @@ class Sweeper:
         sessions: async_sessionmaker[AsyncSession],
         summaries: Summaries,
         *,
-        queue: QueueState | None = None,
+        queue: _QueueState | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
-        jobs: Sequence[Job] = (),
+        jobs: Sequence[_Job] = (),
     ) -> None:
         self._config = config
         self.summaries = summaries
         # None: no queue to give way to (tests), so always quiet.
         self._queue = queue
         # In priority order: summaries feed search, which users see.
-        self.jobs: list[Job] = [ConversationSummaryJob(config, sessions, summaries, now), *jobs]
+        self.jobs: list[_Job] = [_ConversationSummaryJob(config, sessions, summaries, now), *jobs]
 
     async def run_forever(self) -> None:
         log.info("memory sweeper started")

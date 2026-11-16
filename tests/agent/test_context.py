@@ -9,7 +9,7 @@ from dataclasses import replace
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import Usage
+from alfred.agent.model import _Usage
 from alfred.history import History
 from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, agent, owner_turn
@@ -108,8 +108,8 @@ async def test_token_counts_per_request(
 ) -> None:
     model = FakeModel(
         [
-            replace(calls(("mcparr_get_downloads", "{}")), usage=Usage(6812, 38)),
-            replace(text("Dune is at 50%."), usage=Usage(7240, 112)),
+            replace(calls(("mcparr_get_downloads", "{}")), usage=_Usage(6812, 38)),
+            replace(text("Dune is at 50%."), usage=_Usage(7240, 112)),
         ]
     )
     turn = await owner_turn(sessions, "what's downloading?")

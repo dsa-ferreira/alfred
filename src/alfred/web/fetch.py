@@ -31,7 +31,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-MAX_REDIRECTS = 5
+_MAX_REDIRECTS = 5
 
 
 def _user_agent() -> str:
@@ -41,28 +41,28 @@ def _user_agent() -> str:
         return "alfred"
 
 
-USER_AGENT = _user_agent()
+_USER_AGENT = _user_agent()
 _REDIRECTS = {301, 302, 303, 307, 308}
 
-Resolver = Callable[[str, int], Awaitable[list[str]]]
+_Resolver = Callable[[str, int], Awaitable[list[str]]]
 
 
 class FetchError(Exception):
     """A fetch that produced no page. The message is safe to show the model."""
 
 
-class BlockedAddress(FetchError):
+class _BlockedAddress(FetchError):
     pass
 
 
-class UnsupportedType(FetchError):
+class _UnsupportedType(FetchError):
     def __init__(self, content_type: str) -> None:
         super().__init__(f"the content type {content_type or 'unknown'} is not supported")
         self.content_type = content_type
 
 
 @dataclass(frozen=True)
-class Download:
+class _Download:
     url: str  # the final URL, after redirects
     status: int
     content_type: str  # media type only, lower case, e.g. "text/html"
@@ -74,17 +74,17 @@ def make_http_client() -> httpx.AsyncClient:
     """The client web search and fetch share: no cookies kept, alfred's User-Agent."""
     jar = CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
     return httpx.AsyncClient(
-        cookies=jar, headers={"User-Agent": USER_AGENT}, follow_redirects=False
+        cookies=jar, headers={"User-Agent": _USER_AGENT}, follow_redirects=False
     )
 
 
-async def resolve(host: str, port: int) -> list[str]:
+async def _resolve(host: str, port: int) -> list[str]:
     """Every address ``host`` resolves to."""
     infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return [str(info[4][0]) for info in infos]
 
 
-def is_public(address: str) -> bool:
+def _is_public(address: str) -> bool:
     """Whether ``address`` is globally routable (IPv4-mapped IPv6 judged as IPv4)."""
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])
@@ -102,14 +102,14 @@ class Fetcher:
         *,
         timeout_s: float,
         max_bytes: int,
-        resolver: Resolver = resolve,
+        resolver: _Resolver = _resolve,
     ) -> None:
         self._http = http
         self._timeout_s = timeout_s
         self._max_bytes = max_bytes
         self._resolve = resolver
 
-    async def fetch(self, url: str, accept: Callable[[str], bool] | None = None) -> Download:
+    async def fetch(self, url: str, accept: Callable[[str], bool] | None = None) -> _Download:
         """Download ``url``. ``accept`` decides on the media type before the body is read.
 
         Raises :class:`FetchError` (or a subclass) with a message for the model.
@@ -132,9 +132,9 @@ class Fetcher:
         )
         return download
 
-    async def _fetch(self, url: str, accept: Callable[[str], bool] | None) -> Download:
+    async def _fetch(self, url: str, accept: Callable[[str], bool] | None) -> _Download:
         current = url
-        for hop in range(MAX_REDIRECTS + 1):
+        for hop in range(_MAX_REDIRECTS + 1):
             await self._check(current, redirected=hop > 0)
             request = self._http.build_request(
                 "GET", current, timeout=httpx.Timeout(self._timeout_s)
@@ -158,7 +158,7 @@ class Fetcher:
                 return await self._read(current, response, accept)
             finally:
                 await response.aclose()
-        raise FetchError(f"too many redirects (more than {MAX_REDIRECTS})")
+        raise FetchError(f"too many redirects (more than {_MAX_REDIRECTS})")
 
     async def _check(self, url: str, *, redirected: bool) -> None:
         parts = urlsplit(url)
@@ -174,20 +174,20 @@ class Fetcher:
             addresses = await self._resolve(host, port or (443 if parts.scheme == "https" else 80))
         except OSError:
             raise FetchError(f"the host {host} could not be resolved") from None
-        if not addresses or not all(is_public(a) for a in addresses):
+        if not addresses or not all(_is_public(a) for a in addresses):
             if redirected:
-                raise BlockedAddress(
+                raise _BlockedAddress(
                     f"the page redirected to {url}, whose host resolves to a private or local "
                     "address; the redirect was not followed"
                 )
-            raise BlockedAddress(
+            raise _BlockedAddress(
                 f"the host {host} resolves to a private or local address, "
                 "which alfred never fetches"
             )
 
     async def _read(
         self, url: str, response: httpx.Response, accept: Callable[[str], bool] | None
-    ) -> Download:
+    ) -> _Download:
         status = response.status_code
         if status >= 400:
             raise FetchError(f"the page returned HTTP {status}")
@@ -195,7 +195,7 @@ class Fetcher:
             raise FetchError(f"the page answered HTTP {status}, which alfred can't read")
         content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if accept is not None and not accept(content_type):
-            raise UnsupportedType(content_type)
+            raise _UnsupportedType(content_type)
         too_large = FetchError(f"the page is too large (over {self._max_bytes:,} bytes)")
         length = response.headers.get("content-length", "")
         if length.isdigit() and int(length) > self._max_bytes:
@@ -210,4 +210,4 @@ class Fetcher:
             raise TimeoutError from None
         except httpx.HTTPError as exc:
             raise FetchError(f"the download failed ({type(exc).__name__})") from None
-        return Download(url, status, content_type, response.charset_encoding, bytes(body))
+        return _Download(url, status, content_type, response.charset_encoding, bytes(body))

@@ -9,13 +9,13 @@ from mcp.server import MCPServer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.model import ModelUnreachable
-from alfred.agent.prompts import ASK_RULE, NO_REPLY, REMINDER_ALWAYS, REMINDER_RULE
+from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMINDER_RULE
 from alfred.agent.turn import TurnFailed
 from alfred.config import Users
 from alfred.history import History
 from alfred.reminders.store import Reminders
+from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
-from alfred.reminders.tools import REMIND_SET, REMINDERS_LIST, ReminderTools
 from alfred.tools.base import TurnInput
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
@@ -61,7 +61,7 @@ async def test_reminder_tools_not_offered_in_ask_turns(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     clock = Clock(DUE)
-    model = FakeModel([text(NO_REPLY), calls((REMIND_SET, '{"text": "x", "in_minutes": 5}'))])
+    model = FakeModel([text(_NO_REPLY), calls((_REMIND_SET, '{"text": "x", "in_minutes": 5}'))])
     model.script.append(text("done"))
     a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
@@ -69,7 +69,7 @@ async def test_reminder_tools_not_offered_in_ask_turns(
     assert not REMINDER_TOOLS & model.tool_names(0)
     # A reminder turn gets only the list; setting is refused, nothing stored.
     await a.run(await reminder_turn(sessions))
-    assert REMINDER_TOOLS & model.tool_names(1) == {REMINDERS_LIST}
+    assert REMINDER_TOOLS & model.tool_names(1) == {_REMINDERS_LIST}
     assert "unknown tool" in model.requests[2][0][-1]["content"].lower()
     assert await Reminders(sessions).pending("diogo") == []
 
@@ -78,7 +78,7 @@ async def test_owner_sets_a_reminder(sessions: async_sessionmaker[AsyncSession])
     clock = Clock(datetime(2026, 11, 9, 16, 47, tzinfo=UTC))
     model = FakeModel(
         [
-            calls((REMIND_SET, '{"text": "check the oven", "in_minutes": 90}')),
+            calls((_REMIND_SET, '{"text": "check the oven", "in_minutes": 90}')),
             text("Very good. 18:17."),
         ]
     )
@@ -89,7 +89,7 @@ async def test_owner_sets_a_reminder(sessions: async_sessionmaker[AsyncSession])
         "Reminder set for today at 18:17: check the oven."
     )
     [row] = await tool_rows(sessions)
-    assert (row.tool, row.ok) == (REMIND_SET, True)
+    assert (row.tool, row.ok) == (_REMIND_SET, True)
 
 
 async def test_reminder_turn_on_time(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -102,8 +102,8 @@ async def test_reminder_turn_on_time(sessions: async_sessionmaker[AsyncSession])
     assert result.reply == "Your call to mum is due, sir."
     messages = model.requests[0][0]
     system = messages[0]["content"]
-    assert system.endswith(f"{REMINDER_RULE} {REMINDER_ALWAYS}")
-    assert ASK_RULE not in system and NO_REPLY not in system
+    assert system.endswith(f"{_REMINDER_RULE} {_REMINDER_ALWAYS}")
+    assert _ASK_RULE not in system and _NO_REPLY not in system
     assert contents(messages[1:]) == [
         "earlier",
         "earlier reply",
@@ -129,7 +129,7 @@ async def test_reminder_turn_gets_the_ask_tool_set_and_the_list(
     await agent(sessions, ask_model, reminders=tools, now=clock).run(
         TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
     )
-    assert reminder_model.tool_names() == ask_model.tool_names() | {REMINDERS_LIST}
+    assert reminder_model.tool_names() == ask_model.tool_names() | {_REMINDERS_LIST}
     assert END_CONVERSATION not in reminder_model.tool_names()
     assert reminder_model.tool_names() < owner_model.tool_names()
 
@@ -175,7 +175,7 @@ async def test_reminder_tool_failure_reaches_the_model(
         async def call(self, name: str, raw_arguments: object, attempt: object = None) -> object:
             raise OSError("database down")
 
-    model = FakeModel([calls((REMIND_SET, '{"text": "x", "in_minutes": 5}')), text("Sorry.")])
+    model = FakeModel([calls((_REMIND_SET, '{"text": "x", "in_minutes": 5}')), text("Sorry.")])
     a = agent(sessions, model, reminders=Broken())  # type: ignore[arg-type]
     await a.run(await owner_turn(sessions, "remind me in 5 minutes"))
     assert "failed: OSError" in model.requests[1][0][-1]["content"]
@@ -238,7 +238,7 @@ async def test_morning_briefing_uses_the_tools(
     model = FakeModel(
         [
             calls(
-                ("weather_forecast", "{}"), ("mcparr_get_downloads", "{}"), (REMINDERS_LIST, "{}")
+                ("weather_forecast", "{}"), ("mcparr_get_downloads", "{}"), (_REMINDERS_LIST, "{}")
             ),
             text("Good morning, sir. Sunny, 18 degrees; Dune is half done; the dentist at 17:00."),
         ]
@@ -285,7 +285,7 @@ async def test_scheduled_briefing_is_set_not_done(
     sunday = datetime(2026, 11, 15, 14, 47, tzinfo=LISBON)
     clock = Clock(sunday)
     arguments = '{"text": "brief me on the weather", "repeat": "weekdays", "at": "08:00"}'
-    model = FakeModel([calls((REMIND_SET, arguments)), text("Very good. Each weekday at eight.")])
+    model = FakeModel([calls((_REMIND_SET, arguments)), text("Very good. Each weekday at eight.")])
     a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
     await a.run(await owner_turn(sessions, "every weekday at 8, brief me on the weather"))
     system = model.requests[0][0][0]["content"]
@@ -293,4 +293,4 @@ async def test_scheduled_briefing_is_set_not_done(
     [row] = await Reminders(sessions).pending("diogo")
     assert row.rule is not None and row.rule.label() == "every weekday at 08:00"
     assert row.due_at == datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
-    assert [r.tool for r in await tool_rows(sessions)] == [REMIND_SET]
+    assert [r.tool for r in await tool_rows(sessions)] == [_REMIND_SET]

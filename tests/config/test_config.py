@@ -92,11 +92,11 @@ def test_unparseable_file_names_path(tmp_path: Path) -> None:
 def test_serve_exits_non_zero_on_missing_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from alfred.cli import main
+    from alfred.cli import _main
 
     missing = tmp_path / "nope.toml"
     monkeypatch.setenv("ALFRED_CONFIG", str(missing))
-    assert main(["serve"]) != 0
+    assert _main(["serve"]) != 0
     assert str(missing) in capsys.readouterr().err
 
 

@@ -373,15 +373,15 @@ class Gated:
     ) -> ToolOutcome:
         # The allow-list may have changed while the turn waited.
         if not self.handles(name):
-            return unknown_tool(name)
+            return _unknown_tool(name)
         return await self.inner.resume(name, raw_arguments, state, answer, attempt)
 
 
 DO_IT = "Do it"
 CANCEL = "Cancel"
-DECLINED = "The user declined this call; it did not run. Don't call it again unless they ask."
+_DECLINED = "The user declined this call; it did not run. Don't call it again unless they ask."
 # The resume state of a confirmation.
-CONFIRM: dict[str, Any] = {"via": "confirm"}
+_CONFIRM: dict[str, Any] = {"via": "confirm"}
 
 
 class Confirmed:
@@ -421,7 +421,7 @@ class Confirmed:
         if self._confirm.matches(name):
             arguments = parse_arguments(raw_arguments)
             if isinstance(arguments, dict):
-                return ToolOutcome.waiting(InputNeed(confirm_question(name, arguments), CONFIRM))
+                return ToolOutcome.waiting(InputNeed(_confirm_question(name, arguments), _CONFIRM))
         return await self.inner.call(name, raw_arguments, attempt)
 
     async def resume(
@@ -432,14 +432,14 @@ class Confirmed:
         answer: Any,
         attempt: AttemptContext,
     ) -> ToolOutcome:
-        if state.get("via") != CONFIRM["via"]:
+        if state.get("via") != _CONFIRM["via"]:
             return await self.inner.resume(name, raw_arguments, state, answer, attempt)
         if answer is True:
             return await self.inner.call(name, raw_arguments, attempt)
-        return ToolOutcome(False, DECLINED)
+        return ToolOutcome(False, _DECLINED)
 
 
-def confirm_question(name: str, arguments: dict[str, Any]) -> Question:
+def _confirm_question(name: str, arguments: dict[str, Any]) -> Question:
     """The confirmation of a call: its model-facing name and its exact arguments."""
     return Question(
         f"Run {name} with these arguments?",
@@ -448,16 +448,16 @@ def confirm_question(name: str, arguments: dict[str, Any]) -> Question:
     )
 
 
-def unknown_tool(name: str) -> ToolOutcome:
+def _unknown_tool(name: str) -> ToolOutcome:
     return ToolOutcome(False, f"Error: unknown tool {name!r}.")
 
 
-def find(opened: Sequence[OpenToolset], name: str) -> OpenToolset | None:
+def _find(opened: Sequence[OpenToolset], name: str) -> OpenToolset | None:
     """The first open toolset that handles ``name``."""
     return next((t for t in opened if t.handles(name)), None)
 
 
-async def safe_call(
+async def _safe_call(
     toolset: OpenToolset, name: str, raw_arguments: Any, attempt: AttemptContext
 ) -> ToolOutcome:
     """Run one call; any exception becomes an error result for the model."""
@@ -472,10 +472,10 @@ async def dispatch(
     opened: Sequence[OpenToolset], name: str, raw_arguments: Any, attempt: AttemptContext
 ) -> ToolOutcome:
     """Route a call to the first open toolset that handles it."""
-    toolset = find(opened, name)
+    toolset = _find(opened, name)
     if toolset is None:
-        return unknown_tool(name)
-    return await safe_call(toolset, name, raw_arguments, attempt)
+        return _unknown_tool(name)
+    return await _safe_call(toolset, name, raw_arguments, attempt)
 
 
 async def dispatch_resume(
@@ -487,9 +487,9 @@ async def dispatch_resume(
     attempt: AttemptContext,
 ) -> ToolOutcome:
     """Route an answered call back to the first open toolset that handles it, like ``dispatch``."""
-    toolset = find(opened, name)
+    toolset = _find(opened, name)
     if toolset is None:
-        return unknown_tool(name)
+        return _unknown_tool(name)
     try:
         return await toolset.resume(name, raw_arguments, state, answer, attempt)
     except Exception as exc:  # noqa: BLE001 - any failure is reported to the model

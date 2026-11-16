@@ -27,8 +27,8 @@ from alfred.tools.base import ModelImage
 
 log = logging.getLogger(__name__)
 
-NO_VISION = "this brain can't see images"
-UNAVAILABLE = "not available right now"
+_NO_VISION = "this brain can't see images"
+_UNAVAILABLE = "not available right now"
 
 
 class ImageCache:
@@ -62,7 +62,7 @@ async def load_image(store: ObjectStore, ref: AttachmentRef, page: int, max_px: 
     return await for_model_async(data, max_px)
 
 
-def first_page_block(ref: AttachmentRef, max_chars: int) -> str:
+def _first_page_block(ref: AttachmentRef, max_chars: int) -> str:
     """A PDF's page 1 text as sent inline, cut to ``max_chars``."""
     text = (ref.first_page or "").strip()
     block = f"--- page 1 ---\n{text[:max_chars]}"
@@ -98,15 +98,15 @@ class InlineAttachments:
             note: str | None = None
             if not text_layer:  # an image, or a scanned page 1
                 if not vision:
-                    note = NO_VISION
+                    note = _NO_VISION
                 else:
                     image = await cache.image(ref)
                     if image is None:
-                        note = UNAVAILABLE
+                        note = _UNAVAILABLE
                     else:
                         inline.images.append(image)
             shown = handle(ref, note)
             if text_layer:
-                shown += "\n" + first_page_block(ref, self._config.first_page_chars)
+                shown += "\n" + _first_page_block(ref, self._config.first_page_chars)
             inline.handles.append(shown)
         return inline

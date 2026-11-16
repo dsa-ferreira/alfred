@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def server_instructions(item: ServerInstructions) -> str:
+def _server_instructions(item: ServerInstructions) -> str:
     """One server's instructions, framed so the model maps tool names to its prefix."""
     return (
         f'Instructions from the tool server "{item.server}". Its tools are offered to you '
@@ -46,7 +46,7 @@ def server_instructions(item: ServerInstructions) -> str:
     )
 
 
-def unavailable_note(servers: Sequence[str]) -> str:
+def _unavailable_note(servers: Sequence[str]) -> str:
     names = ", ".join(servers)
     return (
         f"These tool servers are unavailable right now, so their tools are missing: {names}. "
@@ -54,15 +54,15 @@ def unavailable_note(servers: Sequence[str]) -> str:
     )
 
 
-def prompt_notes(tools: TurnTools) -> list[PromptNote]:
+def _prompt_notes(tools: TurnTools) -> list[PromptNote]:
     """Each server's instructions (logged by size), then the unavailable servers."""
-    notes = [PromptNote(server_instructions(i), i.server, len(i.text)) for i in tools.instructions]
+    notes = [PromptNote(_server_instructions(i), i.server, len(i.text)) for i in tools.instructions]
     if tools.unavailable:
-        notes.append(PromptNote(unavailable_note(tools.unavailable)))
+        notes.append(PromptNote(_unavailable_note(tools.unavailable)))
     return notes
 
 
-def keep_allowed(tools: TurnTools, allow: AllowList, user: str) -> None:
+def _keep_allowed(tools: TurnTools, allow: AllowList, user: str) -> None:
     """Drop instructions of servers with no allowed tool; warn about unknown exact names.
 
     The tools themselves are left for the gate (``alfred.tools.base.Gated``).
@@ -110,7 +110,7 @@ class McpTools:
             max_chars=config.ai.tool_result_max_chars,
         )
 
-    async def open(self, turn: TurnInput) -> OpenMcpTools:
+    async def open(self, turn: TurnInput) -> _OpenMcpTools:
         allow = turn.user.tools
         servers = [s for s in self._servers_for(turn.user) if allow.may_match_prefix(f"{s.name}_")]
         tools = await build_turn_tools(
@@ -119,8 +119,8 @@ class McpTools:
             self._list_timeout_s,
             instructions_max_chars=self._instructions_max_chars,
         )
-        keep_allowed(tools, allow, turn.user.name)
-        return OpenMcpTools(self, tools)
+        _keep_allowed(tools, allow, turn.user.name)
+        return _OpenMcpTools(self, tools)
 
     async def _call(self, tools: TurnTools, name: str, raw_arguments: Any) -> ToolOutcome:
         return await call_tool(
@@ -147,14 +147,14 @@ class McpTools:
         )
 
 
-class OpenMcpTools:
+class _OpenMcpTools:
     """One turn's listing: its tools, routes and prompt notes."""
 
     def __init__(self, owner: McpTools, tools: TurnTools) -> None:
         self._owner = owner
         self.tools = tools
         self.definitions = tools.definitions
-        self.prompt_notes = prompt_notes(tools)
+        self.prompt_notes = _prompt_notes(tools)
 
     def group_of(self, name: str) -> str:
         return self.tools.routes[name].server.name

@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alfred.config import FileConfig, McpServerEntry, ServiceEntry, UserEntry, load_config
+from alfred.config import _FileConfig, _McpServerEntry, _ServiceEntry, _UserEntry, load_config
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "alfred.toml.example"
@@ -76,7 +76,7 @@ def _section(annotation: Any) -> tuple[type[BaseModel] | None, bool]:
 def test_optional_section_shown_commented_out() -> None:
     """An optional section is off by default, so the example shows it commented out."""
     text = EXAMPLE.read_text()
-    for section, field in FileConfig.model_fields.items():
+    for section, field in _FileConfig.model_fields.items():
         model, optional = _section(field.annotation)
         if model is None or not optional:
             continue
@@ -93,7 +93,7 @@ def test_optional_section_shown_commented_out() -> None:
 
 def test_example_shows_every_default() -> None:
     data = tomllib.loads(EXAMPLE.read_text())
-    for section, field in FileConfig.model_fields.items():
+    for section, field in _FileConfig.model_fields.items():
         annotation, optional = _section(field.annotation)
         if annotation is None or optional:
             continue
@@ -121,13 +121,13 @@ def _documented_keys() -> set[str]:
 def test_every_field_in_readme() -> None:
     documented = _documented_keys()
     expected: set[str] = set()
-    for section, info in FileConfig.model_fields.items():
+    for section, info in _FileConfig.model_fields.items():
         annotation, _ = _section(info.annotation)
         if annotation is not None:
             expected |= {f"{section}.{key}" for key in annotation.model_fields}
-    expected |= {f"services.{key}" for key in ServiceEntry.model_fields}
-    expected |= {f"mcp_servers.{key}" for key in McpServerEntry.model_fields}
-    expected |= {f"users.{key}" for key in UserEntry.model_fields}
+    expected |= {f"services.{key}" for key in _ServiceEntry.model_fields}
+    expected |= {f"mcp_servers.{key}" for key in _McpServerEntry.model_fields}
+    expected |= {f"users.{key}" for key in _UserEntry.model_fields}
     expected |= {"[[services]]", "[[mcp_servers]]", "[[users]]"}
     assert expected <= documented, expected - documented
 
@@ -147,4 +147,4 @@ def test_every_variable_in_readme() -> None:
 def test_mcp_section_documents_server_fields() -> None:
     section = README.read_text().split("## MCP servers", 1)[1].split("\n## ", 1)[0]
     documented = set(re.findall(r"^\| `([a-z_]+)` \|", section, re.M))
-    assert documented == set(McpServerEntry.model_fields)
+    assert documented == set(_McpServerEntry.model_fields)

@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from alfred.web.search import FAILED_ENGINES, SearchUnavailable, SearxngClient, shape
+from alfred.web.search import _FAILED_ENGINES, SearchUnavailable, SearxngClient, _shape
 
 FIXTURE = Path(__file__).parent / "fixtures" / "searxng_lisbon_weather.json"
 SEARXNG = "http://oracle.lan"
@@ -50,7 +50,7 @@ async def test_shaped_results(http: httpx.AsyncClient) -> None:
         assert f"{n}. {result['title']}\n   {result['url']}\n   " in found.text
     assert data["results"][5]["url"] not in found.text
     # None of SearXNG's other fields.
-    listing = found.text.replace(FAILED_ENGINES, "")
+    listing = found.text.replace(_FAILED_ENGINES, "")
     for field in ("thumbnail", "gstatic", "google cse", "score", "parsed_url", "engines"):
         assert field not in listing
     assert len(found.text) <= 4000
@@ -91,7 +91,7 @@ async def test_no_results(http: httpx.AsyncClient) -> None:
 
 
 def test_result_count_follows_config() -> None:
-    found = shape(reply(), "q", limit=3, max_chars=4000)
+    found = _shape(reply(), "q", limit=3, max_chars=4000)
     assert len(found.urls) == 3
 
 
@@ -99,7 +99,7 @@ def test_duplicates_dropped_before_counting() -> None:
     data = reply()
     first = data["results"][0]["url"]
     data["results"].insert(1, {**data["results"][0], "url": first + "#top", "title": "Dup"})
-    found = shape(data, "q", limit=5, max_chars=4000)
+    found = _shape(data, "q", limit=5, max_chars=4000)
     assert found.urls == [r["url"] for r in reply()["results"][:5]]
     assert "Dup" not in found.text
 
@@ -107,7 +107,7 @@ def test_duplicates_dropped_before_counting() -> None:
 def test_results_without_http_url_skipped() -> None:
     data = reply()
     data["results"][0]["url"] = "magnet:?xt=urn:btih:abc"
-    found = shape(data, "q", limit=5, max_chars=4000)
+    found = _shape(data, "q", limit=5, max_chars=4000)
     assert "magnet:" not in found.text
     assert len(found.urls) == 5
 
@@ -125,18 +125,18 @@ def test_direct_answer_first() -> None:
             "answer": "100 EUR = 108.12 USD",
         }
     ]
-    found = shape(data, "100 eur to usd", limit=5, max_chars=4000)
+    found = _shape(data, "100 eur to usd", limit=5, max_chars=4000)
     assert found.text.startswith("Answer: 100 EUR = 108.12 USD\n")
 
 
 def test_plain_string_answer() -> None:
     data = reply()
     data["answers"] = ["42"]
-    assert shape(data, "q", limit=5, max_chars=4000).text.startswith("Answer: 42\n")
+    assert _shape(data, "q", limit=5, max_chars=4000).text.startswith("Answer: 42\n")
 
 
 def test_infobox_before_results() -> None:
-    found = shape(reply(), "lisbon weather", limit=5, max_chars=4000)
+    found = _shape(reply(), "lisbon weather", limit=5, max_chars=4000)
     lines = found.text.splitlines()
     assert lines[0] == "Infobox: Lisbon weather: Wikimedia template"
     assert lines[1].startswith("1. ")
@@ -145,29 +145,29 @@ def test_infobox_before_results() -> None:
 def test_long_infobox_shortened() -> None:
     data = reply()
     data["infoboxes"][0]["content"] = "word " * 1000
-    line = shape(data, "q", limit=5, max_chars=4000).text.splitlines()[0]
+    line = _shape(data, "q", limit=5, max_chars=4000).text.splitlines()[0]
     assert len(line) <= len("Infobox: ") + 500
 
 
 def test_failed_engines_after_results() -> None:
     data = reply()
     data["unresponsive_engines"] = [["duckduckgo", "CAPTCHA"], ["google", "timeout"]]
-    found = shape(data, "q", limit=5, max_chars=4000)
-    assert found.text.endswith("\n" + FAILED_ENGINES)
+    found = _shape(data, "q", limit=5, max_chars=4000)
+    assert found.text.endswith("\n" + _FAILED_ENGINES)
     assert "CAPTCHA" not in found.text
 
 
 def test_no_failed_engines_line_when_all_answered() -> None:
     data = reply()
     data["unresponsive_engines"] = []
-    assert FAILED_ENGINES not in shape(data, "q", limit=5, max_chars=4000).text
+    assert _FAILED_ENGINES not in _shape(data, "q", limit=5, max_chars=4000).text
 
 
 def test_long_snippets_shortened_to_fit() -> None:
     data = reply()
     for result in data["results"]:
         result["content"] = "lorem ipsum " * 200
-    found = shape(data, "q", limit=5, max_chars=1500)
+    found = _shape(data, "q", limit=5, max_chars=1500)
     assert len(found.text) <= 1500
     assert len(found.urls) == 5
     assert all(url in found.text for url in found.urls)
@@ -175,7 +175,7 @@ def test_long_snippets_shortened_to_fit() -> None:
 
 
 def test_tiny_limit_never_lists_hidden_urls() -> None:
-    found = shape(reply(), "q", limit=5, max_chars=400)
+    found = _shape(reply(), "q", limit=5, max_chars=400)
     assert len(found.text) <= 400
     assert found.urls and all(url in found.text for url in found.urls)
 

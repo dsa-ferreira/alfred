@@ -12,14 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.model import ModelFailed, ModelUnreachable
-from alfred.agent.prompts import NO_REPLY, brain_line, butler_persona, is_no_reply
+from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
-from alfred.history import STAMP, History
+from alfred.history import _STAMP, History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.reminders.store import Reminders
-from alfred.reminders.tools import REMIND_SET
+from alfred.reminders.tools import _REMIND_SET
 from alfred.tools.base import (
-    DECLINED,
+    _DECLINED,
     AllowList,
     AttemptContext,
     LocalToolset,
@@ -31,7 +31,7 @@ from alfred.tools.brains import SET_MODEL
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.tools.dates import DATE
-from alfred.web.tools import WEB_FETCH, WEB_SEARCH
+from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
     BAD_MODEL,
     COOKBOOK,
@@ -81,7 +81,7 @@ async def test_default_prompt_and_context(sessions: async_sessionmaker[AsyncSess
     messages = model.requests[0][0]
     assert messages[0] == {
         "role": "system",
-        "content": butler_persona("sir") + "\n\n" + RULES + "\n\n" + COOKBOOK_SECTION,
+        "content": _butler_persona("sir") + "\n\n" + RULES + "\n\n" + COOKBOOK_SECTION,
     }
     assert contents(messages[1:]) == ["earlier", "earlier reply", "hi"]
 
@@ -99,7 +99,7 @@ async def test_custom_address(sessions: async_sessionmaker[AsyncSession]) -> Non
     await agent(sessions, model, users=[MR_FERREIRA]).run(
         await owner_turn(sessions, "hi", MR_FERREIRA)
     )
-    assert model.requests[0][0][0]["content"].startswith(butler_persona("Mr. Ferreira"))
+    assert model.requests[0][0][0]["content"].startswith(_butler_persona("Mr. Ferreira"))
 
 
 async def test_context_window_limit(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -114,13 +114,13 @@ async def test_context_window_limit(sessions: async_sessionmaker[AsyncSession]) 
 async def test_ask_turn_context(sessions: async_sessionmaker[AsyncSession]) -> None:
     await History(sessions).append("diogo", "user", "earlier")
     item = await add_queue_item(sessions, "ask", "is this worth telling?", "disk-check")
-    model = FakeModel([text(NO_REPLY)])
+    model = FakeModel([text(_NO_REPLY)])
     result = await agent(sessions, model).run(
         TurnInput("ask", "is this worth telling?", item, "disk-check", user=DIOGO)
     )
-    assert result.reply == NO_REPLY
+    assert result.reply == _NO_REPLY
     messages = model.requests[0][0]
-    assert NO_REPLY in messages[0]["content"]
+    assert _NO_REPLY in messages[0]["content"]
     assert contents(messages[1:2]) == ["earlier"]
     assert messages[-1] == {
         "role": "user",
@@ -299,7 +299,7 @@ async def test_date_in_owner_turn(sessions: async_sessionmaker[AsyncSession]) ->
 
 async def test_date_in_ask_turn(sessions: async_sessionmaker[AsyncSession]) -> None:
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
-    model = FakeModel([text(NO_REPLY)])
+    model = FakeModel([text(_NO_REPLY)])
     await agent(sessions, model, now=JUST_AFTER_MIDNIGHT).run(
         TurnInput("ask", "x", item, "disk-check", user=DIOGO)
     )
@@ -387,11 +387,11 @@ async def test_unreachable_server_does_not_fall_back(
 async def test_ask_turn_falls_back(sessions: async_sessionmaker[AsyncSession]) -> None:
     brains = two_brains("bonsai")
     item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
-    model = FakeModel([BAD_MODEL, text(NO_REPLY)])
+    model = FakeModel([BAD_MODEL, text(_NO_REPLY)])
     result = await agent(sessions, model, brains=brains).run(
         TurnInput("ask", "anything?", item, "disk-check", user=DIOGO)
     )
-    assert result.reply == NO_REPLY and result.fallback == FELL_BACK
+    assert result.reply == _NO_REPLY and result.fallback == FELL_BACK
     assert brains.current.name == "gemma"
 
 
@@ -428,8 +428,8 @@ async def test_tool_order_on_owner_turns(
     model = FakeModel([text("ok")])
     await all_toolsets_agent(sessions, model, web_http).run(await owner_turn(sessions, "hi"))
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
-        WEB_SEARCH,
-        WEB_FETCH,
+        _WEB_SEARCH,
+        _WEB_FETCH,
         END_CONVERSATION,
         SEARCH_CONVERSATIONS,
         RECALL_CONVERSATION,
@@ -446,14 +446,14 @@ async def test_tool_order_on_owner_turns(
 async def test_tool_order_on_ask_turns(
     sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
 ) -> None:
-    model = FakeModel([text(NO_REPLY)])
+    model = FakeModel([text(_NO_REPLY)])
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await all_toolsets_agent(sessions, model, web_http).run(
         TurnInput("ask", "93%", item, "disk-check", user=DIOGO)
     )
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
-        WEB_SEARCH,
-        WEB_FETCH,
+        _WEB_SEARCH,
+        _WEB_FETCH,
         CALCULATE,
         DATE,
         *MCP_TOOLS,
@@ -491,7 +491,7 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
 
 async def test_ask_input_carries_the_time_now(sessions: async_sessionmaker[AsyncSession]) -> None:
     item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
-    model = FakeModel([text(NO_REPLY)])
+    model = FakeModel([text(_NO_REPLY)])
     at_three = datetime(2026, 11, 10, 3, 0, tzinfo=UTC)  # 03:00 in Lisbon (WET)
     await agent(sessions, model, now=at_three).run(
         TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
@@ -505,7 +505,7 @@ async def test_owner_message_reaches_the_model_stamped(
     model = FakeModel([text("ok")])
     await agent(sessions, model).run(await owner_turn(sessions, "what time is it?"))
     latest = model.requests[0][0][-1]["content"]
-    assert STAMP.match(latest) and latest.endswith("] what time is it?")
+    assert _STAMP.match(latest) and latest.endswith("] what time is it?")
 
 
 async def test_echoed_stamp_is_removed(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -516,7 +516,7 @@ async def test_echoed_stamp_is_removed(sessions: async_sessionmaker[AsyncSession
 
 async def test_echoed_stamp_before_no_reply(sessions: async_sessionmaker[AsyncSession]) -> None:
     item = await add_queue_item(sessions, "ask", "93% full", "disk-check")
-    model = FakeModel([text(f"[Mon 2 Nov 14:05] {NO_REPLY}")])
+    model = FakeModel([text(f"[Mon 2 Nov 14:05] {_NO_REPLY}")])
     result = await agent(sessions, model).run(
         TurnInput("ask", "93% full", item, "disk-check", user=DIOGO)
     )
@@ -607,8 +607,8 @@ async def test_quiet_reminder_turn_is_told_about_no_reply(
     loud, quiet = FakeModel([text("ok")]), FakeModel([text("ok")])
     await agent(sessions, loud, now=DUE).run(await reminder_turn(sessions))
     await agent(sessions, quiet, now=DUE).run(await reminder_turn(sessions, quiet_ok=True))
-    assert NO_REPLY not in loud.requests[0][0][0]["content"]
-    assert NO_REPLY in quiet.requests[0][0][0]["content"]
+    assert _NO_REPLY not in loud.requests[0][0][0]["content"]
+    assert _NO_REPLY in quiet.requests[0][0][0]["content"]
 
 
 # --- waiting for the user's answer (change add-user-input-requests) ------------------
@@ -616,7 +616,7 @@ async def test_quiet_reminder_turn_is_told_about_no_reply(
 CONFIRMS_ADD = dataclasses.replace(DIOGO, confirm=AllowList.of("mcparr_add_media"))
 FIND = ("mcparr_get_downloads", "{}")
 ADD = ("mcparr_add_media", '{"title": "Dune"}')
-REMIND = (REMIND_SET, '{"text": "watch Dune", "in_minutes": 60}')
+REMIND = (_REMIND_SET, '{"text": "watch Dune", "in_minutes": 60}')
 
 
 def confirming(sessions: async_sessionmaker[AsyncSession], model: FakeModel, **kw: object) -> Agent:
@@ -638,7 +638,7 @@ async def test_turn_parks_at_a_listed_call(sessions: async_sessionmaker[AsyncSes
     waiting = result.waiting
     assert waiting is not None and result.reply == ""
     assert (waiting.call.name, waiting.call_index) == ("mcparr_add_media", 1)
-    assert [c.name for c in waiting.remaining] == [REMIND_SET]
+    assert [c.name for c in waiting.remaining] == [_REMIND_SET]
     # The tail: the assistant message with the three calls, and find's result.
     assert [m["role"] for m in waiting.tail] == ["assistant", "tool"]
     assert len(waiting.tail[0]["tool_calls"]) == 3
@@ -667,7 +667,7 @@ async def test_do_it_runs_the_call_and_the_turn_goes_on(
         (1, "mcparr_get_downloads", True),
         (2, "mcparr_add_media", False),
         (3, "mcparr_add_media", True),
-        (4, REMIND_SET, True),
+        (4, _REMIND_SET, True),
     ]
     # The model saw add's real result, then remind's, after the same assistant message.
     messages = model.requests[1][0]
@@ -684,12 +684,12 @@ async def test_cancel_declines_without_running(
     alfred, turn, parked = await parked_turn(sessions, model)
     result = await alfred.run(resumed(turn, parked, False))
     assert result.reply == "As you wish, I won't add it."
-    assert model.requests[1][0][-1]["content"] == DECLINED
+    assert model.requests[1][0][-1]["content"] == _DECLINED
     rows = await tool_rows(sessions)
     assert [(r.tool, r.ok, r.result_excerpt) for r in rows][-1] == (
         "mcparr_add_media",
         False,
-        DECLINED,
+        _DECLINED,
     )
 
 

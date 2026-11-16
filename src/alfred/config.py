@@ -44,16 +44,16 @@ from alfred.tools.base import AllowList
 
 log = logging.getLogger(__name__)
 
-CONFIG_ENV = "ALFRED_CONFIG"
-DEFAULT_CONFIG_PATH = "alfred.toml"
-BOT_TOKEN_ENV = "ALFRED_TELEGRAM_BOT_TOKEN"
-DATABASE_URL_ENV = "ALFRED_DATABASE_URL"
-S3_ACCESS_KEY_ID_ENV = "ALFRED_S3_ACCESS_KEY_ID"
-S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
+_CONFIG_ENV = "ALFRED_CONFIG"
+_DEFAULT_CONFIG_PATH = "alfred.toml"
+_BOT_TOKEN_ENV = "ALFRED_TELEGRAM_BOT_TOKEN"
+_DATABASE_URL_ENV = "ALFRED_DATABASE_URL"
+_S3_ACCESS_KEY_ID_ENV = "ALFRED_S3_ACCESS_KEY_ID"
+_S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
 # Telegram bots can't download files larger than this.
-TELEGRAM_MAX_BYTES = 20_000_000
+_TELEGRAM_MAX_BYTES = 20_000_000
 
-RESERVED_SERVER_NAME = "alfred"
+_RESERVED_SERVER_NAME = "alfred"
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 _TOKEN_ENV = re.compile(r"ALFRED_[A-Z0-9_]+")
 
@@ -96,14 +96,14 @@ def _check_token_env(value: str) -> str:
     return value
 
 
-Name = Annotated[str, AfterValidator(_check_name)]
-HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
-TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
-TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
-PositiveInt = Annotated[int, Field(gt=0)]
-PositiveFloat = Annotated[float, Field(gt=0)]
-NonNegativeFloat = Annotated[float, Field(ge=0)]
-NonNegativeInt = Annotated[int, Field(ge=0)]
+_Name = Annotated[str, AfterValidator(_check_name)]
+_HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
+_TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
+_TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
+_PositiveInt = Annotated[int, Field(gt=0)]
+_PositiveFloat = Annotated[float, Field(gt=0)]
+_NonNegativeFloat = Annotated[float, Field(ge=0)]
+_NonNegativeInt = Annotated[int, Field(ge=0)]
 
 
 class _Section(BaseModel):
@@ -113,7 +113,7 @@ class _Section(BaseModel):
 # --- file sections -------------------------------------------------------------
 
 
-class TelegramConfig(_Section):
+class _TelegramConfig(_Section):
     """No settings of its own: who may chat is set by ``[[users]]``.
 
     Kept so the removed ``owner_user_id`` is reported as an unknown key.
@@ -135,19 +135,19 @@ def _brain_entries(value: Any) -> Any:
 
 
 class AIConfig(_Section):
-    base_url: HttpUrlStr = "http://ai.lan"
+    base_url: _HttpUrlStr = "http://ai.lan"
     model: Annotated[str, Field(min_length=1)] = "gemma4:26b-a4b-it-qat"
     # Whether the [ai] model can see images, when no alias names it.
     vision: bool = False
-    request_timeout_s: PositiveFloat = 300
-    max_requests_per_turn: PositiveInt = 12
-    tool_result_max_chars: PositiveInt = 4000
+    request_timeout_s: _PositiveFloat = 300
+    max_requests_per_turn: _PositiveInt = 12
+    tool_result_max_chars: _PositiveInt = 4000
     persona: Annotated[str, Field(min_length=1)] | None = None
     # alfred's timezone: today's date in the prompt, reminders and search dates.
-    timezone: TimeZoneName = "Europe/Lisbon"
+    timezone: _TimeZoneName = "Europe/Lisbon"
     # The brains the admin can switch between: alias -> model tag, or
     # alias -> { model = tag, vision = true }. Both are read as a BrainEntry.
-    models: Annotated[dict[Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
+    models: Annotated[dict[_Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
 
     @field_validator("models")
     @classmethod
@@ -171,16 +171,16 @@ class AIConfig(_Section):
         return models
 
 
-class HistoryConfig(_Section):
-    max_entries: PositiveInt = 30
+class _HistoryConfig(_Section):
+    max_entries: _PositiveInt = 30
     # Hours after a user's last own message before their conversation is
     # closed (change close-idle-conversations, design D7). None: never.
-    idle_close_after_h: PositiveFloat | None = None
+    idle_close_after_h: _PositiveFloat | None = None
 
 
 class QueueConfig(_Section):
-    retry_initial_s: PositiveFloat = 30
-    retry_max_s: PositiveFloat = 900
+    retry_initial_s: _PositiveFloat = 30
+    retry_max_s: _PositiveFloat = 900
 
     @model_validator(mode="after")
     def _max_not_below_initial(self) -> QueueConfig:
@@ -194,39 +194,39 @@ class MemoryConfig(_Section):
 
     # None: the ``[ai]`` model (see :attr:`Config.summary_model`).
     summary_model: Annotated[str, Field(min_length=1)] | None = None
-    embedding_base_url: HttpUrlStr = "http://ragman.lan"
+    embedding_base_url: _HttpUrlStr = "http://ragman.lan"
     embedding_model: Annotated[str, Field(min_length=1)] = "nomic-embed-text:v1.5"
-    embedding_timeout_s: PositiveFloat = 30
+    embedding_timeout_s: _PositiveFloat = 30
     document_prefix: str = "search_document: "
     query_prefix: str = "search_query: "
-    recall_max_chars: PositiveInt = 32000
-    summary_input_max_chars: PositiveInt = 60000
-    search_results: PositiveInt = 5
+    recall_max_chars: _PositiveInt = 32000
+    summary_input_max_chars: _PositiveInt = 60000
+    search_results: _PositiveInt = 5
     # Seconds the queue must have been quiet before a summary request starts
     # (change close-idle-conversations, design D5). 0: only an empty queue.
-    summary_quiet_s: NonNegativeFloat = 60
+    summary_quiet_s: _NonNegativeFloat = 60
     # User facts (change add-user-facts, design D12). Off: facts are learned,
     # remembered and listed by /memory, but sent in no prompt.
     facts_in_context: bool = False
     # Most characters of facts in one system prompt.
-    facts_context_max_chars: PositiveInt = 3000
+    facts_context_max_chars: _PositiveInt = 3000
     # Longest fact; longer learned facts are cut, longer remembered ones refused.
-    fact_max_chars: PositiveInt = 300
+    fact_max_chars: _PositiveInt = 300
     # Failed extractions of one conversation before giving up. 0: never.
-    facts_extraction_max_attempts: NonNegativeInt = 0
+    facts_extraction_max_attempts: _NonNegativeInt = 0
     # Cosine distance within which a user's facts are checked for duplicates by
     # the model (change fix-fact-removals, design D7). Distance alone decides nothing.
     facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
-class WebConfig(_Section):
+class _WebConfig(_Section):
     """Web search through SearXNG and page fetch (change add-web-search, design D9)."""
 
-    searxng_url: HttpUrlStr = "http://oracle.lan"
-    search_results: PositiveInt = 5
-    fetch_page_chars: PositiveInt = 8000
-    fetch_timeout_s: PositiveFloat = 20
-    fetch_max_bytes: PositiveInt = 5_000_000
+    searxng_url: _HttpUrlStr = "http://oracle.lan"
+    search_results: _PositiveInt = 5
+    fetch_page_chars: _PositiveInt = 8000
+    fetch_timeout_s: _PositiveFloat = 20
+    fetch_max_bytes: _PositiveInt = 5_000_000
 
 
 _CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
@@ -238,7 +238,7 @@ def _check_clock(value: str) -> str:
     return value
 
 
-class RemindersConfig(_Section):
+class _RemindersConfig(_Section):
     """Timed reminders (change add-reminders, design D9)."""
 
     # The time of a reminder on a date with no clock time ("on Friday").
@@ -255,67 +255,68 @@ class AttachmentsConfig(_Section):
     from ``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``.
     """
 
-    endpoint_url: HttpUrlStr
+    endpoint_url: _HttpUrlStr
     bucket: Annotated[str, Field(min_length=1)]
     region: Annotated[str, Field(min_length=1)] = "garage"
-    max_bytes: Annotated[int, Field(gt=0)] = TELEGRAM_MAX_BYTES
+    max_bytes: Annotated[int, Field(gt=0)] = _TELEGRAM_MAX_BYTES
     # How many of the newest user messages carry their attachments inline.
     inline_turns: Annotated[int, Field(ge=0)] = 1
-    first_page_chars: PositiveInt = 4000
-    read_chars: PositiveInt = 8000
-    image_max_px: PositiveInt = 1536
-    album_wait_s: PositiveFloat = 2
+    first_page_chars: _PositiveInt = 4000
+    read_chars: _PositiveInt = 8000
+    image_max_px: _PositiveInt = 1536
+    album_wait_s: _PositiveFloat = 2
 
     @field_validator("max_bytes")
     @classmethod
     def _within_telegram_limit(cls, value: int) -> int:
-        if value > TELEGRAM_MAX_BYTES:
+        if value > _TELEGRAM_MAX_BYTES:
             raise ValueError(
-                f"must be at most {TELEGRAM_MAX_BYTES} (20 MB, the largest file a bot can download)"
+                f"must be at most {_TELEGRAM_MAX_BYTES} "
+                "(20 MB, the largest file a bot can download)"
             )
         return value
 
 
-class InputRequestsConfig(_Section):
+class _InputRequestsConfig(_Section):
     """Turns waiting for their user's answer (change add-user-input-requests, design D9)."""
 
     # Counted from when the question was sent.
-    expire_after_min: PositiveFloat = 60
+    expire_after_min: _PositiveFloat = 60
 
 
-class MCPConfig(_Section):
-    list_timeout_s: PositiveFloat = 10
-    call_timeout_s: PositiveFloat = 60
-    instructions_max_chars: PositiveInt = 2000
+class _MCPConfig(_Section):
+    list_timeout_s: _PositiveFloat = 10
+    call_timeout_s: _PositiveFloat = 60
+    instructions_max_chars: _PositiveInt = 2000
 
 
-class ServerConfig(_Section):
+class _ServerConfig(_Section):
     host: Annotated[str, Field(min_length=1)] = "0.0.0.0"
     port: Annotated[int, Field(ge=1, le=65535)] = 8080
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
-class ServiceEntry(_Section):
-    name: Name
-    token_env: TokenEnv
+class _ServiceEntry(_Section):
+    name: _Name
+    token_env: _TokenEnv
 
 
-class McpServerEntry(_Section):
-    name: Name
-    url: HttpUrlStr
-    token_env: TokenEnv
+class _McpServerEntry(_Section):
+    name: _Name
+    url: _HttpUrlStr
+    token_env: _TokenEnv
     exclude_tools: list[Annotated[str, Field(min_length=1)]] = []
     use_server_instructions: bool = True
 
 
-ALL_TOOLS = "*"
+_ALL_TOOLS = "*"
 
 
-class UserEntry(_Section):
+class _UserEntry(_Section):
     """A ``[[users]]`` entry (change add-multiple-users, design D1)."""
 
-    name: Name
-    telegram_user_id: PositiveInt
+    name: _Name
+    telegram_user_id: _PositiveInt
     # How alfred addresses this user, in replies and fixed notices.
     address: Annotated[str, Field(min_length=1)] = "sir"
     admin: bool = False
@@ -325,27 +326,27 @@ class UserEntry(_Section):
     # the same syntax (change add-user-input-requests, design D9).
     confirm: list[Annotated[str, Field(min_length=1)]] = []
     # MCP server name -> the variable holding this user's token for it.
-    mcp_tokens: dict[Name, TokenEnv] = {}
+    mcp_tokens: dict[_Name, _TokenEnv] = {}
 
 
-class FileConfig(_Section):
+class _FileConfig(_Section):
     """The shape of ``alfred.toml``."""
 
-    users: Annotated[list[UserEntry], Field(min_length=1)]
-    telegram: TelegramConfig = TelegramConfig()
+    users: Annotated[list[_UserEntry], Field(min_length=1)]
+    telegram: _TelegramConfig = _TelegramConfig()
     ai: AIConfig = AIConfig()
-    history: HistoryConfig = HistoryConfig()
+    history: _HistoryConfig = _HistoryConfig()
     queue: QueueConfig = QueueConfig()
     memory: MemoryConfig = MemoryConfig()
-    web: WebConfig = WebConfig()
-    reminders: RemindersConfig = RemindersConfig()
-    input_requests: InputRequestsConfig = InputRequestsConfig()
+    web: _WebConfig = _WebConfig()
+    reminders: _RemindersConfig = _RemindersConfig()
+    input_requests: _InputRequestsConfig = _InputRequestsConfig()
     # None: attachments are off and alfred reads text only.
     attachments: AttachmentsConfig | None = None
-    mcp: MCPConfig = MCPConfig()
-    server: ServerConfig = ServerConfig()
-    services: list[ServiceEntry] = []
-    mcp_servers: list[McpServerEntry] = []
+    mcp: _MCPConfig = _MCPConfig()
+    server: _ServerConfig = _ServerConfig()
+    services: list[_ServiceEntry] = []
+    mcp_servers: list[_McpServerEntry] = []
 
 
 # --- resolved configuration ----------------------------------------------------
@@ -420,18 +421,18 @@ class Config:
 
     users: Users
     ai: AIConfig
-    history: HistoryConfig
+    history: _HistoryConfig
     queue: QueueConfig
-    mcp: MCPConfig
-    server: ServerConfig
+    mcp: _MCPConfig
+    server: _ServerConfig
     services: tuple[Service, ...]
     mcp_servers: tuple[McpServer, ...]
     telegram_bot_token: SecretStr
     database_url: SecretStr
     memory: MemoryConfig = MemoryConfig()
-    web: WebConfig = WebConfig()
-    reminders: RemindersConfig = RemindersConfig()
-    input_requests: InputRequestsConfig = InputRequestsConfig()
+    web: _WebConfig = _WebConfig()
+    reminders: _RemindersConfig = _RemindersConfig()
+    input_requests: _InputRequestsConfig = _InputRequestsConfig()
     attachments: AttachmentsConfig | None = None
     # Set exactly when ``attachments`` is.
     s3_key: S3Key | None = None
@@ -454,9 +455,9 @@ class Config:
 # --- loading -------------------------------------------------------------------
 
 
-def config_path(env: Mapping[str, str] | None = None) -> Path:
+def _config_path(env: Mapping[str, str] | None = None) -> Path:
     source = os.environ if env is None else env
-    return Path(source.get(CONFIG_ENV) or DEFAULT_CONFIG_PATH)
+    return Path(source.get(_CONFIG_ENV) or _DEFAULT_CONFIG_PATH)
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -465,13 +466,13 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     Raises :class:`ConfigError` listing every problem found.
     """
     source = os.environ if env is None else env
-    path = config_path(source)
+    path = _config_path(source)
     data = _read_toml(path)
 
     problems: list[str] = []
-    parsed: FileConfig | None = None
+    parsed: _FileConfig | None = None
     try:
-        parsed = FileConfig.model_validate(data)
+        parsed = _FileConfig.model_validate(data)
     except ValidationError as exc:
         problems += [_describe(e, data) for e in exc.errors(include_input=False, include_url=False)]
 
@@ -483,12 +484,13 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     server_names = {e["name"] for e in servers_raw if isinstance(e.get("name"), str)}
     problems += _check_users(users_raw, server_names)
     for entry in servers_raw:
-        if entry.get("name") == RESERVED_SERVER_NAME:
+        if entry.get("name") == _RESERVED_SERVER_NAME:
             problems.append(
-                f"mcp_servers: the name {RESERVED_SERVER_NAME!r} is reserved for alfred's own tools"
+                f"mcp_servers: the name {_RESERVED_SERVER_NAME!r} "
+                "is reserved for alfred's own tools"
             )
 
-    bot_token = _require_env(source, BOT_TOKEN_ENV, problems)
+    bot_token = _require_env(source, _BOT_TOKEN_ENV, problems)
     database_url = load_database_url(source, problems)
     service_tokens = _resolve_tokens(source, "services", services_raw, problems)
     server_tokens = _resolve_tokens(source, "mcp_servers", servers_raw, problems)
@@ -497,8 +499,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     user_tokens = _resolve_user_tokens(source, users_raw, problems)
     s3_key: S3Key | None = None
     if isinstance(data.get("attachments"), Mapping):
-        key_id = _require_env(source, S3_ACCESS_KEY_ID_ENV, problems, "[attachments] is set")
-        secret = _require_env(source, S3_SECRET_ACCESS_KEY_ENV, problems, "[attachments] is set")
+        key_id = _require_env(source, _S3_ACCESS_KEY_ID_ENV, problems, "[attachments] is set")
+        secret = _require_env(source, _S3_SECRET_ACCESS_KEY_ENV, problems, "[attachments] is set")
         if key_id is not None and secret is not None:
             s3_key = S3Key(SecretStr(key_id), SecretStr(secret))
 
@@ -559,7 +561,7 @@ def load_database_url(
     source = os.environ if env is None else env
     own: list[str] = []
     collect = own if problems is None else problems
-    value = _require_env(source, DATABASE_URL_ENV, collect)
+    value = _require_env(source, _DATABASE_URL_ENV, collect)
     result: str | None = None
     if value is not None:
         for prefix in ("postgresql://", "postgres://"):
@@ -570,7 +572,7 @@ def load_database_url(
             if value.startswith("postgresql+psycopg://"):
                 result = value
             else:
-                collect.append(f"{DATABASE_URL_ENV} must be a postgresql:// URL")
+                collect.append(f"{_DATABASE_URL_ENV} must be a postgresql:// URL")
     if problems is None and own:
         raise ConfigError(own)
     return result
@@ -581,7 +583,7 @@ def _read_toml(path: Path) -> dict[str, Any]:
         with path.open("rb") as f:
             return tomllib.load(f)
     except FileNotFoundError:
-        raise ConfigError([f"config file {str(path)!r} not found (set {CONFIG_ENV})"]) from None
+        raise ConfigError([f"config file {str(path)!r} not found (set {_CONFIG_ENV})"]) from None
     except OSError as exc:
         raise ConfigError([f"config file {str(path)!r} can't be read: {exc.strerror}"]) from None
     except tomllib.TOMLDecodeError as exc:
@@ -677,7 +679,7 @@ def _check_users(users: list[dict[str, Any]], server_names: set[str]) -> list[st
 
 def _tool_entry_problem(entry: object, server_names: set[str]) -> str | None:
     """Why an allow-list or confirm-list entry is wrong, or ``None``."""
-    if not isinstance(entry, str) or not entry or entry == ALL_TOOLS:
+    if not isinstance(entry, str) or not entry or entry == _ALL_TOOLS:
         return None  # wrong types are reported by the model validation
     if entry.startswith("alfred_"):
         if entry.endswith("*"):
@@ -690,7 +692,7 @@ def _tool_entry_problem(entry: object, server_names: set[str]) -> str | None:
     return "must be *, or start with alfred_ or with a configured MCP server's name and _"
 
 
-def _warn_hidden_confirms(users: list[UserEntry]) -> None:
+def _warn_hidden_confirms(users: list[_UserEntry]) -> None:
     """Log confirm entries the user's allow-list can never match (design D9).
 
     Not an error: the entry is harmless, only useless until the allow-list

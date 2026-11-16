@@ -22,7 +22,7 @@ from alfred.memory.search import (
 )
 from alfred.queue import Queue, Worker
 from alfred.reminders.store import Reminders
-from alfred.reminders.tools import REMIND_SET, REMINDERS_LIST, ReminderTools
+from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.tools.conversation import END_CONVERSATION
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
 from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeModel, calls, make_agent, make_config, text
@@ -97,7 +97,7 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
             calls((END_CONVERSATION, "{}")),
             text("Very good, sir."),
             # 2, 3: diogo reminds ana.
-            calls((REMIND_SET, json.dumps(remind_ana))),
+            calls((_REMIND_SET, json.dumps(remind_ana))),
             text("Very good. I shall remind ana at six."),
             # 4, 5: ana searches her memory for chicken: nothing of hers.
             calls((SEARCH_CONVERSATIONS, json.dumps({"query": "chicken"}))),
@@ -106,7 +106,7 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
             calls((RECALL_CONVERSATION, json.dumps({"id": 1}))),
             text("There is no such conversation, madam."),
             # 8, 9: ana lists her reminders.
-            calls((REMINDERS_LIST, "{}")),
+            calls((_REMINDERS_LIST, "{}")),
             text("Milk at six, set by diogo."),
             # 10: the reminder turn for ana.
             text("Pardon the interruption, madam. Diogo asks you to buy milk."),
@@ -124,7 +124,7 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
     diogo_tools, ana_tools = offered(model, 0), offered(model, 4)
     assert {"mcparr_get_downloads", "cookbook_delete_recipe"} <= diogo_tools
     assert not {"mcparr_get_downloads", "mcparr_check_health"} & ana_tools
-    assert {"mcparr_add_media", "cookbook_get_recipe", REMIND_SET, SEARCH_CONVERSATIONS} <= (
+    assert {"mcparr_add_media", "cookbook_get_recipe", _REMIND_SET, SEARCH_CONVERSATIONS} <= (
         ana_tools
     )
 

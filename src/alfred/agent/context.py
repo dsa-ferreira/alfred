@@ -8,14 +8,14 @@ from typing import Any
 
 from alfred.tools.base import LOCAL_GROUP, OpenToolset
 
-LARGEST_TOOLS = 5
+_LARGEST_TOOLS = 5
 
 
 def _chars(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False))
 
 
-def facts_size(facts: tuple[int, int, int] | None) -> str:
+def _facts_size(facts: tuple[int, int, int] | None) -> str:
     """``facts 14, 1240 chars``, ``facts 40 of 52, 2990 chars, 12 left out``,
     ``facts none`` or ``facts off``, from ``(shown, total, chars)``."""
     if facts is None:
@@ -45,7 +45,7 @@ def context_sizes(
     in the system prompt, or ``None`` when facts aren't in the context.
     """
     system = len(messages[0]["content"])
-    inside = [facts_size(facts)]
+    inside = [_facts_size(facts)]
     labelled = [n for t in opened for n in t.prompt_notes if n.log_label is not None]
     if labelled:
         inside.append(
@@ -96,7 +96,7 @@ def _without_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     return kept, images
 
 
-def largest_tools(definitions: list[dict[str, Any]], count: int = LARGEST_TOOLS) -> str:
+def largest_tools(definitions: list[dict[str, Any]], count: int = _LARGEST_TOOLS) -> str:
     """The ``count`` largest tool definitions as ``name size``, largest first."""
     sizes = sorted(((d["function"]["name"], _chars(d)) for d in definitions), key=lambda t: -t[1])
     return ", ".join(f"{name} {size}" for name, size in sizes[:count]) or "none"

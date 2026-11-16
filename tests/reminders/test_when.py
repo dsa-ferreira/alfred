@@ -7,10 +7,10 @@ import pytest
 
 from alfred.reminders.when import (
     WhenError,
+    _format_rule,
     format_day_time,
     format_in,
     format_now,
-    format_rule,
     format_when,
     latest_occurrence,
     next_occurrence,
@@ -370,9 +370,9 @@ def test_repeat_rule_errors(arguments: dict[str, object], says: str) -> None:
 def test_format_rule() -> None:
     eight = parse_rule(repeat="daily", at="08:00")
     assert eight is not None
-    assert format_rule("daily", 127, eight.clock) == "every day at 08:00"
-    assert format_rule("weekdays", 31, eight.clock) == "every weekday at 08:00"
-    assert format_rule("weekends", 96, eight.clock) == "every weekend day at 08:00"
+    assert _format_rule("daily", 127, eight.clock) == "every day at 08:00"
+    assert _format_rule("weekdays", 31, eight.clock) == "every weekday at 08:00"
+    assert _format_rule("weekends", 96, eight.clock) == "every weekend day at 08:00"
     bins = parse_rule(repeat="weekly", days=["fri", "tue"], at="20:00")
     assert bins is not None
     assert bins.label() == "every Tuesday and Friday at 20:00"

@@ -53,15 +53,15 @@ ALLOWED_UPDATES = ["message", "callback_query"]
 
 # Telegram shows a chat action for about 5 seconds; resend a little sooner so
 # a slow request leaves no gap (design D2).
-TYPING_INTERVAL_S = 4.0
+_TYPING_INTERVAL_S = 4.0
 
 
 # Seconds for one file download from Telegram (at most 20 MB).
-DOWNLOAD_TIMEOUT_S = 120
-PDF_MIME = "application/pdf"
+_DOWNLOAD_TIMEOUT_S = 120
+_PDF_MIME = "application/pdf"
 
 
-def incoming_file(message: Message) -> IncomingFile | None:
+def _incoming_file(message: Message) -> IncomingFile | None:
     """The message's photo, image file or PDF file; ``None`` for anything else."""
     if message.photo:
         largest = message.photo[-1]  # Telegram lists the sizes smallest first
@@ -70,7 +70,7 @@ def incoming_file(message: Message) -> IncomingFile | None:
     if document is None:
         return None
     mime = (document.mime_type or "").lower()
-    if mime == PDF_MIME:
+    if mime == _PDF_MIME:
         return IncomingFile("pdf", document.file_id, document.file_size, document.file_name)
     if mime.startswith("image/"):
         return IncomingFile("image", document.file_id, document.file_size, document.file_name)
@@ -80,7 +80,7 @@ def incoming_file(message: Message) -> IncomingFile | None:
 class TelegramDownloader:
     """Downloads a file a user sent, into memory."""
 
-    def __init__(self, bot: Bot, timeout_s: int = DOWNLOAD_TIMEOUT_S) -> None:
+    def __init__(self, bot: Bot, timeout_s: int = _DOWNLOAD_TIMEOUT_S) -> None:
         self._bot = bot
         self._timeout_s = timeout_s
 
@@ -98,39 +98,39 @@ class TelegramDownloader:
 
 # ``/memory``, ``/memory@alfred_bot`` (from the command menu) and their
 # arguments; not ``/memorybank``.
-MEMORY_COMMAND = re.compile(r"/memory(?:@\w+)?(?:\s+(.*))?", re.DOTALL)
-COMMANDS = [BotCommand(command="memory", description="What I know about you")]
+_MEMORY_COMMAND = re.compile(r"/memory(?:@\w+)?(?:\s+(.*))?", re.DOTALL)
+_COMMANDS = [BotCommand(command="memory", description="What I know about you")]
 
 
 async def register_commands(bot: Bot) -> None:
     """Show ``/memory`` in the clients' command menu. A failure is only logged."""
     try:
-        await bot.set_my_commands(COMMANDS)
+        await bot.set_my_commands(_COMMANDS)
     except Exception as exc:
         log.warning("could not register the bot commands: %s", type(exc).__name__)
 
 
-class Fact(Protocol):
+class _Fact(Protocol):
     id: int
     text: str
     origin: str
     created_at: datetime
 
 
-class Facts(Protocol):
+class _Facts(Protocol):
     """The user's facts (``alfred.memory.facts.FactStore``)."""
 
-    async def list(self, user_name: str) -> Sequence[Fact]: ...
+    async def list(self, user_name: str) -> Sequence[_Fact]: ...
 
     async def forget(
         self, user_name: str, ids: Sequence[int]
-    ) -> tuple[Sequence[Fact], Sequence[int]]: ...
+    ) -> tuple[Sequence[_Fact], Sequence[int]]: ...
 
 
 class MemoryCommand:
     """Answers ``/memory`` and ``/memory forget <id>...`` for the sender's own facts."""
 
-    def __init__(self, facts: Facts, zone: ZoneInfo) -> None:
+    def __init__(self, facts: _Facts, zone: ZoneInfo) -> None:
         self._facts = facts
         self._zone = zone
 
@@ -154,7 +154,7 @@ class MemoryCommand:
         text = notices.memory_forgot(user.address, [self._line(f) for f in removed], list(missing))
         return split_markdown(text)
 
-    def _line(self, fact: Fact) -> str:
+    def _line(self, fact: _Fact) -> str:
         """``[12] allergic to shellfish (told, 3 Nov)``."""
         day = fact.created_at.astimezone(self._zone)
         return f"[{fact.id}] {fact.text} ({fact.origin}, {day.day} {day:%b})"
@@ -165,7 +165,7 @@ def _fact_id(word: str) -> int | None:
     return int(word) if word.isdigit() else None
 
 
-class AlbumCollector:
+class _AlbumCollector:
     """Holds the parts of each album until ``wait_s`` passes without a new one."""
 
     def __init__(self, wait_s: float, receive: Callable[[list[Message]], Awaitable[None]]) -> None:
@@ -231,7 +231,7 @@ def make_dispatcher(
         files: list[IncomingFile] = []
         refused = 0
         for part in parts:
-            file = incoming_file(part)
+            file = _incoming_file(part)
             if file is None:
                 refused += 1
             else:
@@ -244,7 +244,7 @@ def make_dispatcher(
         for text in texts:
             await parts[0].answer(text, parse_mode=None)
 
-    albums = AlbumCollector(album_wait_s, receive)
+    albums = _AlbumCollector(album_wait_s, receive)
     dispatcher["albums"] = albums
 
     @dispatcher.message()
@@ -259,7 +259,7 @@ def make_dispatcher(
             )
             return
         if message.text is not None:
-            command = MEMORY_COMMAND.fullmatch(message.text.strip())
+            command = _MEMORY_COMMAND.fullmatch(message.text.strip())
             if memory is not None and command is not None:
                 # Not queued and not recorded: it never reaches the conversation.
                 for text in await memory.answer(user, command.group(1)):
@@ -352,4 +352,4 @@ class TelegramOutbox:
                     level, "could not send the typing indicator: %s: %s", type(exc).__name__, exc
                 )
                 failed = True
-            await asyncio.sleep(TYPING_INTERVAL_S)
+            await asyncio.sleep(_TYPING_INTERVAL_S)

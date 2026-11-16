@@ -28,9 +28,9 @@ from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, parse_a
 
 DATE = "alfred_date"
 
-OPS = ("between", "shift", "weekday", "now_in")
+_OPS = ("between", "shift", "weekday", "now_in")
 
-DATE_TOOL: dict[str, Any] = {
+_DATE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": DATE,
@@ -43,7 +43,7 @@ DATE_TOOL: dict[str, Any] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "op": {"type": "string", "enum": list(OPS)},
+                "op": {"type": "string", "enum": list(_OPS)},
                 "from": {"type": "string", "description": "between: the first date."},
                 "to": {"type": "string", "description": "between: the second date."},
                 "date": {"type": "string", "description": "shift and weekday: the date."},
@@ -68,11 +68,11 @@ DATE_TOOL: dict[str, Any] = {
 _WHOLE = re.compile(r"[+-]?\d+")
 
 
-class DateError(ValueError):
+class _DateError(ValueError):
     """The date calculation can't be done; the message is written for the model."""
 
 
-def long_date(day: date) -> str:
+def _long_date(day: date) -> str:
     """``Friday 25 December 2026``, like the reminders' times."""
     return f"{day:%A} {day.day} {day:%B %Y}"
 
@@ -81,7 +81,7 @@ def _plural(n: int, unit: str) -> str:
     return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
 
 
-def day_count(days: int) -> str:
+def _day_count(days: int) -> str:
     """``46 days (6 weeks and 4 days)``; under a week, just the days."""
     text = _plural(days, "day")
     weeks, rest = divmod(days, 7)
@@ -94,27 +94,27 @@ def day_count(days: int) -> str:
 
 def _whole(value: Any, name: str) -> int:
     if isinstance(value, bool):
-        raise DateError(f"{name} must be a whole number.")
+        raise _DateError(f"{name} must be a whole number.")
     if isinstance(value, int):
         return value
     if isinstance(value, float) and value.is_integer():
         return int(value)
     if isinstance(value, str) and _WHOLE.fullmatch(value.strip()):
         return int(value.strip())
-    raise DateError(f"{name} must be a whole number.")
+    raise _DateError(f"{name} must be a whole number.")
 
 
-def add_months(day: date, months: int) -> date:
+def _add_months(day: date, months: int) -> date:
     """``day`` ``months`` on; a day the target month lacks becomes its last day."""
     index = day.year * 12 + day.month - 1 + months
     year, month = divmod(index, 12)
     if not 1 <= year <= 9999:
-        raise DateError("the result is outside the years 1 to 9999.")
+        raise _DateError("the result is outside the years 1 to 9999.")
     last = calendar.monthrange(year, month + 1)[1]
     return date(year, month + 1, min(day.day, last))
 
 
-def offset_text(offset: timedelta) -> str:
+def _offset_text(offset: timedelta) -> str:
     """``9 hours ahead of the user``, ``5 hours 30 minutes behind the user``."""
     minutes = int(offset.total_seconds()) // 60
     if minutes == 0:
@@ -129,7 +129,7 @@ def offset_text(offset: timedelta) -> str:
 class DateTools(LocalToolset):
     """``alfred_date``, on every turn, in the user's timezone."""
 
-    definitions = [DATE_TOOL]
+    definitions = [_DATE_TOOL]
 
     def __init__(
         self, zone: ZoneInfo, *, now: Callable[[], datetime] = lambda: datetime.now(UTC)
@@ -145,7 +145,7 @@ class DateTools(LocalToolset):
             return ToolOutcome(True, self.answer(arguments))
         except WhenError as exc:
             return ToolOutcome(False, str(exc))
-        except DateError as exc:
+        except _DateError as exc:
             return ToolOutcome(False, f"Error: {exc}")
 
     def answer(self, arguments: dict[str, Any]) -> str:
@@ -162,12 +162,12 @@ class DateTools(LocalToolset):
             case "now_in":
                 return self._now_in(arguments.get("zone"), now)
             case _:
-                raise DateError(f"op must be one of {', '.join(OPS)}.")
+                raise _DateError(f"op must be one of {', '.join(_OPS)}.")
 
     def _date(self, arguments: dict[str, Any], key: str, op: str, now: datetime) -> date:
         if arguments.get(key) in (None, ""):
             needs = "from and to" if op == "between" else key
-            raise DateError(f"{op} needs {needs} (YYYY-MM-DD or today).")
+            raise _DateError(f"{op} needs {needs} (YYYY-MM-DD or today).")
         return parse_date(arguments[key], now=now, zone=self._zone)
 
     def _between(self, arguments: dict[str, Any], now: datetime) -> str:
@@ -175,12 +175,12 @@ class DateTools(LocalToolset):
         end = self._date(arguments, "to", "between", now)
         days = (end - start).days
         if days == 0:
-            return f"{long_date(start)} and {long_date(end)} are the same day."
+            return f"{_long_date(start)} and {_long_date(end)} are the same day."
         if days > 0:
-            return f"{long_date(end)} is {day_count(days)} after {long_date(start)}."
+            return f"{_long_date(end)} is {_day_count(days)} after {_long_date(start)}."
         today = now.astimezone(self._zone).date()
         verb = "was" if end < today else "is"
-        return f"{long_date(end)} {verb} {day_count(-days)} before {long_date(start)}."
+        return f"{_long_date(end)} {verb} {_day_count(-days)} before {_long_date(start)}."
 
     def _shift(self, arguments: dict[str, Any], now: datetime) -> str:
         start = self._date(arguments, "date", "shift", now)
@@ -190,33 +190,33 @@ class DateTools(LocalToolset):
             if arguments.get(unit) not in (None, "")
         }
         if not amounts:
-            raise DateError("shift needs days, weeks or months to add (negative to subtract).")
+            raise _DateError("shift needs days, weeks or months to add (negative to subtract).")
         try:
-            result = add_months(start, amounts.get("months", 0))
+            result = _add_months(start, amounts.get("months", 0))
             result += timedelta(days=amounts.get("days", 0) + 7 * amounts.get("weeks", 0))
         except (OverflowError, ValueError):
-            raise DateError("the result is outside the years 1 to 9999.") from None
+            raise _DateError("the result is outside the years 1 to 9999.") from None
         steps = ", ".join(
             f"{n:+d} {unit if abs(n) != 1 else unit[:-1]}" for unit, n in amounts.items()
         )
-        return f"{long_date(start)} {steps} is {long_date(result)}."
+        return f"{_long_date(start)} {steps} is {_long_date(result)}."
 
     def _now_in(self, zone_name: Any, now: datetime) -> str:
         if zone_name in (None, ""):
             local = now.astimezone(self._zone)
-            return f"It is {local:%H:%M} on {long_date(local.date())} (the user's time)."
+            return f"It is {local:%H:%M} on {_long_date(local.date())} (the user's time)."
         try:
             if not isinstance(zone_name, str):
                 raise ValueError(zone_name)
             zone = ZoneInfo(zone_name.strip())
         except (ZoneInfoNotFoundError, ValueError):
-            raise DateError(
+            raise _DateError(
                 f"unknown timezone {zone_name!r}: use an IANA name such as Asia/Tokyo."
             ) from None
         local = now.astimezone(zone)
         here = now.astimezone(self._zone)
         offset = (local.utcoffset() or timedelta()) - (here.utcoffset() or timedelta())
         return (
-            f"It is {local:%H:%M} on {long_date(local.date())} in {zone_name.strip()}, "
-            f"{offset_text(offset)}."
+            f"It is {local:%H:%M} on {_long_date(local.date())} in {zone_name.strip()}, "
+            f"{_offset_text(offset)}."
         )

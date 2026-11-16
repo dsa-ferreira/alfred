@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 Connector = Callable[[McpServer, float], AbstractAsyncContextManager[Client]]
 
 
-async def refuse_elicitation(
+async def _refuse_elicitation(
     context: ClientRequestContext, params: ElicitRequestParams
 ) -> ElicitResult | ErrorData:
     """Declares form elicitation; questions come back to alfred as ``InputRequiredResult``.
@@ -41,12 +41,12 @@ async def refuse_elicitation(
     return ErrorData(code=INVALID_REQUEST, message="alfred can't answer this question mid-call")
 
 
-def new_client(target: Any) -> Client:
+def _new_client(target: Any) -> Client:
     """A client for ``target`` (a transport, or an in-process server in tests).
 
     ``cache=None``: tool lists are looked up fresh every turn.
     """
-    return Client(target, cache=None, elicitation_callback=refuse_elicitation)
+    return Client(target, cache=None, elicitation_callback=_refuse_elicitation)
 
 
 def http_connector(transport: httpx2.AsyncBaseTransport | None = None) -> Connector:
@@ -59,7 +59,7 @@ def http_connector(transport: httpx2.AsyncBaseTransport | None = None) -> Connec
             timeout=httpx2.Timeout(http_timeout_s),
             transport=transport,
         ) as http:
-            client = new_client(streamable_http_client(server.url, http_client=http))
+            client = _new_client(streamable_http_client(server.url, http_client=http))
             async with client:
                 yield client
 

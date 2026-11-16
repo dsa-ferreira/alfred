@@ -70,7 +70,7 @@ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Deterministic constraint names, so migrations can refer to them.
-NAMING_CONVENTION = {
+_NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
     "ck": "ck_%(table_name)s_%(constraint_name)s",
@@ -79,7 +79,7 @@ NAMING_CONVENTION = {
 }
 
 # ``user``: written by the conversation's user (change add-multiple-users, D1).
-ENTRY_KINDS = (
+_ENTRY_KINDS = (
     "user",
     "assistant",
     "notice",
@@ -90,22 +90,22 @@ ENTRY_KINDS = (
     "reminder_reply",
 )
 # What the summary's full-text column is generated from; also used by search.
-SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
-ENTRY_TSV = "to_tsvector('english', text)"
-QUEUE_KINDS = ("user", "ask", "reminder")
-REMINDER_STATUSES = ("pending", "fired", "cancelled")
+_SEARCH_TSV = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(summary, ''))"
+_ENTRY_TSV = "to_tsvector('english', text)"
+_QUEUE_KINDS = ("user", "ask", "reminder")
+_REMINDER_STATUSES = ("pending", "fired", "cancelled")
 # ``waiting``: parked for its user's answer; ``cancelled``: ended without one
 # (change add-user-input-requests, design D4).
-QUEUE_STATUSES = ("pending", "done", "failed", "waiting", "cancelled")
-INPUT_REQUEST_STATUSES = ("open", "answered", "running", "done", "cancelled", "expired")
+_QUEUE_STATUSES = ("pending", "done", "failed", "waiting", "cancelled")
+_INPUT_REQUEST_STATUSES = ("open", "answered", "running", "done", "cancelled", "expired")
 # Live requests: at most one per queue item.
-LIVE_INPUT_REQUESTS = "status IN ('open', 'answered', 'running')"
-ATTACHMENT_KINDS = ("image", "pdf")
-END_REASONS = ("user", "idle", "unattended")
-REPEAT_RULES = ("daily", "weekdays", "weekends", "weekly")
-FACT_ORIGINS = ("told", "learned")
-FACT_REMOVAL_REASONS = ("forgotten", "replaced", "duplicate")
-FACTS_OUTCOMES = ("done", "gave_up")
+_LIVE_INPUT_REQUESTS = "status IN ('open', 'answered', 'running')"
+_ATTACHMENT_KINDS = ("image", "pdf")
+_END_REASONS = ("user", "idle", "unattended")
+_REPEAT_RULES = ("daily", "weekdays", "weekends", "weekly")
+_FACT_ORIGINS = ("told", "learned")
+_FACT_REMOVAL_REASONS = ("forgotten", "replaced", "duplicate")
+_FACTS_OUTCOMES = ("done", "gave_up")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -113,7 +113,7 @@ def _in(column: str, values: tuple[str, ...]) -> str:
 
 
 class Base(DeclarativeBase):
-    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    metadata = MetaData(naming_convention=_NAMING_CONVENTION)
 
 
 class Conversation(Base):
@@ -127,8 +127,8 @@ class Conversation(Base):
             postgresql_where=text("ended_at IS NULL"),
         ),
         Index("ix_conversations_search_tsv", "search_tsv", postgresql_using="gin"),
-        CheckConstraint(_in("end_reason", END_REASONS), name="end_reason"),
-        CheckConstraint(_in("facts_outcome", FACTS_OUTCOMES), name="facts_outcome"),
+        CheckConstraint(_in("end_reason", _END_REASONS), name="end_reason"),
+        CheckConstraint(_in("facts_outcome", _FACTS_OUTCOMES), name="facts_outcome"),
         # Archived conversations whose fact extraction is pending.
         Index(
             "ix_conversations_facts_pending",
@@ -151,7 +151,7 @@ class Conversation(Base):
     # Background retries of the summary or embedding (the sweeper).
     summary_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     summary_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    search_tsv: Mapped[Any] = mapped_column(TSVECTOR, Computed(SEARCH_TSV, persisted=True))
+    search_tsv: Mapped[Any] = mapped_column(TSVECTOR, Computed(_SEARCH_TSV, persisted=True))
     # How it ended (null while current, and for rows archived before 0006).
     end_reason: Mapped[str | None] = mapped_column(Text)
     # When the idle-close marker was handed to the user's next message.
@@ -165,11 +165,11 @@ class Conversation(Base):
 class Entry(Base):
     __tablename__ = "entries"
     __table_args__ = (
-        CheckConstraint(_in("kind", ENTRY_KINDS), name="kind"),
+        CheckConstraint(_in("kind", _ENTRY_KINDS), name="kind"),
         Index("ix_entries_conversation_id_id", "conversation_id", "id"),
         # A retried turn must not record its user message (or reply) twice.
         Index("uq_entries_queue_item_id_kind", "queue_item_id", "kind", unique=True),
-        Index("ix_entries_text_tsv", text(ENTRY_TSV), postgresql_using="gin"),
+        Index("ix_entries_text_tsv", text(_ENTRY_TSV), postgresql_using="gin"),
         # A conversation is recalled at most once into the same conversation.
         Index(
             "uq_entries_recall",
@@ -203,8 +203,8 @@ class Entry(Base):
 class QueueItem(Base):
     __tablename__ = "queue_items"
     __table_args__ = (
-        CheckConstraint(_in("kind", QUEUE_KINDS), name="kind"),
-        CheckConstraint(_in("status", QUEUE_STATUSES), name="status"),
+        CheckConstraint(_in("kind", _QUEUE_KINDS), name="kind"),
+        CheckConstraint(_in("status", _QUEUE_STATUSES), name="status"),
         Index("ix_queue_items_pending", "id", postgresql_where=text("status = 'pending'")),
     )
 
@@ -232,8 +232,8 @@ class QueueItem(Base):
 class Reminder(Base):
     __tablename__ = "reminders"
     __table_args__ = (
-        CheckConstraint(_in("status", REMINDER_STATUSES), name="status"),
-        CheckConstraint(_in("repeat", REPEAT_RULES), name="repeat"),
+        CheckConstraint(_in("status", _REMINDER_STATUSES), name="status"),
+        CheckConstraint(_in("repeat", _REPEAT_RULES), name="repeat"),
         CheckConstraint("repeat_days BETWEEN 1 AND 127", name="repeat_days"),
         # A one-shot reminder has none of the rule; a repeating one all of it.
         CheckConstraint(
@@ -294,13 +294,13 @@ class TurnToolCall(Base):
 class InputRequest(Base):
     __tablename__ = "input_requests"
     __table_args__ = (
-        CheckConstraint(_in("status", INPUT_REQUEST_STATUSES), name="status"),
+        CheckConstraint(_in("status", _INPUT_REQUEST_STATUSES), name="status"),
         # One live request per turn (design D4).
         Index(
             "uq_input_requests_live_per_item",
             "queue_item_id",
             unique=True,
-            postgresql_where=text(LIVE_INPUT_REQUESTS),
+            postgresql_where=text(_LIVE_INPUT_REQUESTS),
         ),
         # The expiry loop and the new-message cancel look for open requests.
         Index("ix_input_requests_open", "user_name", postgresql_where=text("status = 'open'")),
@@ -336,7 +336,7 @@ class InputRequest(Base):
 class Attachment(Base):
     __tablename__ = "attachments"
     __table_args__ = (
-        CheckConstraint(_in("kind", ATTACHMENT_KINDS), name="kind"),
+        CheckConstraint(_in("kind", _ATTACHMENT_KINDS), name="kind"),
         Index("ix_attachments_queue_item_id", "queue_item_id", "position"),
         Index("ix_attachments_entry_id", "entry_id"),
     )
@@ -377,8 +377,8 @@ class AttachmentPage(Base):
 class Fact(Base):
     __tablename__ = "facts"
     __table_args__ = (
-        CheckConstraint(_in("origin", FACT_ORIGINS), name="origin"),
-        CheckConstraint(_in("removed_reason", FACT_REMOVAL_REASONS), name="removed_reason"),
+        CheckConstraint(_in("origin", _FACT_ORIGINS), name="origin"),
+        CheckConstraint(_in("removed_reason", _FACT_REMOVAL_REASONS), name="removed_reason"),
         CheckConstraint("(removed_at IS NULL) = (removed_reason IS NULL)", name="removed"),
         # Every read but an audit is of a user's active facts.
         Index(

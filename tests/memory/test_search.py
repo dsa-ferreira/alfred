@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Conversation, Entry
-from alfred.memory.embedding import EmbeddingUnreachable
-from alfred.memory.search import NO_MEANING_NOTE, ConversationSearch
+from alfred.memory.embedding import _EmbeddingUnreachable
+from alfred.memory.search import _NO_MEANING_NOTE, ConversationSearch
 from tests.helpers import FakeEmbedder, make_config
 
 CHICKEN = [1.0, 0.0, 0.0]
@@ -161,7 +161,7 @@ async def test_recalled_text_does_not_match(sessions: async_sessionmaker[AsyncSe
             )
         )
     # Keyword-only, so the vectors can't decide: #42's recall of #41 must not count.
-    embedder = FakeEmbedder([EmbeddingUnreachable("down")])
+    embedder = FakeEmbedder([_EmbeddingUnreachable("down")])
     result = await memory(sessions, embedder).search("diogo", "thighs")
     assert ids(result.text) == [41]
 
@@ -199,10 +199,10 @@ async def test_ragman_down_falls_back_to_keywords(
 ) -> None:
     await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(3), embedding=CHICKEN)
     await seed(sessions, 40, "Disk full", "Moved downloads.", started=at(2), embedding=DISK)
-    embedder = FakeEmbedder([EmbeddingUnreachable("connection refused")])
+    embedder = FakeEmbedder([_EmbeddingUnreachable("connection refused")])
     result = await memory(sessions, embedder).search("diogo", "chicken recipe")
     assert result.ok
-    assert result.text.startswith(NO_MEANING_NOTE)
+    assert result.text.startswith(_NO_MEANING_NOTE)
     assert ids(result.text) == [41]
 
 

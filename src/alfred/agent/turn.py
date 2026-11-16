@@ -88,10 +88,10 @@ from alfred.tools.base import (
 
 log = logging.getLogger(__name__)
 
-EXCERPT_CHARS = 500
+_EXCERPT_CHARS = 500
 
 
-class Model(Protocol):
+class _Model(Protocol):
     async def complete(
         self,
         messages: list[dict[str, Any]],
@@ -110,7 +110,7 @@ class Fallback:
 
 
 @dataclass(frozen=True)
-class Waiting:
+class _Waiting:
     """A turn parked at a call that needs its user's answer (design D3).
 
     ``remaining`` are the calls after it in the same model reply, not run
@@ -165,7 +165,7 @@ class TurnResult:
     # Told to the user (and the admin) before the reply: the brain fell back.
     fallback: Fallback | None = None
     # Set when the turn parked for its user's answer; ``reply`` is then empty.
-    waiting: Waiting | None = None
+    waiting: _Waiting | None = None
 
 
 class TurnFailed(Exception):
@@ -235,7 +235,7 @@ class _Turn:
     facts: FactsBlock | None = None
 
 
-class Facts(Protocol):
+class _Facts(Protocol):
     """Where the turn reads its user's facts (``alfred.memory.facts.FactStore``)."""
 
     async def list(self, user_name: str) -> Sequence[KnownFact]: ...
@@ -245,14 +245,14 @@ class Agent:
     def __init__(
         self,
         config: Config,
-        model: Model,
+        model: _Model,
         history: History,
         sessions: async_sessionmaker[AsyncSession],
         *,
         toolsets: Sequence[Toolset] = (),
         brains: Brains | None = None,
         attachments: InlineAttachments | None = None,
-        facts: Facts | None = None,
+        facts: _Facts | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
@@ -447,7 +447,7 @@ class Agent:
             side_effects_possible=state.side_effects,
         )
 
-    async def _go_on(self, this: _Turn, state: _State, resume: Resume) -> Waiting | None:
+    async def _go_on(self, this: _Turn, state: _State, resume: Resume) -> _Waiting | None:
         """Pick a parked turn up where it stopped: the answered call, then the rest of its reply."""
         saved = resume.turn
         state.messages += saved["tail"]
@@ -465,18 +465,18 @@ class Agent:
         await self._record(this.input, state.seq, call, outcome)
         if outcome.need is not None:  # the server asks again
             return self._waiting(state, call, saved["call_index"], outcome.need, remaining)
-        state.messages.append(tool_message(call.id, outcome))
+        state.messages.append(_tool_message(call.id, outcome))
         return await self._run_calls(this, state, remaining, saved["call_index"] + 1)
 
     async def _run_calls(
         self, this: _Turn, state: _State, calls: Sequence[ToolCall], first_index: int
-    ) -> Waiting | None:
+    ) -> _Waiting | None:
         """Run a reply's calls in order; stop at the first that needs the user's answer."""
         for i, call in enumerate(calls):
             outcome = await self._run_tool(this, call, state)
             if outcome.need is not None:
                 return self._waiting(state, call, first_index + i, outcome.need, calls[i + 1 :])
-            state.messages.append(tool_message(call.id, outcome))
+            state.messages.append(_tool_message(call.id, outcome))
         return None
 
     def _waiting(
@@ -486,13 +486,13 @@ class Agent:
         index: int,
         need: InputNeed,
         remaining: Sequence[ToolCall],
-    ) -> Waiting:
-        return Waiting(
+    ) -> _Waiting:
+        return _Waiting(
             need,
             call,
             index,
             tuple(remaining),
-            [without_images(m) for m in state.messages[state.context_len :]],
+            [_without_images(m) for m in state.messages[state.context_len :]],
             state.requests,
             state.seq,
             state.conversation_id,
@@ -501,7 +501,7 @@ class Agent:
             state.entry_ids,
         )
 
-    def _parked(self, state: _State, waiting: Waiting) -> TurnResult:
+    def _parked(self, state: _State, waiting: _Waiting) -> TurnResult:
         log.info(
             "turn %s parked at tool call #%d %s: waiting for %s's answer",
             state.context.turn.queue_item_id,
@@ -569,7 +569,7 @@ class Agent:
     ) -> None:
         arguments = parse_arguments(call.arguments)
         stored: Any = arguments if isinstance(arguments, dict) else {"_raw": call.arguments}
-        excerpt = outcome.text[:EXCERPT_CHARS] + images_note(outcome)
+        excerpt = outcome.text[:_EXCERPT_CHARS] + _images_note(outcome)
         log.info(
             "turn %s tool call #%d %s %s -> %s: %s",
             turn.queue_item_id,
@@ -592,7 +592,7 @@ class Agent:
             )
 
 
-def tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:
+def _tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:
     """The result for the model; with images, a list of parts (change add-attachments, D5)."""
     if not outcome.images:
         return {"role": "tool", "tool_call_id": call_id, "content": outcome.text}
@@ -600,7 +600,7 @@ def tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:
     return {"role": "tool", "tool_call_id": call_id, "content": parts}
 
 
-def without_images(message: dict[str, Any]) -> dict[str, Any]:
+def _without_images(message: dict[str, Any]) -> dict[str, Any]:
     """A message to keep while its turn waits: a tool result's images become a note (D3)."""
     content = message.get("content")
     if message.get("role") != "tool" or not isinstance(content, list):
@@ -611,7 +611,7 @@ def without_images(message: dict[str, Any]) -> dict[str, Any]:
     return {**message, "content": "\n".join([*texts, note])}
 
 
-def images_note(outcome: ToolOutcome) -> str:
+def _images_note(outcome: ToolOutcome) -> str:
     """`` [1 image]``: what the excerpt keeps of a result's images, never their data."""
     n = len(outcome.images)
     return f" [{n} image{'' if n == 1 else 's'}]" if n else ""

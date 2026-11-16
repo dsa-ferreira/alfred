@@ -20,11 +20,11 @@ class EmbeddingError(Exception):
     """An embedding request that produced no vector. Messages are safe to log."""
 
 
-class EmbeddingUnreachable(EmbeddingError):
+class _EmbeddingUnreachable(EmbeddingError):
     pass
 
 
-class EmbeddingFailed(EmbeddingError):
+class _EmbeddingFailed(EmbeddingError):
     pass
 
 
@@ -61,23 +61,23 @@ class EmbeddingClient:
         try:
             response = await self._http.post(self._url, json=body)
         except httpx.TimeoutException as exc:
-            raise EmbeddingUnreachable(
+            raise _EmbeddingUnreachable(
                 f"embedding request timed out ({type(exc).__name__})"
             ) from None
         except httpx.TransportError as exc:
-            raise EmbeddingUnreachable(
+            raise _EmbeddingUnreachable(
                 f"can't reach the embedding server ({type(exc).__name__})"
             ) from None
 
         status = response.status_code
         if status >= 500:
-            raise EmbeddingUnreachable(f"embedding server answered HTTP {status}")
+            raise _EmbeddingUnreachable(f"embedding server answered HTTP {status}")
         if status != 200:
-            raise EmbeddingFailed(f"embedding server answered HTTP {status}: {_snippet(response)}")
+            raise _EmbeddingFailed(f"embedding server answered HTTP {status}: {_snippet(response)}")
         try:
             return _parse(response.json())
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise EmbeddingFailed(f"unusable embedding reply: {exc}") from None
+            raise _EmbeddingFailed(f"unusable embedding reply: {exc}") from None
 
 
 def _parse(data: Any) -> list[float]:

@@ -30,10 +30,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.db.models import QueueItem, Reminder, ReminderRecipient
 from alfred.reminders.when import Rule, latest_occurrence, next_occurrence
 
-UTC_ZONE = ZoneInfo("UTC")
+_UTC_ZONE = ZoneInfo("UTC")
 
 # ``left``: a recipient who didn't set it was removed; it stays set for the others.
-CancelOutcome = Literal["cancelled", "left", "unknown", "fired", "cancelled_before"]
+_CancelOutcome = Literal["cancelled", "left", "unknown", "fired", "cancelled_before"]
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ def _involves(user: str):  # noqa: ANN202 - a SQLAlchemy condition
 
 class Reminders:
     def __init__(
-        self, sessions: async_sessionmaker[AsyncSession], zone: ZoneInfo = UTC_ZONE
+        self, sessions: async_sessionmaker[AsyncSession], zone: ZoneInfo = _UTC_ZONE
     ) -> None:
         self._sessions = sessions
         # Where repeating reminders' wall times are (alfred's timezone).
@@ -155,7 +155,7 @@ class Reminders:
 
     async def cancel(
         self, reminder_id: int, now: datetime, user: str
-    ) -> tuple[CancelOutcome, ReminderRow | None]:
+    ) -> tuple[_CancelOutcome, ReminderRow | None]:
         """Cancel a pending reminder involving ``user``.
 
         Its creator cancels it for everyone. A recipient who didn't set it is

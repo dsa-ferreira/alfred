@@ -46,25 +46,25 @@ from alfred.tools.base import InputNeed, Option, Question, ToolOutcome, parse_ar
 log = logging.getLogger(__name__)
 
 _INVALID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
-MAX_TOOL_NAME = 64
+_MAX_TOOL_NAME = 64
 # Questions a call may ask before alfred gives up (the SDK's default).
-MAX_INPUT_ROUNDS = 10
+_MAX_INPUT_ROUNDS = 10
 # Choices that fit as buttons.
-MAX_CHOICES = 8
+_MAX_CHOICES = 8
 # The resume state of a server's question.
-VIA_MCP = "mcp"
+_VIA_MCP = "mcp"
 # Waits before resending a leg the server answered with request_state only
 # (the SDK's backoff: 50 ms doubling to 250 ms).
-STATE_ONLY_DELAYS_S = (0.05, 0.1, 0.2) + (0.25,) * (MAX_INPUT_ROUNDS - 3)
+_STATE_ONLY_DELAYS_S = (0.05, 0.1, 0.2) + (0.25,) * (_MAX_INPUT_ROUNDS - 3)
 
 
-def tool_name(server: str, tool: str) -> str:
+def _tool_name(server: str, tool: str) -> str:
     """The name the model sees: ``<server>_<tool>`` with disallowed characters as ``_``."""
     return _INVALID_CHARS.sub("_", f"{server}_{tool}")
 
 
 @dataclass(frozen=True)
-class Route:
+class _Route:
     server: McpServer
     tool: str
 
@@ -88,7 +88,7 @@ class TurnTools:
     """What one turn may call."""
 
     definitions: list[dict[str, Any]] = field(default_factory=list)
-    routes: dict[str, Route] = field(default_factory=dict)
+    routes: dict[str, _Route] = field(default_factory=dict)
     # Model-facing names of configured exclusions, refused without a network call.
     excluded: set[str] = field(default_factory=set)
     unavailable: list[str] = field(default_factory=list)
@@ -109,7 +109,7 @@ async def build_turn_tools(
     )
     turn = TurnTools()
     for server, listing in zip(servers, listings, strict=True):
-        turn.excluded |= {tool_name(server.name, t) for t in server.exclude_tools}
+        turn.excluded |= {_tool_name(server.name, t) for t in server.exclude_tools}
         if isinstance(listing, BaseException):
             log.warning(
                 "MCP server %s is unavailable this turn: %s", server.name, _describe(listing)
@@ -141,12 +141,12 @@ def _add_instructions(turn: TurnTools, server: McpServer, text: str | None, max_
             len(text),
             max_chars,
         )
-    turn.instructions.append(ServerInstructions(server.name, truncate(text, max_chars)))
+    turn.instructions.append(ServerInstructions(server.name, _truncate(text, max_chars)))
 
 
 def _add(turn: TurnTools, server: McpServer, tool: Tool) -> None:
-    name = tool_name(server.name, tool.name)
-    if len(name) > MAX_TOOL_NAME:
+    name = _tool_name(server.name, tool.name)
+    if len(name) > _MAX_TOOL_NAME:
         log.warning("skipping %s tool %r: name %r is too long", server.name, tool.name, name)
         return
     if name in turn.routes:
@@ -160,7 +160,7 @@ def _add(turn: TurnTools, server: McpServer, tool: Tool) -> None:
             other.tool,
         )
         return
-    turn.routes[name] = Route(server, tool.name)
+    turn.routes[name] = _Route(server, tool.name)
     turn.definitions.append(
         {
             "type": "function",
@@ -232,7 +232,7 @@ async def resume_tool(
     late-answer error.
     """
     route = turn.routes.get(name)
-    if route is None or state.get("via") != VIA_MCP:
+    if route is None or state.get("via") != _VIA_MCP:
         return ToolOutcome(False, f"Error: unknown tool {name!r}.")
     arguments = parse_arguments(raw_arguments)
     if isinstance(arguments, str):
@@ -258,7 +258,7 @@ class _Leg:
 
 
 async def _send(
-    route: Route,
+    route: _Route,
     name: str,
     arguments: dict[str, Any],
     leg: _Leg,
@@ -274,7 +274,7 @@ async def _send(
         ):
             result = await _call(client, route.tool, arguments, leg.responses, leg.request_state)
             # request_state alone asks nothing of the user: send it straight back.
-            for delay in STATE_ONLY_DELAYS_S:
+            for delay in _STATE_ONLY_DELAYS_S:
                 if not isinstance(result, InputRequiredResult) or result.input_requests:
                     break
                 await asyncio.sleep(delay)
@@ -287,19 +287,19 @@ async def _send(
         refused = isinstance(cause, MCPError) and cause.code == INVALID_PARAMS
         if refused and leg.request_state is not None:
             log.warning("tool %s: the server refused the saved request: %s", name, cause)
-            return ToolOutcome(False, late_answer(route.server.name, name))
+            return ToolOutcome(False, _late_answer(route.server.name, name))
         log.warning("tool %s failed: %s", name, _describe(exc))
         return ToolOutcome(False, f"Error: tool {name!r} failed: {_describe(exc)}")
     if isinstance(result, InputRequiredResult):
         rounds = leg.rounds + 1
-        if rounds > MAX_INPUT_ROUNDS or not result.input_requests:
+        if rounds > _MAX_INPUT_ROUNDS or not result.input_requests:
             return ToolOutcome(
                 False,
                 f"Error: {route.server.name} kept asking for input "
-                f"({MAX_INPUT_ROUNDS} questions); the call did not complete.",
+                f"({_MAX_INPUT_ROUNDS} questions); the call did not complete.",
             )
-        return classify(route.server.name, name, result, rounds)
-    return ToolOutcome(not result.is_error, truncate(result_text(result), max_chars))
+        return _classify(route.server.name, name, result, rounds)
+    return ToolOutcome(not result.is_error, _truncate(_result_text(result), max_chars))
 
 
 async def _call(
@@ -340,7 +340,7 @@ async def _call(
     return await send()
 
 
-def late_answer(server: str, name: str) -> str:
+def _late_answer(server: str, name: str) -> str:
     return (
         f"Error: the user's answer could not be used: {server} no longer accepts it "
         f"(it may have expired or the server restarted). {name} did not complete; "
@@ -348,7 +348,7 @@ def late_answer(server: str, name: str) -> str:
     )
 
 
-def classify(server: str, name: str, result: InputRequiredResult, rounds: int) -> ToolOutcome:
+def _classify(server: str, name: str, result: InputRequiredResult, rounds: int) -> ToolOutcome:
     """A server's question as a need for the user's answer, or why alfred can't show it.
 
     Shown only as buttons: exactly one form elicitation whose schema has no
@@ -369,7 +369,7 @@ def classify(server: str, name: str, result: InputRequiredResult, rounds: int) -
     if isinstance(options, str):
         return _cant_show(server, name, options)
     question = Question(f"{server} asks: {params.message}", options, detail=name)
-    state = {"via": VIA_MCP, "key": key, "request_state": result.request_state, "round": rounds}
+    state = {"via": _VIA_MCP, "key": key, "request_state": result.request_state, "round": rounds}
     return ToolOutcome.waiting(InputNeed(question, state))
 
 
@@ -397,7 +397,7 @@ def _options(schema: Any) -> tuple[Option, ...] | str:
     choices = _choices(spec)
     if choices is None:
         return f"a {spec.get('type', 'free')} field"
-    if len(choices) > MAX_CHOICES:
+    if len(choices) > _MAX_CHOICES:
         return f"{len(choices)} choices"
     return (
         *(Option(label, {"action": "accept", "content": {field_name: v}}) for v, label in choices),
@@ -433,7 +433,7 @@ def _cant_show(server: str, name: str, what: str) -> ToolOutcome:
     )
 
 
-def result_text(result: CallToolResult) -> str:
+def _result_text(result: CallToolResult) -> str:
     """Structured content as JSON if present, otherwise the text blocks joined."""
     if result.structured_content is not None and not result.is_error:
         return json.dumps(result.structured_content, ensure_ascii=False)
@@ -449,7 +449,7 @@ def result_text(result: CallToolResult) -> str:
     return text
 
 
-def truncate(text: str, max_chars: int) -> str:
+def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return f"{text[:max_chars]}\n[truncated: {len(text) - max_chars} more characters]"

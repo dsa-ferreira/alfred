@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelReply, ModelUnreachable, Usage
+from alfred.agent.model import ModelReply, ModelUnreachable, _Usage
 from alfred.db.models import Fact
 from alfred.memory.duplicates import FactDuplicateJob
 from alfred.memory.facts import FactEmbeddingJob, FactStore
@@ -70,7 +70,7 @@ async def check_all(dupes: FactDuplicateJob) -> None:
 async def test_same_fact_in_other_words(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
-    reply = ModelReply(content="SAME 1", usage=Usage(prompt_tokens=90, completion_tokens=3))
+    reply = ModelReply(content="SAME 1", usage=_Usage(prompt_tokens=90, completion_tokens=3))
     model = FakeModel([reply])
     dupes, facts = job(sessions, model)
     old = await stored(facts, "diogo", "diogo is allergic to shellfish.")

@@ -23,8 +23,8 @@ from alfred.db.models import Attachment
 
 log = logging.getLogger(__name__)
 
-INTERVAL_S = 24 * 3600
-MIN_AGE = timedelta(days=1)
+_INTERVAL_S = 24 * 3600
+_MIN_AGE = timedelta(days=1)
 _BATCH = 500  # keys per database lookup
 
 
@@ -34,8 +34,8 @@ class OrphanSweeper:
         store: ObjectStore,
         sessions: async_sessionmaker[AsyncSession],
         *,
-        interval_s: float = INTERVAL_S,
-        min_age: timedelta = MIN_AGE,
+        interval_s: float = _INTERVAL_S,
+        min_age: timedelta = _MIN_AGE,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._store = store

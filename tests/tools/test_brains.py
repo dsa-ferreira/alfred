@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
-from alfred.agent.prompts import NO_REPLY, brain_line
+from alfred.agent.prompts import _NO_REPLY, brain_line
 from alfred.tools.base import AllowList, AttemptContext, ToolOutcome, TurnInput
 from alfred.tools.brains import SET_MODEL, BrainTools
 from tests.agent.turn_helpers import (
@@ -85,7 +85,7 @@ async def test_set_model_not_offered_with_one_brain(
 
 async def test_ask_turns_cant_switch(sessions: async_sessionmaker[AsyncSession]) -> None:
     item = await add_queue_item(sessions, "ask", "anything?", "disk-check")
-    model = FakeModel([text(NO_REPLY)])
+    model = FakeModel([text(_NO_REPLY)])
     await agent(sessions, model, brains=two_brains()).run(
         TurnInput("ask", "anything?", item, "disk-check", user=DIOGO)
     )

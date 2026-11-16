@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.memory.facts import FORGET, REMEMBER, FactStore, FactTools
+from alfred.memory.facts import _FORGET, _REMEMBER, FactStore, FactTools
 from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import agent, owner_turn, reminder_turn
 from tests.helpers import (
@@ -102,14 +102,14 @@ async def test_remember_and_forget_in_a_turn(sessions: async_sessionmaker[AsyncS
     facts = tools(sessions, facts_in_context=True)
     model = FakeModel(
         [
-            calls((REMEMBER, '{"text": "is vegetarian"}')),
-            calls((FORGET, '{"ids": [1]}')),
+            calls((_REMEMBER, '{"text": "is vegetarian"}')),
+            calls((_FORGET, '{"ids": [1]}')),
             text("Done, sir."),
         ]
     )
     turn = await owner_turn(sessions, "remember I'm vegetarian, then forget it")
     await agent(sessions, model, facts=facts, memory_config={"facts_in_context": True}).run(turn)
-    assert {REMEMBER, FORGET} <= model.tool_names()
+    assert {_REMEMBER, _FORGET} <= model.tool_names()
     assert model.requests[1][0][-1]["content"] == "Saved as fact 1."
     assert model.requests[2][0][-1]["content"] == "Forgot 1."
     assert await facts.facts.list("diogo") == []
@@ -118,7 +118,7 @@ async def test_remember_and_forget_in_a_turn(sessions: async_sessionmaker[AsyncS
 async def test_no_fact_tools_on_ask_turns(sessions: async_sessionmaker[AsyncSession]) -> None:
     facts = tools(sessions, facts_in_context=True)
     model = await run(sessions, facts, await ask_turn(sessions), facts_in_context=True)
-    assert not {REMEMBER, FORGET} & model.tool_names()
+    assert not {_REMEMBER, _FORGET} & model.tool_names()
 
 
 async def test_remembering_a_near_duplicate_makes_no_extra_request(
@@ -127,7 +127,7 @@ async def test_remembering_a_near_duplicate_makes_no_extra_request(
     """The duplicate check is left to the background (change fix-fact-removals, D6)."""
     facts = tools(sessions, facts_in_context=True)
     await facts.facts.add("diogo", "allergic to shellfish", "told")
-    model = FakeModel([calls((REMEMBER, '{"text": "is allergic to shellfish"}')), text("Noted.")])
+    model = FakeModel([calls((_REMEMBER, '{"text": "is allergic to shellfish"}')), text("Noted.")])
     turn = await owner_turn(sessions, "remember I'm allergic to shellfish")
     await agent(sessions, model, facts=facts, memory_config={"facts_in_context": True}).run(turn)
     assert len(model.requests) == 2  # the tool call and the answer, nothing else

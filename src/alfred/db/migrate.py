@@ -14,7 +14,7 @@ class MigrationError(Exception):
     """A migration can't run as things are. The message says what to do."""
 
 
-def alembic_config(url: str | None = None) -> Config:
+def _alembic_config(url: str | None = None) -> Config:
     cfg = Config(str(_ini_path()))
     if url is not None:
         cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
@@ -22,7 +22,7 @@ def alembic_config(url: str | None = None) -> Config:
 
 
 def upgrade(url: str | None = None, revision: str = "head") -> None:
-    command.upgrade(alembic_config(url), revision)
+    command.upgrade(_alembic_config(url), revision)
 
 
 def _ini_path() -> Path:

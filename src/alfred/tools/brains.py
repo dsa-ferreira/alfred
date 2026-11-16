@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 SET_MODEL = "alfred_set_model"
 
 
-def set_model_tool(names: list[str]) -> dict[str, Any]:
+def _set_model_tool(names: list[str]) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
@@ -58,7 +58,7 @@ class BrainTools(LocalToolset):
 
     def __init__(self, brains: Brains) -> None:
         self._brains = brains
-        self.definitions = [set_model_tool(brains.names)]
+        self.definitions = [_set_model_tool(brains.names)]
 
     def offered(self, turn: TurnInput) -> bool:
         return chat_only(turn) and turn.user.admin and len(self._brains.brains) > 1

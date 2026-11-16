@@ -29,7 +29,7 @@ from alfred.reminders.store import Reminders
 log = logging.getLogger(__name__)
 
 
-async def claim_once(
+async def _claim_once(
     store: Reminders, notify: Callable[[], None], now: Callable[[], datetime]
 ) -> list[int]:
     """Queue the reminders due now and, if there were any, tell the queue
@@ -61,7 +61,7 @@ async def run_due_loop(
     log.info("reminder loop started, checking every %gs", interval_s)
     while True:
         try:
-            await claim_once(store, notify, now)
+            await _claim_once(store, notify, now)
         except Exception:
             # A database blip: the reminders stay pending and are claimed next time.
             log.exception("checking for due reminders failed; trying again later")

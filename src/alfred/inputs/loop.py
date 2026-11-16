@@ -28,7 +28,7 @@ from alfred.reminders.loop import seconds_to_next_check
 log = logging.getLogger(__name__)
 
 
-async def edit_ended(outbox: QuestionEditor, users: Users, ended: Sequence[RequestRow]) -> None:
+async def _edit_ended(outbox: QuestionEditor, users: Users, ended: Sequence[RequestRow]) -> None:
     """Edit each ended request's question message to say why it ended, without buttons."""
     for request in ended:
         user = users.get(request.user_name)
@@ -48,18 +48,18 @@ def cancel_on_new_message(
         ended = await requests.cancel_for(user_name, "new_message")
         if ended:
             log.info("%s sent a new message: cancelled %d waiting turn(s)", user_name, len(ended))
-            await edit_ended(outbox, users, ended)
+            await _edit_ended(outbox, users, ended)
 
     return cancel
 
 
-async def expire_once(
+async def _expire_once(
     requests: InputRequests, outbox: QuestionEditor, users: Users
 ) -> list[RequestRow]:
     ended = await requests.expire_due()
     if ended:
         log.info("%d input request(s) expired: %s", len(ended), [r.id for r in ended])
-        await edit_ended(outbox, users, ended)
+        await _edit_ended(outbox, users, ended)
     return ended
 
 
@@ -75,7 +75,7 @@ async def run_expiry_loop(
     log.info("input request expiry loop started (every %gs)", interval_s)
     while True:
         try:
-            await expire_once(requests, outbox, users)
+            await _expire_once(requests, outbox, users)
         except Exception:
             # The database may be briefly away; the next check tries again.
             log.exception("input request expiry check failed")

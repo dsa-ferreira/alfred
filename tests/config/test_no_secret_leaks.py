@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from alfred.cli import main
+from alfred.cli import _main
 from tests.config.test_config import MINIMAL, SECRETS
 
 # Unmistakable values so a leak is easy to spot.
@@ -52,7 +52,7 @@ def test_startup_error_output_has_no_secrets(
         monkeypatch.setenv(name, value)
 
     with caplog.at_level(logging.DEBUG):
-        assert main(["serve"]) == 2
+        assert _main(["serve"]) == 2
     captured = capsys.readouterr()
     output = captured.out + captured.err + caplog.text
     assert "invalid configuration" in output

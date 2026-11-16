@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.prompts import NO_REPLY
+from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Entry
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
@@ -39,7 +39,7 @@ async def test_memory_tools_not_offered_on_ask_turns(
 ) -> None:
     await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(1))
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
-    model = FakeModel([calls((RECALL_CONVERSATION, '{"id": 41}')), text(NO_REPLY)])
+    model = FakeModel([calls((RECALL_CONVERSATION, '{"id": 41}')), text(_NO_REPLY)])
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
         TurnInput("ask", "x", item, "disk-check", user=DIOGO)
     )

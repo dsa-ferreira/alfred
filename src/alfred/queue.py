@@ -75,21 +75,21 @@ class Outbox(Protocol):
     async def send(self, user: User, text: str) -> None: ...
 
 
-class QuestionOutbox(Protocol):
+class _QuestionOutbox(Protocol):
     """Sends a question with its buttons, returning its message ID; raises if not delivered."""
 
     async def send_question(self, user: User, request_id: int, question: Question) -> int: ...
 
 
-class TurnRunner(Protocol):
+class _TurnRunner(Protocol):
     async def run(self, turn: TurnInput) -> TurnResult: ...
 
 
-class ReminderLookup(Protocol):
+class _ReminderLookup(Protocol):
     async def get(self, reminder_id: int) -> ReminderRow | None: ...
 
 
-def reset_marker(archived_id: int | None, new_id: int, *, idle: bool = False) -> str:
+def _reset_marker(archived_id: int | None, new_id: int, *, idle: bool = False) -> str:
     """The one message that tells the user a conversation ended.
 
     Ids only: the title is made later, in the background (change
@@ -250,7 +250,7 @@ class Worker:
     def __init__(
         self,
         queue: Queue,
-        agent: TurnRunner,
+        agent: _TurnRunner,
         history: History,
         outbox: Outbox,
         config: QueueConfig,
@@ -258,11 +258,11 @@ class Worker:
         users: Users,
         nudge: Callable[[], None] | None = None,
         typing: Callable[[User], AbstractAsyncContextManager[None]] | None = None,
-        reminders: ReminderLookup | None = None,
+        reminders: _ReminderLookup | None = None,
         zone: ZoneInfo | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         inputs: InputRequests | None = None,
-        questions: QuestionOutbox | None = None,
+        questions: _QuestionOutbox | None = None,
         expire_after: timedelta = timedelta(minutes=60),
     ) -> None:
         self._queue = queue
@@ -325,7 +325,7 @@ class Worker:
             # is sent, so a retried turn doesn't send it again.
             marker = await self._history.take_idle_marker(user.name)
             if marker is not None:
-                await self._send(item, user, reset_marker(*marker, idle=True))
+                await self._send(item, user, _reset_marker(*marker, idle=True))
             # Recorded when the turn starts (once, even if retried), so it is
             # the newest entry of its own context and after earlier replies.
             await self._history.append(user.name, "user", item.text, queue_item_id=item.id)
@@ -610,7 +610,7 @@ class Worker:
         )
         if self._nudge is not None and reset.archived_id is not None:
             self._nudge()
-        await self._send(item, user, reset_marker(reset.archived_id, reset.new_id))
+        await self._send(item, user, _reset_marker(reset.archived_id, reset.new_id))
 
     async def _send(self, item: QueueItem, user: User, text: str) -> None:
         try:

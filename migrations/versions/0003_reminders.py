@@ -23,13 +23,13 @@ down_revision: str | Sequence[str] | None = "0002"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-OLD_ENTRY_KINDS = "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply', 'recall')"
-NEW_ENTRY_KINDS = (
+_OLD_ENTRY_KINDS = "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply', 'recall')"
+_NEW_ENTRY_KINDS = (
     "kind IN ('owner', 'assistant', 'notice', 'ask_prompt', 'ask_reply', 'recall', "
     "'reminder', 'reminder_reply')"
 )
-OLD_QUEUE_KINDS = "kind IN ('owner', 'ask')"
-NEW_QUEUE_KINDS = "kind IN ('owner', 'ask', 'reminder')"
+_OLD_QUEUE_KINDS = "kind IN ('owner', 'ask')"
+_NEW_QUEUE_KINDS = "kind IN ('owner', 'ask', 'reminder')"
 
 
 def upgrade() -> None:
@@ -60,7 +60,7 @@ def upgrade() -> None:
         postgresql_where=sa.text("status = 'pending'"),
     )
 
-    for table, new in (("queue_items", NEW_QUEUE_KINDS), ("entries", NEW_ENTRY_KINDS)):
+    for table, new in (("queue_items", _NEW_QUEUE_KINDS), ("entries", _NEW_ENTRY_KINDS)):
         op.drop_constraint(op.f(f"ck_{table}_kind"), table, type_="check")
         op.create_check_constraint(op.f(f"ck_{table}_kind"), table, new)
         op.add_column(table, sa.Column("reminder_id", sa.BigInteger(), nullable=True))
@@ -70,7 +70,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table, old in (("entries", OLD_ENTRY_KINDS), ("queue_items", OLD_QUEUE_KINDS)):
+    for table, old in (("entries", _OLD_ENTRY_KINDS), ("queue_items", _OLD_QUEUE_KINDS)):
         op.drop_constraint(op.f(f"fk_{table}_reminder_id_reminders"), table, type_="foreignkey")
         op.drop_column(table, "reminder_id")
         op.drop_constraint(op.f(f"ck_{table}_kind"), table, type_="check")

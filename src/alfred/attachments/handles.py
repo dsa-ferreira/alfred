@@ -18,11 +18,11 @@ from alfred.db.models import Attachment, AttachmentPage
 
 # A page "has text" from this many characters on, so a stray page number on
 # a scanned page doesn't count as a text layer.
-MIN_TEXT_CHARS = 16
+_MIN_TEXT_CHARS = 16
 
 
 def has_text(text: str | None) -> bool:
-    return text is not None and len(text.strip()) >= MIN_TEXT_CHARS
+    return text is not None and len(text.strip()) >= _MIN_TEXT_CHARS
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ def with_handles(text: str, handles: Iterable[str]) -> str:
     return " ".join([text, *handles]) if text else " ".join(handles)
 
 
-def ref_columns() -> tuple:
+def _ref_columns() -> tuple:
     return (
         Attachment.id,
         Attachment.kind,
@@ -78,7 +78,7 @@ def ref_columns() -> tuple:
 
 def ref_query():  # noqa: ANN201 - a SQLAlchemy Select
     """Attachments with their page 1 text (PDFs), for :class:`AttachmentRef`."""
-    return select(*ref_columns()).outerjoin(
+    return select(*_ref_columns()).outerjoin(
         AttachmentPage,
         and_(AttachmentPage.attachment_id == Attachment.id, AttachmentPage.page == 1),
     )

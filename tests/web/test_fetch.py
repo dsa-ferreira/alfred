@@ -10,12 +10,12 @@ import pytest
 import respx
 
 from alfred.web.fetch import (
-    MAX_REDIRECTS,
-    BlockedAddress,
+    _MAX_REDIRECTS,
     Fetcher,
     FetchError,
-    UnsupportedType,
-    is_public,
+    _BlockedAddress,
+    _is_public,
+    _UnsupportedType,
     make_http_client,
 )
 
@@ -82,7 +82,7 @@ def fetcher(
     ],
 )
 def test_is_public(address: str, public: bool) -> None:
-    assert is_public(address) is public
+    assert _is_public(address) is public
 
 
 @respx.mock
@@ -105,7 +105,7 @@ async def test_page_downloaded(http: httpx.AsyncClient) -> None:
 @respx.mock
 async def test_lan_host_in_a_search_result(http: httpx.AsyncClient) -> None:
     route = respx.get("http://cookbook.lan:8080/").respond(200, headers=HTML, text="secret")
-    with pytest.raises(BlockedAddress, match="private or local address"):
+    with pytest.raises(_BlockedAddress, match="private or local address"):
         await fetcher(http).fetch("http://cookbook.lan:8080/")
     assert not route.called
 
@@ -114,7 +114,7 @@ async def test_lan_host_in_a_search_result(http: httpx.AsyncClient) -> None:
 @respx.mock
 async def test_any_private_address_blocks(http: httpx.AsyncClient, host: str) -> None:
     route = respx.get(f"https://{host}/").respond(200, headers=HTML, text="x")
-    with pytest.raises(BlockedAddress):
+    with pytest.raises(_BlockedAddress):
         await fetcher(http).fetch(f"https://{host}/")
     assert not route.called
 
@@ -124,7 +124,7 @@ async def test_redirect_to_a_private_address(http: httpx.AsyncClient) -> None:
     respx.get("https://example.com/go").respond(302, headers={"location": "http://192.168.1.10/"})
     inside = respx.get("http://192.168.1.10/").respond(200, headers=HTML, text="router")
     resolver = Resolver()
-    with pytest.raises(BlockedAddress, match="redirected to http://192.168.1.10/.*not followed"):
+    with pytest.raises(_BlockedAddress, match="redirected to http://192.168.1.10/.*not followed"):
         await fetcher(http, resolver).fetch("https://example.com/go")
     assert not inside.called
     assert resolver.asked == ["example.com", "192.168.1.10"]
@@ -155,11 +155,11 @@ async def test_redirect_to_other_scheme(http: httpx.AsyncClient) -> None:
 
 @respx.mock
 async def test_too_many_redirects(http: httpx.AsyncClient) -> None:
-    for n in range(MAX_REDIRECTS + 1):
+    for n in range(_MAX_REDIRECTS + 1):
         respx.get(f"https://example.com/{n}").respond(
             302, headers={"location": f"https://example.com/{n + 1}"}
         )
-    respx.get(f"https://example.com/{MAX_REDIRECTS + 1}").respond(200, headers=HTML, text="x")
+    respx.get(f"https://example.com/{_MAX_REDIRECTS + 1}").respond(200, headers=HTML, text="x")
     with pytest.raises(FetchError, match="too many redirects"):
         await fetcher(http).fetch("https://example.com/0")
 
@@ -259,7 +259,7 @@ async def test_type_refused_before_reading(http: httpx.AsyncClient) -> None:
     respx.get("https://example.com/i.png").mock(
         return_value=httpx.Response(200, headers={"content-type": "image/png"}, content=image())
     )
-    with pytest.raises(UnsupportedType, match="image/png is not supported"):
+    with pytest.raises(_UnsupportedType, match="image/png is not supported"):
         await fetcher(http).fetch("https://example.com/i.png", accept=lambda t: t == "text/html")
     assert not read
 

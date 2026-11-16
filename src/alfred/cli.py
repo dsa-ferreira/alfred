@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 
 
-def cmd_serve() -> int:
+def _cmd_serve() -> int:
     from alfred.config import ConfigError, load_config
 
     try:
@@ -29,7 +29,7 @@ def cmd_serve() -> int:
     return 0
 
 
-def cmd_migrate() -> int:
+def _cmd_migrate() -> int:
     # Needs only ALFRED_DATABASE_URL, so migrations run without the rest of the config.
     from alfred.config import ConfigError, load_database_url
     from alfred.db import migrate
@@ -47,20 +47,20 @@ def cmd_migrate() -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alfred")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("serve", help="run the bot, the service API and the AI worker")
     sub.add_parser("migrate", help="apply database migrations (alembic upgrade head)")
     args = parser.parse_args(argv)
     if args.command == "serve":
-        return cmd_serve()
-    return cmd_migrate()
+        return _cmd_serve()
+    return _cmd_migrate()
 
 
 def run() -> None:
     """Console-script entry point."""
-    sys.exit(main())
+    sys.exit(_main())
 
 
 if __name__ == "__main__":

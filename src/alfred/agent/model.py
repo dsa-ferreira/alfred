@@ -44,14 +44,14 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
-class Usage:
+class _Usage:
     """Token counts the model server reported for one request."""
 
     prompt_tokens: int
     completion_tokens: int
 
 
-def token_counts(usage: Usage | None) -> str:
+def token_counts(usage: _Usage | None) -> str:
     """The counts for a log line, or a note that the server sent none."""
     if usage is None:
         return "token counts not reported"
@@ -63,7 +63,7 @@ class ModelReply:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     # None when the server reported no (usable) token counts.
-    usage: Usage | None = None
+    usage: _Usage | None = None
 
     def assistant_message(self) -> dict[str, Any]:
         """The reply as a message to send back in the next request."""
@@ -177,7 +177,7 @@ async def _sse_data(response: httpx.Response) -> AsyncIterator[str]:
 def _join(chunks: list[str]) -> ModelReply:
     """The streamed chunks as one reply: their content joined, usage from the last."""
     parts: list[str] = []
-    usage: Usage | None = None
+    usage: _Usage | None = None
     seen_choice = False
     for raw in chunks:
         data = json.loads(raw)
@@ -227,14 +227,14 @@ def _parse(data: Any) -> ModelReply:
     return ModelReply(content=content, tool_calls=calls, usage=_usage(data.get("usage")))
 
 
-def _usage(raw: Any) -> Usage | None:
+def _usage(raw: Any) -> _Usage | None:
     """The reply's token counts, or ``None``; a missing or odd ``usage`` is never an error."""
     if not isinstance(raw, dict):
         return None
     prompt, completion = raw.get("prompt_tokens"), raw.get("completion_tokens")
     if not all(isinstance(n, int) and not isinstance(n, bool) for n in (prompt, completion)):
         return None
-    return Usage(prompt_tokens=prompt, completion_tokens=completion)
+    return _Usage(prompt_tokens=prompt, completion_tokens=completion)
 
 
 def _snippet(text: str, limit: int = 200) -> str:

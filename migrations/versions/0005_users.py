@@ -37,36 +37,36 @@ down_revision: str | Sequence[str] | None = "0004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-ADMIN_ENV = "ALFRED_MIGRATE_ADMIN"
+_ADMIN_ENV = "ALFRED_MIGRATE_ADMIN"
 # As config's user names: lowercase letters, digits and hyphens.
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 # The tables whose rows get a user; entries belong to one through their conversation.
-USER_TABLES = ("conversations", "queue_items", "attachments")
-OWNED_TABLES = (*USER_TABLES, "reminders")
+_USER_TABLES = ("conversations", "queue_items", "attachments")
+_OWNED_TABLES = (*_USER_TABLES, "reminders")
 
 _ENTRY_KINDS = (
     "'assistant', 'notice', 'ask_prompt', 'ask_reply', 'recall', 'reminder', 'reminder_reply'"
 )
-KINDS = {
+_KINDS = {
     "entries": (f"kind IN ('owner', {_ENTRY_KINDS})", f"kind IN ('user', {_ENTRY_KINDS})"),
     "queue_items": ("kind IN ('owner', 'ask', 'reminder')", "kind IN ('user', 'ask', 'reminder')"),
 }
-CURRENT = sa.text("ended_at IS NULL")
+_CURRENT = sa.text("ended_at IS NULL")
 
 
 def _admin() -> str | None:
     """The admin's name from the environment, or ``None`` when no row needs one."""
     bind = op.get_bind()
-    if not any(bind.scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM {t})")) for t in OWNED_TABLES):
+    if not any(bind.scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM {t})")) for t in _OWNED_TABLES):
         return None
-    name = os.environ.get(ADMIN_ENV, "").strip()
+    name = os.environ.get(_ADMIN_ENV, "").strip()
     if _NAME.fullmatch(name):
         return name
-    problem = f"{ADMIN_ENV}={name!r} is not a user name" if name else f"{ADMIN_ENV} is not set"
+    problem = f"{_ADMIN_ENV}={name!r} is not a user name" if name else f"{_ADMIN_ENV} is not set"
     raise MigrationError(
         f"{problem}. The database has conversations, messages or reminders from before "
-        f"alfred had users; set {ADMIN_ENV} to the admin's [[users]] name (lowercase "
+        f"alfred had users; set {_ADMIN_ENV} to the admin's [[users]] name (lowercase "
         "letters, digits and hyphens) so they are assigned to the admin, then migrate again"
     )
 
@@ -74,7 +74,7 @@ def _admin() -> str | None:
 def upgrade() -> None:
     admin = _admin()
 
-    for table in USER_TABLES:
+    for table in _USER_TABLES:
         op.add_column(table, sa.Column("user_name", sa.Text(), nullable=True))
     op.add_column("reminders", sa.Column("created_by", sa.Text(), nullable=True))
     op.create_table(
@@ -90,7 +90,7 @@ def upgrade() -> None:
     )
 
     if admin is not None:
-        for table in USER_TABLES:
+        for table in _USER_TABLES:
             op.execute(sa.text(f"UPDATE {table} SET user_name = :admin").bindparams(admin=admin))
         op.execute(sa.text("UPDATE reminders SET created_by = :admin").bindparams(admin=admin))
         op.execute(
@@ -99,24 +99,24 @@ def upgrade() -> None:
                 "SELECT id, :admin FROM reminders"
             ).bindparams(admin=admin)
         )
-    for table in USER_TABLES:
+    for table in _USER_TABLES:
         op.alter_column(table, "user_name", nullable=False)
     op.alter_column("reminders", "created_by", nullable=False)
 
-    for table, (_old, new) in KINDS.items():
+    for table, (_old, new) in _KINDS.items():
         op.drop_constraint(op.f(f"ck_{table}_kind"), table, type_="check")
         op.execute(f"UPDATE {table} SET kind = 'user' WHERE kind = 'owner'")
         op.create_check_constraint(op.f(f"ck_{table}_kind"), table, new)
 
     op.drop_index(
-        "uq_conversations_one_current", table_name="conversations", postgresql_where=CURRENT
+        "uq_conversations_one_current", table_name="conversations", postgresql_where=_CURRENT
     )
     op.create_index(
         "uq_conversations_one_current_per_user",
         "conversations",
         ["user_name"],
         unique=True,
-        postgresql_where=CURRENT,
+        postgresql_where=_CURRENT,
     )
 
 
@@ -124,22 +124,22 @@ def downgrade() -> None:
     op.drop_index(
         "uq_conversations_one_current_per_user",
         table_name="conversations",
-        postgresql_where=CURRENT,
+        postgresql_where=_CURRENT,
     )
     op.create_index(
         "uq_conversations_one_current",
         "conversations",
         [sa.literal_column("(ended_at IS NULL)")],
         unique=True,
-        postgresql_where=CURRENT,
+        postgresql_where=_CURRENT,
     )
 
-    for table, (old, _new) in KINDS.items():
+    for table, (old, _new) in _KINDS.items():
         op.drop_constraint(op.f(f"ck_{table}_kind"), table, type_="check")
         op.execute(f"UPDATE {table} SET kind = 'owner' WHERE kind = 'user'")
         op.create_check_constraint(op.f(f"ck_{table}_kind"), table, old)
 
     op.drop_table("reminder_recipients")
     op.drop_column("reminders", "created_by")
-    for table in reversed(USER_TABLES):
+    for table in reversed(_USER_TABLES):
         op.drop_column(table, "user_name")

@@ -6,13 +6,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from alfred.memory.transcript import (
-    SUMMARY_PROMPT,
-    Summary,
+    _SUMMARY_PROMPT,
     SummaryParseError,
     TranscriptEntry,
+    _local_date,
+    _Summary,
     cut_middle,
     date_span,
-    local_date,
     parse_summary,
     render,
     summary_messages,
@@ -87,15 +87,15 @@ def test_cut_with_tiny_budget() -> None:
 def test_summary_messages() -> None:
     messages = summary_messages("User: hi")
     assert messages == [
-        {"role": "system", "content": SUMMARY_PROMPT},
+        {"role": "system", "content": _SUMMARY_PROMPT},
         {"role": "user", "content": "User: hi"},
     ]
-    assert "Title:" in SUMMARY_PROMPT and "Summary:" in SUMMARY_PROMPT
+    assert "Title:" in _SUMMARY_PROMPT and "Summary:" in _SUMMARY_PROMPT
 
 
 def test_parse_plain() -> None:
     reply = "Title: Chicken thighs recipe\nSummary: A lemon-garlic recipe. Saved as recipe 12."
-    assert parse_summary(reply) == Summary(
+    assert parse_summary(reply) == _Summary(
         "Chicken thighs recipe", "A lemon-garlic recipe. Saved as recipe 12."
     )
 
@@ -111,7 +111,7 @@ def test_parse_plain() -> None:
     ],
 )
 def test_parse_leniently(reply: str) -> None:
-    assert parse_summary(reply) == Summary("Chicken thighs recipe", "Lemon and garlic.")
+    assert parse_summary(reply) == _Summary("Chicken thighs recipe", "Lemon and garlic.")
 
 
 def test_summary_continues_on_following_lines() -> None:
@@ -147,8 +147,8 @@ def test_long_title_is_cut() -> None:
 def test_local_date_uses_the_timezone() -> None:
     # 23:30 UTC on 2 Nov is 23:30 in Lisbon (WET) but already 3 Nov in Tokyo.
     moment = datetime(2026, 11, 2, 23, 30, tzinfo=UTC)
-    assert local_date(moment, LISBON) == "Mon 2 Nov 2026"
-    assert local_date(moment, ZoneInfo("Asia/Tokyo")) == "Tue 3 Nov 2026"
+    assert _local_date(moment, LISBON) == "Mon 2 Nov 2026"
+    assert _local_date(moment, ZoneInfo("Asia/Tokyo")) == "Tue 3 Nov 2026"
 
 
 def test_date_span() -> None:

@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 SEARCH_CONVERSATIONS = "alfred_search_conversations"
 RECALL_CONVERSATION = "alfred_recall_conversation"
 
-SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
+_SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": SEARCH_CONVERSATIONS,
@@ -75,7 +75,7 @@ SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
     },
 }
 
-RECALL_CONVERSATION_TOOL: dict[str, Any] = {
+_RECALL_CONVERSATION_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": RECALL_CONVERSATION,
@@ -95,11 +95,11 @@ RECALL_CONVERSATION_TOOL: dict[str, Any] = {
 }
 
 # Reciprocal rank fusion constant (memory design D7).
-RRF_K = 60
+_RRF_K = 60
 # A result whose fused score is at least this share of the best one's is "close".
-CLOSE_RATIO = 0.9
-OMITTED = "[earlier part omitted]"
-NO_MEANING_NOTE = (
+_CLOSE_RATIO = 0.9
+_OMITTED = "[earlier part omitted]"
+_NO_MEANING_NOTE = (
     "Note: matching by meaning is unavailable right now (the embedding service didn't "
     "answer), so these are keyword matches only."
 )
@@ -140,7 +140,7 @@ class _Found:
     ended_at: datetime | None
 
 
-class QueryEmbedder(Protocol):
+class _QueryEmbedder(Protocol):
     model: str
 
     async def embed_query(self, text: str) -> list[float]: ...
@@ -151,7 +151,7 @@ class ConversationSearch:
         self,
         config: Config,
         sessions: async_sessionmaker[AsyncSession],
-        embedder: QueryEmbedder,
+        embedder: _QueryEmbedder,
     ) -> None:
         self._memory = config.memory
         self._sessions = sessions
@@ -205,7 +205,7 @@ class ConversationSearch:
             vector = await self._embedder.embed_query(query)
         except EmbeddingError as exc:
             log.warning("search %r: no meaning-based matches: %s", query, exc)
-            note = NO_MEANING_NOTE
+            note = _NO_MEANING_NOTE
         else:
             vector_ids = await self._vector_candidates(vector, dates, limit * 2)
         keyword_ids = await self._keyword_candidates(user, query, lower, upper, limit * 2)
@@ -213,7 +213,7 @@ class ConversationSearch:
         scores: dict[int, float] = {}
         for ranking in (vector_ids, keyword_ids):
             for rank, cid in enumerate(ranking, start=1):
-                scores[cid] = scores.get(cid, 0.0) + 1 / (RRF_K + rank)
+                scores[cid] = scores.get(cid, 0.0) + 1 / (_RRF_K + rank)
         best = sorted(scores, key=lambda cid: (-scores[cid], -cid))[:limit]
         found_by_id = await self._load(best)
         lines = [note] if note else []
@@ -225,7 +225,7 @@ class ConversationSearch:
         for i, cid in enumerate(best):
             if i == 0:
                 label = "best match"
-            elif scores[cid] >= CLOSE_RATIO * top:
+            elif scores[cid] >= _CLOSE_RATIO * top:
                 label = "close match"
             else:
                 label = "weak match"
@@ -362,9 +362,9 @@ class ConversationSearch:
         full = f"{header}\n{body}"
         if len(full) <= cap:
             return full
-        prefix = f"{header}\nSummary: {target.summary or '(no summary yet)'}\n{OMITTED}\n"
+        prefix = f"{header}\nSummary: {target.summary or '(no summary yet)'}\n{_OMITTED}\n"
         if len(prefix) >= cap:  # a tiny cap: the summary doesn't fit either
-            prefix = f"{header}\n{OMITTED}\n"
+            prefix = f"{header}\n{_OMITTED}\n"
         room = cap - len(prefix)
         if room <= 0:
             return full[-cap:]
@@ -386,7 +386,7 @@ class Searcher(Protocol):
 class MemoryTools(LocalToolset):
     """Search and recall of the turn user's conversations, offered on chat turns."""
 
-    definitions = [SEARCH_CONVERSATIONS_TOOL, RECALL_CONVERSATION_TOOL]
+    definitions = [_SEARCH_CONVERSATIONS_TOOL, _RECALL_CONVERSATION_TOOL]
 
     def __init__(self, search: Searcher) -> None:
         self._search = search

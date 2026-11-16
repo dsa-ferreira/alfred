@@ -15,9 +15,9 @@ from __future__ import annotations
 import html
 import re
 
-TELEGRAM_LIMIT = 4096
+_TELEGRAM_LIMIT = 4096
 # Splitting is done on the source; leave room for tags and escaping.
-SOURCE_LIMIT = 3500
+_SOURCE_LIMIT = 3500
 
 _FENCE = re.compile(r"^\s*```")
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
@@ -32,7 +32,7 @@ _STRIKE = re.compile(r"~~(?!\s)(.+?)(?<!\s)~~")
 _PLACEHOLDER = re.compile("\x00(\\d+)\x00")
 
 
-def to_telegram_html(markdown: str) -> str:
+def _to_telegram_html(markdown: str) -> str:
     out: list[str] = []
     lines = markdown.split("\n")
     i = 0
@@ -84,7 +84,7 @@ def _inline(text: str) -> str:
     return _PLACEHOLDER.sub(lambda m: saved[int(m.group(1))], text)
 
 
-def split_markdown(text: str, limit: int = SOURCE_LIMIT) -> list[str]:
+def split_markdown(text: str, limit: int = _SOURCE_LIMIT) -> list[str]:
     """Split ``text`` into parts of at most ``limit`` characters (plus fence lines)."""
     parts: list[str] = []
     rest = text.strip("\n")
@@ -132,11 +132,11 @@ def _open_fence(part: str) -> str | None:
 def split_for_telegram(text: str) -> list[tuple[str, str]]:
     """``(markdown, html)`` pairs, each html at most Telegram's message length."""
     result: list[tuple[str, str]] = []
-    pending = [(part, SOURCE_LIMIT) for part in split_markdown(text)]
+    pending = [(part, _SOURCE_LIMIT) for part in split_markdown(text)]
     while pending:
         part, limit = pending.pop(0)
-        rendered = to_telegram_html(part)
-        if len(rendered) <= TELEGRAM_LIMIT or limit < 200:
+        rendered = _to_telegram_html(part)
+        if len(rendered) <= _TELEGRAM_LIMIT or limit < 200:
             result.append((part, rendered))
             continue
         # Escaping made it too long: split this part again, smaller.

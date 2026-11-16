@@ -10,8 +10,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Fact
-from alfred.memory.embedding import EmbeddingUnreachable
-from alfred.memory.facts import DUPLICATE_CANDIDATES, DuplicateCheck, FactsNotFound, FactStore
+from alfred.memory.embedding import _EmbeddingUnreachable
+from alfred.memory.facts import _DUPLICATE_CANDIDATES, FactStore, _DuplicateCheck, _FactsNotFound
 from tests.helpers import FakeEmbedder, make_config
 
 NOW = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)
@@ -88,7 +88,7 @@ async def test_add_with_foreign_or_unknown_replaces_changes_nothing(
     facts = store(sessions)
     mine, _ = await facts.add("ana", "likes tea", "told")
     theirs, _ = await facts.add("diogo", "lives in Lisbon", "told")
-    with pytest.raises(FactsNotFound) as exc:
+    with pytest.raises(_FactsNotFound) as exc:
         await facts.add("ana", "likes coffee", "told", replaces=[mine, theirs, 999])
     assert exc.value.ids == [theirs, 999]
     assert [f.text for f in await facts.list("ana")] == ["likes tea"]
@@ -145,7 +145,7 @@ async def embedded(facts: FactStore, user: str, fact_text: str, origin: str = "l
     return fid
 
 
-def candidate_ids(check: DuplicateCheck | None) -> list[int]:
+def candidate_ids(check: _DuplicateCheck | None) -> list[int]:
     assert check is not None
     return [f.id for f in check.candidates]
 
@@ -177,7 +177,7 @@ async def test_candidates_nearest_first_within_the_distance(
 async def test_candidates_capped(sessions: async_sessionmaker[AsyncSession]) -> None:
     facts = store(sessions, FakeEmbedder(default=[1.0, 0.0]))
     ids = [await embedded(facts, "diogo", f"fact {i}") for i in range(8)]
-    assert candidate_ids(await facts.duplicate_candidates(ids[-1])) == ids[:DUPLICATE_CANDIDATES]
+    assert candidate_ids(await facts.duplicate_candidates(ids[-1])) == ids[:_DUPLICATE_CANDIDATES]
 
 
 async def test_candidates_leave_out_removed_foreign_and_other_model_facts(
@@ -208,7 +208,7 @@ async def test_no_candidates_for_an_unembedded_or_removed_fact(
 async def test_embedder_error_leaves_the_fact_unembedded(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    facts = store(sessions, FakeEmbedder([EmbeddingUnreachable("down")]))
+    facts = store(sessions, FakeEmbedder([_EmbeddingUnreachable("down")]))
     fid, _ = await facts.add("diogo", "my car is electric", "told")
     assert not await facts.embed(fid)
     row = await fact(sessions, fid)

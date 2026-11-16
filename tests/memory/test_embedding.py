@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from alfred.memory.embedding import EmbeddingClient, EmbeddingFailed, EmbeddingUnreachable
+from alfred.memory.embedding import EmbeddingClient, _EmbeddingFailed, _EmbeddingUnreachable
 
 URL = "http://ragman.lan/v1/embeddings"
 
@@ -61,7 +61,7 @@ async def test_connection_refused() -> None:
         raise httpx.ConnectError("refused", request=request)
 
     embedder = client(handler)
-    with pytest.raises(EmbeddingUnreachable, match="can't reach"):
+    with pytest.raises(_EmbeddingUnreachable, match="can't reach"):
         await embedder.embed_query("x")
     await embedder.aclose()
 
@@ -71,21 +71,21 @@ async def test_timeout() -> None:
         raise httpx.ReadTimeout("slow", request=request)
 
     embedder = client(handler)
-    with pytest.raises(EmbeddingUnreachable, match="timed out"):
+    with pytest.raises(_EmbeddingUnreachable, match="timed out"):
         await embedder.embed_query("x")
     await embedder.aclose()
 
 
 async def test_server_error() -> None:
     embedder = client(lambda request: httpx.Response(503, text="loading"))
-    with pytest.raises(EmbeddingUnreachable, match="HTTP 503"):
+    with pytest.raises(_EmbeddingUnreachable, match="HTTP 503"):
         await embedder.embed_query("x")
     await embedder.aclose()
 
 
 async def test_client_error() -> None:
     embedder = client(lambda request: httpx.Response(404, json={"error": "model not found"}))
-    with pytest.raises(EmbeddingFailed, match="HTTP 404.*model not found"):
+    with pytest.raises(_EmbeddingFailed, match="HTTP 404.*model not found"):
         await embedder.embed_query("x")
     await embedder.aclose()
 
@@ -103,6 +103,6 @@ async def test_client_error() -> None:
 )
 async def test_malformed_reply(body: str) -> None:
     embedder = client(lambda request: httpx.Response(200, text=body))
-    with pytest.raises(EmbeddingFailed, match="unusable embedding reply"):
+    with pytest.raises(_EmbeddingFailed, match="unusable embedding reply"):
         await embedder.embed_query("x")
     await embedder.aclose()

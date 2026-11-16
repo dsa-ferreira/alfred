@@ -12,12 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.brains import Brains
 from alfred.agent.turn import Agent
 from alfred.attachments.tools import (
+    _READ_ONLY_NOTE,
+    _TEXT_ONLY_NOTE,
+    _VIEW_ONLY_NOTE,
+    _VISION_NOTE,
     READ_DOCUMENT,
-    READ_ONLY_NOTE,
-    TEXT_ONLY_NOTE,
     VIEW_ATTACHMENT,
-    VIEW_ONLY_NOTE,
-    VISION_NOTE,
     AttachmentTools,
 )
 from alfred.config import AttachmentsConfig, BrainEntry, User
@@ -86,7 +86,7 @@ async def test_owner_turn_on_a_vision_brain(sessions: async_sessionmaker[AsyncSe
     assert opened is not None
     assert [d["function"]["name"] for d in opened.definitions] == [VIEW_ATTACHMENT, READ_DOCUMENT]
     (note,) = opened.prompt_notes
-    assert note.text == VISION_NOTE
+    assert note.text == _VISION_NOTE
     for words in ("[attachment #7", VIEW_ATTACHMENT, READ_DOCUMENT, "A handle alone does not"):
         assert words in note.text
 
@@ -98,7 +98,7 @@ async def test_text_only_brain(sessions: async_sessionmaker[AsyncSession]) -> No
     assert opened is not None
     assert [d["function"]["name"] for d in opened.definitions] == [READ_DOCUMENT]
     (note,) = opened.prompt_notes
-    assert note.text == TEXT_ONLY_NOTE
+    assert note.text == _TEXT_ONLY_NOTE
     assert VIEW_ATTACHMENT not in note.text and READ_DOCUMENT in note.text
 
 
@@ -386,14 +386,14 @@ async def test_only_allowed_tools_are_described(
     read_only = await toolset.open(chat(AllowList.of("alfred_read_document")))
     assert read_only is not None
     assert [d["function"]["name"] for d in read_only.definitions] == [READ_DOCUMENT]
-    assert [n.text for n in read_only.prompt_notes] == [READ_ONLY_NOTE]
-    assert "alfred_view_attachment" not in READ_ONLY_NOTE
+    assert [n.text for n in read_only.prompt_notes] == [_READ_ONLY_NOTE]
+    assert "alfred_view_attachment" not in _READ_ONLY_NOTE
     view_only = await toolset.open(chat(AllowList.of("alfred_view_attachment")))
     assert view_only is not None
-    assert [n.text for n in view_only.prompt_notes] == [VIEW_ONLY_NOTE]
-    assert "alfred_read_document" not in VIEW_ONLY_NOTE
+    assert [n.text for n in view_only.prompt_notes] == [_VIEW_ONLY_NOTE]
+    assert "alfred_read_document" not in _VIEW_ONLY_NOTE
     both = await toolset.open(chat(AllowList.of("alfred_*")))
-    assert both is not None and [n.text for n in both.prompt_notes] == [VISION_NOTE]
+    assert both is not None and [n.text for n in both.prompt_notes] == [_VISION_NOTE]
 
 
 async def test_no_attachment_tools_allowed(sessions: async_sessionmaker[AsyncSession]) -> None:

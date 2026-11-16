@@ -52,17 +52,17 @@ from alfred.tools.base import (
 
 log = logging.getLogger(__name__)
 
-REMIND_SET = "alfred_remind_set"
-REMINDERS_LIST = "alfred_reminders_list"
-REMINDER_CANCEL = "alfred_reminder_cancel"
-NAMES = frozenset({REMIND_SET, REMINDERS_LIST, REMINDER_CANCEL})
+_REMIND_SET = "alfred_remind_set"
+_REMINDERS_LIST = "alfred_reminders_list"
+_REMINDER_CANCEL = "alfred_reminder_cancel"
+NAMES = frozenset({_REMIND_SET, _REMINDERS_LIST, _REMINDER_CANCEL})
 
 
-def remind_set_tool(users: list[str]) -> dict[str, Any]:
+def _remind_set_tool(users: list[str]) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": REMIND_SET,
+            "name": _REMIND_SET,
             "description": (
                 "Set a reminder: alfred messages the user about it at that time. Use for "
                 "requests with a time or date ('remind me to call mum at five', 'in 20 "
@@ -132,10 +132,10 @@ def remind_set_tool(users: list[str]) -> dict[str, Any]:
     }
 
 
-REMINDERS_LIST_TOOL: dict[str, Any] = {
+_REMINDERS_LIST_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": REMINDERS_LIST,
+        "name": _REMINDERS_LIST,
         "description": (
             "List the reminders that are set and not yet delivered, soonest first, with their "
             "numbers. Not the to-do list."
@@ -144,10 +144,10 @@ REMINDERS_LIST_TOOL: dict[str, Any] = {
     },
 }
 
-REMINDER_CANCEL_TOOL: dict[str, Any] = {
+_REMINDER_CANCEL_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": REMINDER_CANCEL,
+        "name": _REMINDER_CANCEL,
         "description": (
             "Cancel a reminder that is set and not yet delivered, by its number. To move a "
             "reminder, cancel it and set it again."
@@ -168,10 +168,10 @@ class _ListOnly(LocalToolset):
 
     def __init__(self, tools: ReminderTools) -> None:
         self._tools = tools
-        self.definitions = [REMINDERS_LIST_TOOL]
+        self.definitions = [_REMINDERS_LIST_TOOL]
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        if name != REMINDERS_LIST:
+        if name != _REMINDERS_LIST:
             return ToolOutcome(False, f"Error: unknown tool {name!r}.")
         return await self._tools.call(name, raw_arguments, attempt)
 
@@ -195,9 +195,9 @@ class ReminderTools(LocalToolset):
         self._users = users
         self._now = now
         self.definitions = [
-            remind_set_tool(users.names),
-            REMINDERS_LIST_TOOL,
-            REMINDER_CANCEL_TOOL,
+            _remind_set_tool(users.names),
+            _REMINDERS_LIST_TOOL,
+            _REMINDER_CANCEL_TOOL,
         ]
         self._list_only = _ListOnly(self)
 
@@ -224,11 +224,11 @@ class ReminderTools(LocalToolset):
         if isinstance(arguments, str):
             return ToolOutcome(False, arguments)
         user = attempt.turn.user.name
-        if name == REMIND_SET:
+        if name == _REMIND_SET:
             return await self._set(user, arguments)
-        if name == REMINDERS_LIST:
+        if name == _REMINDERS_LIST:
             return await self._list(user)
-        if name == REMINDER_CANCEL:
+        if name == _REMINDER_CANCEL:
             return await self._cancel(user, arguments)
         return ToolOutcome(False, f"Error: unknown tool {name!r}.")
 

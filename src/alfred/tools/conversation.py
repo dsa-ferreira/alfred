@@ -8,7 +8,7 @@ from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, TurnInp
 
 END_CONVERSATION = "alfred_end_conversation"
 
-END_CONVERSATION_TOOL: dict[str, Any] = {
+_END_CONVERSATION_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": END_CONVERSATION,
@@ -27,7 +27,7 @@ END_CONVERSATION_TOOL: dict[str, Any] = {
 class ConversationTools(LocalToolset):
     """Offered on chat turns; the worker archives the user's conversation after the reply."""
 
-    definitions = [END_CONVERSATION_TOOL]
+    definitions = [_END_CONVERSATION_TOOL]
 
     def offered(self, turn: TurnInput) -> bool:
         return chat_only(turn)

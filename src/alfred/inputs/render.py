@@ -19,12 +19,12 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from alfred.tools.base import CANCEL, DO_IT, Question
 
-TELEGRAM_MAX_CHARS = 4096
+_TELEGRAM_MAX_CHARS = 4096
 # Room kept for the outcome line an edit adds.
-OUTCOME_RESERVE = 200
-MAX_BODY_CHARS = 1000
-BUTTONS_PER_ROW = 2
-CALLBACK = re.compile(r"ir:(\d+):(\d+)")
+_OUTCOME_RESERVE = 200
+_MAX_BODY_CHARS = 1000
+_BUTTONS_PER_ROW = 2
+_CALLBACK = re.compile(r"ir:(\d+):(\d+)")
 
 
 def title(kind: str, *, source: str | None = None, reminder: str | None = None) -> str:
@@ -46,11 +46,11 @@ def reminder_label(reminder_id: int | None, text: str) -> str:
 
 def question_html(question: Question) -> str:
     """The message text: the title in bold, the question, and the detail in ``<pre>``."""
-    body = _cut(question.body, MAX_BODY_CHARS)
+    body = _cut(question.body, _MAX_BODY_CHARS)
     lines = [f"<b>{escape(question.title)}</b>", escape(body)] if question.title else [escape(body)]
     if question.detail:
         used = len(question.title) + len(body) + 2
-        budget = TELEGRAM_MAX_CHARS - OUTCOME_RESERVE - used
+        budget = _TELEGRAM_MAX_CHARS - _OUTCOME_RESERVE - used
         lines.append(f"<pre>{escape(_cut(question.detail, budget))}</pre>")
     return "\n".join(lines)
 
@@ -60,13 +60,13 @@ def keyboard(request_id: int, question: Question) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text=o.label, callback_data=f"ir:{request_id}:{i}")
         for i, o in enumerate(question.options)
     ]
-    rows = [buttons[i : i + BUTTONS_PER_ROW] for i in range(0, len(buttons), BUTTONS_PER_ROW)]
+    rows = [buttons[i : i + _BUTTONS_PER_ROW] for i in range(0, len(buttons), _BUTTONS_PER_ROW)]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def parse_callback(data: str | None) -> tuple[int, int] | None:
     """``(request id, option index)`` from a button's data, or ``None``."""
-    found = CALLBACK.fullmatch(data or "")
+    found = _CALLBACK.fullmatch(data or "")
     return (int(found.group(1)), int(found.group(2))) if found else None
 
 

@@ -51,7 +51,7 @@ READ_DOCUMENT = "alfred_read_document"
 _ID = re.compile(r"#?\s*(\d+)")
 _PAGES = re.compile(r"(\d+)(?:\s*-\s*(\d+))?")
 
-VIEW_ATTACHMENT_TOOL: dict[str, Any] = {
+_VIEW_ATTACHMENT_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": VIEW_ATTACHMENT,
@@ -75,7 +75,7 @@ VIEW_ATTACHMENT_TOOL: dict[str, Any] = {
     },
 }
 
-READ_DOCUMENT_TOOL: dict[str, Any] = {
+_READ_DOCUMENT_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": READ_DOCUMENT,
@@ -112,7 +112,7 @@ _SEEN = (
 )
 _GUESS = " Never guess what an attachment shows."
 
-VISION_NOTE = (
+_VISION_NOTE = (
     _HANDLES + _SEEN + " A handle alone does not show "
     "the content: to answer about an attachment again, look at it with "
     "alfred_view_attachment (an image, or a PDF page as an image), or read a PDF's text with "
@@ -120,18 +120,18 @@ VISION_NOTE = (
 )
 
 # A vision brain, with only one of the two tools left by the user's allow-list.
-VIEW_ONLY_NOTE = (
+_VIEW_ONLY_NOTE = (
     _HANDLES + _SEEN + " A handle alone does not show the content: to answer about an "
     "attachment again, look at it with alfred_view_attachment (an image, or a PDF page as "
     "an image)." + _GUESS
 )
-READ_ONLY_NOTE = (
+_READ_ONLY_NOTE = (
     _HANDLES + _SEEN + " A handle alone does not show the content: to answer about a PDF "
     "again, read its text with alfred_read_document; an earlier image can't be looked at "
     "again." + _GUESS
 )
 
-TEXT_ONLY_NOTE = (
+_TEXT_ONLY_NOTE = (
     _HANDLES + " This brain can't see images: when the user asks about an image or a scanned page, "
     "say that you can't see it on this brain. A PDF's page 1 text comes with the message "
     "that brings it; a handle alone does not show the content, so read a PDF's text with "
@@ -157,7 +157,7 @@ class AttachmentTools(LocalToolset):
     def offered(self, turn: TurnInput) -> bool:
         return chat_only(turn)
 
-    async def open(self, turn: TurnInput) -> OpenAttachmentTools | None:
+    async def open(self, turn: TurnInput) -> _OpenAttachmentTools | None:
         if not self.offered(turn):
             return None
         vision = self._brains.current.vision
@@ -167,7 +167,7 @@ class AttachmentTools(LocalToolset):
         read = turn.user.tools.matches(READ_DOCUMENT)
         if not (view or read):
             return None
-        return OpenAttachmentTools(self, vision=vision, view=view, read=read)
+        return _OpenAttachmentTools(self, vision=vision, view=view, read=read)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         arguments = parse_arguments(raw_arguments)
@@ -295,7 +295,7 @@ class AttachmentTools(LocalToolset):
         return AttachmentRef(*row) if row is not None else None
 
 
-class OpenAttachmentTools(LocalToolset):
+class _OpenAttachmentTools(LocalToolset):
     """One turn's attachment tools: the view tool only for a brain with vision.
 
     ``view`` and ``read`` say which tools the user's allow-list leaves.
@@ -307,15 +307,15 @@ class OpenAttachmentTools(LocalToolset):
         self._tools = tools
         view = view and vision
         self.definitions = [
-            *([VIEW_ATTACHMENT_TOOL] if view else []),
-            *([READ_DOCUMENT_TOOL] if read else []),
+            *([_VIEW_ATTACHMENT_TOOL] if view else []),
+            *([_READ_DOCUMENT_TOOL] if read else []),
         ]
         if not vision:
-            note = TEXT_ONLY_NOTE
+            note = _TEXT_ONLY_NOTE
         elif view and read:
-            note = VISION_NOTE
+            note = _VISION_NOTE
         else:
-            note = VIEW_ONLY_NOTE if view else READ_ONLY_NOTE
+            note = _VIEW_ONLY_NOTE if view else _READ_ONLY_NOTE
         self.prompt_notes = (PromptNote(note),)
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:

@@ -24,9 +24,9 @@ from alfred.config import AttachmentsConfig, S3Key
 log = logging.getLogger(__name__)
 
 PREFIX = "attachments/"
-CONNECT_TIMEOUT_S = 10
-READ_TIMEOUT_S = 60
-MAX_ATTEMPTS = 3
+_CONNECT_TIMEOUT_S = 10
+_READ_TIMEOUT_S = 60
+_MAX_ATTEMPTS = 3
 
 
 class StoreError(Exception):
@@ -34,7 +34,7 @@ class StoreError(Exception):
 
 
 @dataclass(frozen=True)
-class StoredObject:
+class _StoredObject:
     key: str
     last_modified: datetime
 
@@ -44,7 +44,7 @@ class ObjectStore(Protocol):
 
     async def get(self, key: str) -> bytes: ...
 
-    def list(self, prefix: str) -> AsyncIterator[StoredObject]:
+    def list(self, prefix: str) -> AsyncIterator[_StoredObject]:
         """Every object under ``prefix``, page by page."""
         ...
 
@@ -85,9 +85,9 @@ class S3Store:
                     # servers (Garage among them) reject.
                     request_checksum_calculation="when_required",
                     response_checksum_validation="when_required",
-                    connect_timeout=CONNECT_TIMEOUT_S,
-                    read_timeout=READ_TIMEOUT_S,
-                    retries={"mode": "standard", "total_max_attempts": MAX_ATTEMPTS},
+                    connect_timeout=_CONNECT_TIMEOUT_S,
+                    read_timeout=_READ_TIMEOUT_S,
+                    retries={"mode": "standard", "total_max_attempts": _MAX_ATTEMPTS},
                 ),
             )
         )
@@ -108,7 +108,7 @@ class S3Store:
             async with response["Body"] as body:
                 return await body.read()
 
-    async def list(self, prefix: str) -> AsyncIterator[StoredObject]:
+    async def list(self, prefix: str) -> AsyncIterator[_StoredObject]:
         paginator = self._client.get_paginator("list_objects_v2")
         async with self._errors("list", prefix):
             pages = paginator.paginate(
@@ -118,7 +118,7 @@ class S3Store:
             )
             async for page in pages:
                 for item in page.get("Contents", ()):
-                    yield StoredObject(item["Key"], item["LastModified"])
+                    yield _StoredObject(item["Key"], item["LastModified"])
 
     async def delete(self, key: str) -> None:
         async with self._errors("delete", key):

@@ -29,12 +29,12 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Protocol
 
-from alfred.memory.transcript import TranscriptEntry, _clean
+from alfred.memory.transcript import TranscriptEntry, clean
 
 # The entry kinds extraction reads.
-EXTRACTION_KINDS = ("user", "assistant")
+_EXTRACTION_KINDS = ("user", "assistant")
 
-EXTRACTION_PROMPT = """\
+_EXTRACTION_PROMPT = """\
 You keep a short list of lasting facts about {user}, who chats with alfred, \
 their assistant. Read the finished chat and find what is worth knowing about \
 {user} in every future chat: stable preferences, identity, goals, ongoing \
@@ -66,7 +66,7 @@ If there is nothing worth keeping, which is usual, answer with the single line:
 NONE"""
 
 
-class KnownFact(Protocol):
+class _KnownFact(Protocol):
     id: int
     text: str
     origin: str
@@ -74,10 +74,10 @@ class KnownFact(Protocol):
 
 def extraction_entries(entries: Sequence[TranscriptEntry]) -> list[TranscriptEntry]:
     """The entries extraction may read: the user's messages and alfred's replies to them."""
-    return [e for e in entries if e.kind in EXTRACTION_KINDS]
+    return [e for e in entries if e.kind in _EXTRACTION_KINDS]
 
 
-def known_facts(user: str, facts: Sequence[KnownFact]) -> str:
+def _known_facts(user: str, facts: Sequence[_KnownFact]) -> str:
     if not facts:
         return f"Known facts about {user}: none."
     lines = [f"Known facts about {user}:"]
@@ -88,11 +88,11 @@ def known_facts(user: str, facts: Sequence[KnownFact]) -> str:
 
 
 def extraction_messages(
-    user: str, facts: Sequence[KnownFact], transcript: str
+    user: str, facts: Sequence[_KnownFact], transcript: str
 ) -> list[dict[str, str]]:
     return [
-        {"role": "system", "content": EXTRACTION_PROMPT.format(user=user)},
-        {"role": "user", "content": f"{known_facts(user, facts)}\n\nThe chat:\n{transcript}"},
+        {"role": "system", "content": _EXTRACTION_PROMPT.format(user=user)},
+        {"role": "user", "content": f"{_known_facts(user, facts)}\n\nThe chat:\n{transcript}"},
     ]
 
 
@@ -135,7 +135,7 @@ def parse_facts(reply: str) -> list[NewFact]:
     for raw in reply.splitlines():
         if match := _REPLACE.match(raw):
             labelled = True
-            text = _clean(match.group(3))
+            text = clean(match.group(3))
             quote = match.group(2)
             if text:
                 found.append(
@@ -143,7 +143,7 @@ def parse_facts(reply: str) -> list[NewFact]:
                 )
         elif match := _NEW.match(raw):
             labelled = True
-            text = _clean(match.group(1))
+            text = clean(match.group(1))
             if text:
                 found.append(NewFact(text))
         elif _NONE.match(raw):
@@ -154,9 +154,9 @@ def parse_facts(reply: str) -> list[NewFact]:
 
 
 # How close a REPLACE quote must be to the fact's text (change fix-fact-removals, D4).
-QUOTE_MIN_RATIO = 0.85
+_QUOTE_MIN_RATIO = 0.85
 # A quote found inside the fact must cover at least this share of it.
-QUOTE_MIN_SHARE = 0.5
+_QUOTE_MIN_SHARE = 0.5
 _NOT_WORD = re.compile(r"[\W_]+")
 
 
@@ -181,14 +181,14 @@ def quote_matches(quote: str | None, fact_text: str, user: str) -> bool:
     said, actual = _normalised(quote, user), _normalised(fact_text, user)
     if not said or not actual:
         return False
-    if said == actual or SequenceMatcher(None, said, actual).ratio() >= QUOTE_MIN_RATIO:
+    if said == actual or SequenceMatcher(None, said, actual).ratio() >= _QUOTE_MIN_RATIO:
         return True
-    return f" {said} " in f" {actual} " and len(said) >= QUOTE_MIN_SHARE * len(actual)
+    return f" {said} " in f" {actual} " and len(said) >= _QUOTE_MIN_SHARE * len(actual)
 
 
 # --- The duplicate check (change fix-fact-removals, design D3) -----------------------------
 
-DUPLICATE_PROMPT = """\
+_DUPLICATE_PROMPT = """\
 You check a list of short facts about {user} for repeats. Below are a new \
 fact and some known facts. Which known facts say the same thing as the new \
 fact, so that keeping both would only repeat it? A fact on the same topic, \
@@ -202,12 +202,12 @@ NONE"""
 
 
 def duplicate_messages(
-    user: str, new_fact: str, candidates: Sequence[KnownFact]
+    user: str, new_fact: str, candidates: Sequence[_KnownFact]
 ) -> list[dict[str, str]]:
     """The duplicate-check request. Origins are left out: alfred decides which stays."""
     known = "\n".join(f"[{f.id}] {f.text}" for f in candidates)
     return [
-        {"role": "system", "content": DUPLICATE_PROMPT.format(user=user)},
+        {"role": "system", "content": _DUPLICATE_PROMPT.format(user=user)},
         {"role": "user", "content": f"New fact: {new_fact}\n\nKnown facts:\n{known}"},
     ]
 

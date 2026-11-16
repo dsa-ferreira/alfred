@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from alfred.agent.model import ModelClient, ModelFailed, ModelUnreachable, Usage
+from alfred.agent.model import ModelClient, ModelFailed, ModelUnreachable, _Usage
 
 URL = "http://ai.lan/v1/chat/completions"
 
@@ -133,7 +133,7 @@ def test_default_timeout_allows_a_slow_cold_start() -> None:
 @pytest.mark.parametrize(
     ("usage", "expected"),
     [
-        ({"prompt_tokens": 6812, "completion_tokens": 38, "total_tokens": 6850}, Usage(6812, 38)),
+        ({"prompt_tokens": 6812, "completion_tokens": 38, "total_tokens": 6850}, _Usage(6812, 38)),
         (None, None),
         ({"prompt_tokens": "lots", "completion_tokens": 38}, None),
         ({"prompt_tokens": 10}, None),
@@ -141,7 +141,7 @@ def test_default_timeout_allows_a_slow_cold_start() -> None:
     ],
     ids=["reported", "missing", "not-a-number", "incomplete", "not-an-object"],
 )
-async def test_usage(usage: object, expected: Usage | None) -> None:
+async def test_usage(usage: object, expected: _Usage | None) -> None:
     data: dict = {"choices": [{"message": {"content": "hi"}}]}
     if usage is not None:
         data["usage"] = usage
@@ -198,7 +198,7 @@ async def test_streamed_reply_is_joined() -> None:
     result = await client.complete_streamed([{"role": "user", "content": "sum up"}])
     assert result.content == "Title: Soup"
     assert result.tool_calls == []
-    assert result.usage == Usage(prompt_tokens=812, completion_tokens=41)
+    assert result.usage == _Usage(prompt_tokens=812, completion_tokens=41)
     sent = json.loads(seen[0].content)
     assert sent["stream"] is True
     assert sent["stream_options"] == {"include_usage": True}

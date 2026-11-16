@@ -8,7 +8,7 @@ import time
 import pytest
 
 from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
-from alfred.tools.calculator import CALCULATE, CALCULATE_TOOL, CalculatorTools
+from alfred.tools.calculator import _CALCULATE_TOOL, CALCULATE, CalculatorTools
 from tests.helpers import DIOGO
 
 OWNER = TurnInput("chat", "what's 347 times 28.5?", 1, user=DIOGO)
@@ -45,11 +45,11 @@ async def error(**arguments: object) -> str:
 async def test_offered_on_every_turn(turn: TurnInput) -> None:
     tools = CalculatorTools()
     assert await tools.open(turn) is tools
-    assert tools.definitions == [CALCULATE_TOOL]
+    assert tools.definitions == [_CALCULATE_TOOL]
 
 
 def test_description_steers_the_model() -> None:
-    description = CALCULATE_TOOL["function"]["description"]
+    description = _CALCULATE_TOOL["function"]["description"]
     assert description.startswith("Use for any arithmetic")
     assert "remainder, not percent" in description and "/100" in description
     assert "floz" in description and "degF" in description

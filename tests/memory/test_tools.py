@@ -64,8 +64,8 @@ import pytest  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
 
 from alfred.config import load_config  # noqa: E402
-from alfred.memory.embedding import EmbeddingUnreachable  # noqa: E402
-from alfred.memory.facts import FORGET, REMEMBER, FactStore, FactTools  # noqa: E402
+from alfred.memory.embedding import _EmbeddingUnreachable  # noqa: E402
+from alfred.memory.facts import _FORGET, _REMEMBER, FactStore, FactTools  # noqa: E402
 from alfred.tools.base import AllowList, Gated  # noqa: E402
 from tests.helpers import ANA, FakeEmbedder, make_config  # noqa: E402
 
@@ -83,7 +83,7 @@ def fact_tools(
 
 
 async def remember(tools: FactTools, args: dict[str, Any], turn: TurnInput = OWNER) -> ToolOutcome:
-    return await tools.call(REMEMBER, args, AttemptContext(turn))
+    return await tools.call(_REMEMBER, args, AttemptContext(turn))
 
 
 async def test_remember_stores_a_told_fact(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -145,7 +145,7 @@ async def test_remember_a_duplicate(sessions: async_sessionmaker[AsyncSession]) 
 async def test_remember_works_without_the_embedder(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    tools = fact_tools(sessions, FakeEmbedder([EmbeddingUnreachable("down")]))
+    tools = fact_tools(sessions, FakeEmbedder([_EmbeddingUnreachable("down")]))
     outcome = await remember(tools, {"text": "my car is electric"})
     assert outcome == ToolOutcome(True, "Saved as fact 1.")
     assert [f.text for f in await tools.facts.list("diogo")] == ["my car is electric"]
@@ -156,13 +156,13 @@ async def test_forget(sessions: async_sessionmaker[AsyncSession]) -> None:
     await remember(tools, {"text": "allergic to shellfish"})
     await remember(tools, {"text": "likes jazz"})
     await remember(tools, {"text": "likes tea"}, ANA_CHAT)  # ana's fact 3
-    outcome = await tools.call(FORGET, {"ids": [1, 3, 99]}, AttemptContext(OWNER))
+    outcome = await tools.call(_FORGET, {"ids": [1, 3, 99]}, AttemptContext(OWNER))
     assert outcome == ToolOutcome(True, "Forgot 1. Not found: 3, 99.")
     assert [f.text for f in await tools.facts.list("diogo")] == ["likes jazz"]
     assert [f.text for f in await tools.facts.list("ana")] == ["likes tea"]
     # Foreign and unknown ids are reported in the same words.
-    foreign = await tools.call(FORGET, {"ids": [3]}, AttemptContext(OWNER))
-    unknown = await tools.call(FORGET, {"ids": [98]}, AttemptContext(OWNER))
+    foreign = await tools.call(_FORGET, {"ids": [3]}, AttemptContext(OWNER))
+    unknown = await tools.call(_FORGET, {"ids": [98]}, AttemptContext(OWNER))
     assert foreign == ToolOutcome(False, "Not found: 3.")
     assert unknown == ToolOutcome(False, "Not found: 98.")
 
@@ -178,10 +178,10 @@ async def test_fact_tools_offered_on_chat_turns_only(
     opened_on = await on.open(OWNER)
     opened_off = await off.open(OWNER)
     assert opened_on is not None and opened_off is not None
-    assert [d["function"]["name"] for d in opened_on.definitions] == [REMEMBER, FORGET]
-    assert [d["function"]["name"] for d in opened_off.definitions] == [REMEMBER]
+    assert [d["function"]["name"] for d in opened_on.definitions] == [_REMEMBER, _FORGET]
+    assert [d["function"]["name"] for d in opened_off.definitions] == [_REMEMBER]
     # Facts in the context: a note says what the ids are for.
-    assert len(opened_on.prompt_notes) == 1 and FORGET in opened_on.prompt_notes[0].text
+    assert len(opened_on.prompt_notes) == 1 and _FORGET in opened_on.prompt_notes[0].text
     assert opened_off.prompt_notes == ()
 
 
@@ -189,19 +189,19 @@ async def test_ids_note_names_only_allowed_tools(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = fact_tools(sessions, facts_in_context=True)
-    user = DIOGO.__class__("x", 1, "sir", tools=AllowList.of(REMEMBER))
+    user = DIOGO.__class__("x", 1, "sir", tools=AllowList.of(_REMEMBER))
     opened = await tools.open(TurnInput("chat", "hi", 1, user=user))
     assert opened is not None
     gated = Gated(opened, user.tools)
-    assert [d["function"]["name"] for d in gated.definitions] == [REMEMBER]
-    assert FORGET not in gated.prompt_notes[0].text and REMEMBER in gated.prompt_notes[0].text
+    assert [d["function"]["name"] for d in gated.definitions] == [_REMEMBER]
+    assert _FORGET not in gated.prompt_notes[0].text and _REMEMBER in gated.prompt_notes[0].text
 
 
 def test_allow_list_accepts_exact_fact_tool_names(tmp_path: Path) -> None:
     path = tmp_path / "alfred.toml"
     path.write_text(
         '[[users]]\nname = "diogo"\ntelegram_user_id = 42\nadmin = true\n'
-        f'tools = ["{REMEMBER}", "{FORGET}"]\n\n[ai]\nmodel = "m"\n'
+        f'tools = ["{_REMEMBER}", "{_FORGET}"]\n\n[ai]\nmodel = "m"\n'
     )
     config = load_config(
         {
@@ -210,4 +210,4 @@ def test_allow_list_accepts_exact_fact_tool_names(tmp_path: Path) -> None:
             "ALFRED_DATABASE_URL": "postgresql://u:p@h/d",
         }
     )
-    assert config.users.admin.tools.matches(REMEMBER)
+    assert config.users.admin.tools.matches(_REMEMBER)

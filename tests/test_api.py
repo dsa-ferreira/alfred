@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.prompts import NO_REPLY
+from alfred.agent.prompts import _NO_REPLY
 from alfred.agent.turn import TurnResult
 from alfred.api import create_app
 from alfred.config import Service, Users
@@ -193,7 +193,7 @@ async def run_ask(env: Env, answer: str) -> None:
 
 
 async def test_nothing_worth_reporting(env: Env) -> None:
-    await run_ask(env, NO_REPLY)
+    await run_ask(env, _NO_REPLY)
     assert env.telegram.requests == []
 
 

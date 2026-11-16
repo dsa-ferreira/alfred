@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelReply, ModelUnreachable, Usage
+from alfred.agent.model import ModelReply, ModelUnreachable, _Usage
 from alfred.db.models import Conversation, Fact
 from alfred.history import History
 from alfred.memory.extract import FactExtractionJob
@@ -319,7 +319,7 @@ async def test_outcome_logged_without_fact_text(
         content=(
             'NEW: diogo has two cats.\nREPLACE 1 "diogo lives in Lisbon.": diogo lives in Porto.'
         ),
-        usage=Usage(prompt_tokens=812, completion_tokens=24),
+        usage=_Usage(prompt_tokens=812, completion_tokens=24),
     )
     extract, facts = job(sessions, FakeModel([reply]))
     await facts.add("diogo", "diogo lives in Lisbon.", "learned")

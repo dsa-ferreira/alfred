@@ -6,12 +6,12 @@ import httpx
 import respx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.prompts import NO_REPLY
+from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Conversation, Entry
 from alfred.history import History
 from alfred.tools.base import TurnInput
 from alfred.tools.conversation import END_CONVERSATION
-from alfred.web.tools import WEB_FETCH, WEB_SEARCH
+from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
     NOW,
     agent,
@@ -35,27 +35,27 @@ async def test_web_tools_offered_in_owner_turns(
     model = FakeModel([text("ok")])
     await agent(sessions, model, web=web_tools(web_http)).run(await owner_turn(sessions, "hi"))
     names = [t["function"]["name"] for t in model.requests[0][1]]
-    assert {WEB_SEARCH, WEB_FETCH} <= set(names)
+    assert {_WEB_SEARCH, _WEB_FETCH} <= set(names)
     # Ahead of the owner-only local tools, which come before the MCP tools.
-    assert names[:3] == [WEB_SEARCH, WEB_FETCH, END_CONVERSATION]
+    assert names[:3] == [_WEB_SEARCH, _WEB_FETCH, END_CONVERSATION]
 
 
 async def test_web_tools_offered_in_ask_turns(
     sessions: async_sessionmaker[AsyncSession], web_http: httpx.AsyncClient
 ) -> None:
     item = await add_queue_item(sessions, "ask", "anything new?", "backup")
-    model = FakeModel([text(NO_REPLY)])
+    model = FakeModel([text(_NO_REPLY)])
     await agent(sessions, model, web=web_tools(web_http)).run(
         TurnInput("ask", "anything new?", item, "backup", user=DIOGO)
     )
-    assert {WEB_SEARCH, WEB_FETCH} <= model.tool_names()
+    assert {_WEB_SEARCH, _WEB_FETCH} <= model.tool_names()
     assert END_CONVERSATION not in model.tool_names()
 
 
 async def test_no_web_tools_without_web(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel([text("ok")])
     await agent(sessions, model).run(await owner_turn(sessions, "hi"))
-    assert not {WEB_SEARCH, WEB_FETCH} & model.tool_names()
+    assert not {_WEB_SEARCH, _WEB_FETCH} & model.tool_names()
 
 
 @respx.mock
@@ -73,7 +73,7 @@ async def test_url_the_owner_pasted(
     assert "The article text." in last_tool_result(model)
     rows = await tool_rows(sessions)
     assert [(r.tool, r.ok, r.arguments) for r in rows] == [
-        (WEB_FETCH, True, {"url": "https://example.com/article"})
+        (_WEB_FETCH, True, {"url": "https://example.com/article"})
     ]
 
 
@@ -117,7 +117,7 @@ async def test_url_in_the_ask_prompt(
     )
     prompt = "New release notes at https://example.com/release. Worth telling?"
     item = await add_queue_item(sessions, "ask", prompt, "updates")
-    model = FakeModel([fetch_call("https://example.com/release"), text(NO_REPLY)])
+    model = FakeModel([fetch_call("https://example.com/release"), text(_NO_REPLY)])
     await agent(sessions, model, web=web_tools(web_http)).run(
         TurnInput("ask", prompt, item, "updates", user=DIOGO)
     )

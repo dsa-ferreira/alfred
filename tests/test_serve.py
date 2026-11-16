@@ -20,7 +20,7 @@ from alfred.attachments.inline import InlineAttachments
 from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
-from alfred.config import AttachmentsConfig, BrainEntry, S3Key, ServerConfig
+from alfred.config import AttachmentsConfig, BrainEntry, S3Key, _ServerConfig
 from alfred.idle import IdleCloser
 from alfred.mcp.toolset import McpTools
 from alfred.memory.facts import FactTools
@@ -90,7 +90,7 @@ def serve_config(database_url: str, port: int):  # type: ignore[no-untyped-def]
     return type(base)(
         **{
             **base.__dict__,
-            "server": ServerConfig(host="127.0.0.1", port=port),
+            "server": _ServerConfig(host="127.0.0.1", port=port),
             "database_url": SecretStr(database_url),
         }
     )

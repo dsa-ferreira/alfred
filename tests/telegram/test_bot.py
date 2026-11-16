@@ -28,7 +28,7 @@ from alfred.memory.facts import FactStore
 from alfred.queue import Queue
 from alfred.telegram import bot as bot_module
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
-from alfred.tools.base import Option, Question, confirm_question
+from alfred.tools.base import Option, Question, _confirm_question
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore, add_queue_item
@@ -407,7 +407,7 @@ def chat_actions(session) -> list[SendChatAction]:  # type: ignore[no-untyped-de
 
 
 async def test_typing_while_the_block_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    monkeypatch.setattr(bot_module, "_TYPING_INTERVAL_S", 0.01)
     bot, session = make_bot()
     async with TelegramOutbox(bot).typing(DIOGO):
         await asyncio.sleep(0.05)
@@ -422,7 +422,7 @@ async def test_typing_while_the_block_runs(monkeypatch: pytest.MonkeyPatch) -> N
 async def test_typing_failure_is_logged_and_retried(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    monkeypatch.setattr(bot_module, "_TYPING_INTERVAL_S", 0.01)
     bot, session = make_bot()
     failures = 0
 
@@ -451,7 +451,7 @@ async def test_typing_lets_the_block_error_through() -> None:
 
 
 async def test_typing_exit_never_raises_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    monkeypatch.setattr(bot_module, "_TYPING_INTERVAL_S", 0.01)
     bot, session = make_bot()
 
     def fail(method) -> None:  # type: ignore[no-untyped-def]
@@ -532,7 +532,7 @@ async def test_outbox_sends_to_the_users_chat() -> None:
 
 
 async def test_typing_in_the_users_chat(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bot_module, "TYPING_INTERVAL_S", 0.01)
+    monkeypatch.setattr(bot_module, "_TYPING_INTERVAL_S", 0.01)
     bot, session = make_bot()
     async with TelegramOutbox(bot).typing(ANA):
         await asyncio.sleep(0.03)
@@ -595,9 +595,11 @@ async def test_memory_line_has_the_date(sessions: async_sessionmaker[AsyncSessio
 
     class OneFact:
         async def list(self, user_name: str) -> list[Any]:
-            from alfred.memory.facts import FactRow
+            from alfred.memory.facts import _FactRow
 
-            return [FactRow(12, "allergic to shellfish", "told", datetime(2026, 11, 3, tzinfo=UTC))]
+            return [
+                _FactRow(12, "allergic to shellfish", "told", datetime(2026, 11, 3, tzinfo=UTC))
+            ]
 
         async def forget(self, user_name: str, ids: Any) -> Any:
             raise AssertionError
@@ -712,7 +714,7 @@ async def test_command_registration_failure_is_only_logged(
 
 # --- Questions and buttons (change add-user-input-requests) --------------------------
 
-DUNE = confirm_question("mcparr_add_media", {"title": "Dune", "year": 2021})
+DUNE = _confirm_question("mcparr_add_media", {"title": "Dune", "year": 2021})
 
 
 def titled(question: Question, title_: str = "For your request:") -> Question:
@@ -752,11 +754,11 @@ async def test_request_from_a_service() -> None:
 
 async def test_long_arguments_are_cut_and_the_buttons_still_sent() -> None:
     bot, session = make_bot()
-    long = confirm_question("cookbook_create_recipe", {"steps": "x" * 10_000})
+    long = _confirm_question("cookbook_create_recipe", {"steps": "x" * 10_000})
     await TelegramOutbox(bot).send_question(DIOGO, 4, titled(long))
     (sent,) = session.sent()
     visible = html.unescape(re.sub(r"<[^>]+>", "", sent.text))
-    assert len(visible) <= 4096 - render.OUTCOME_RESERVE
+    assert len(visible) <= 4096 - render._OUTCOME_RESERVE
     assert "more characters]" in visible
     assert sent.reply_markup is not None
     # With the outcome line added, the edit still fits.

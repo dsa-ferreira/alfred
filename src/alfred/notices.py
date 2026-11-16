@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-PARTIAL = " Some actions may have been partly carried out."
+_PARTIAL = " Some actions may have been partly carried out."
 
 
 def _partial(partial: bool) -> str:
-    return PARTIAL if partial else ""
+    return _PARTIAL if partial else ""
 
 
 def text_only(address: str) -> str:
@@ -55,7 +55,7 @@ def unreachable(address: str) -> str:
 
 
 def unreachable_mid(address: str) -> str:
-    return f"The AI became unreachable partway through that request, {address}." + PARTIAL
+    return f"The AI became unreachable partway through that request, {address}." + _PARTIAL
 
 
 def too_many_steps(address: str, partial: bool = False) -> str:
@@ -118,7 +118,7 @@ def _numbers(ids: list[int]) -> str:
 # --- input requests (change add-user-input-requests, design D5) -------------------------
 
 # Why a waiting turn ended without its user's answer.
-NOT_DONE_REASONS = {
+_NOT_DONE_REASONS = {
     "new_message": "you sent a new message before answering my question",
     "expired": "my question went unanswered for too long",
     "not_delivered": "I could not send you my question",
@@ -127,5 +127,5 @@ NOT_DONE_REASONS = {
 
 def input_not_done(address: str, tool: str, reason: str) -> str:
     """Recorded as alfred's reply when a waiting turn ends unanswered (``NOT_DONE_REASONS``)."""
-    why = NOT_DONE_REASONS.get(reason, "the request was cancelled")
+    why = _NOT_DONE_REASONS.get(reason, "the request was cancelled")
     return f"Nothing was done: I did not run {tool}, as {why}, {address}."

@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from alfred.attachments.handles import AttachmentRef, handle, with_handles
 
-SUMMARY_PROMPT = """\
+_SUMMARY_PROMPT = """\
 You title and summarise a finished chat between a user and alfred, their \
 assistant, so it can be found again later.
 Answer with exactly two lines and nothing else:
@@ -27,7 +27,7 @@ Title: <the topic in at most six words>
 Summary: <one or two sentences on what was discussed and how it turned out. Name \
 the concrete outcomes: names, numbers, decisions, what was added or changed.>"""
 
-TITLE_MAX_CHARS = 80
+_TITLE_MAX_CHARS = 80
 _FALLBACK_TITLE_WORDS = 5
 
 
@@ -94,13 +94,13 @@ def _omitted(n: int) -> str:
 
 def summary_messages(transcript: str) -> list[dict[str, str]]:
     return [
-        {"role": "system", "content": SUMMARY_PROMPT},
+        {"role": "system", "content": _SUMMARY_PROMPT},
         {"role": "user", "content": transcript},
     ]
 
 
 @dataclass(frozen=True)
-class Summary:
+class _Summary:
     title: str
     summary: str
 
@@ -113,7 +113,7 @@ _LABEL = re.compile(r"^[\s*_#>`-]*(title|summary)[\s*_`]*:(.*)$", re.IGNORECASE)
 _QUOTES = "\"'“”‘’`"
 
 
-def parse_summary(reply: str) -> Summary:
+def parse_summary(reply: str) -> _Summary:
     """Read ``Title:`` and ``Summary:`` lines, leniently.
 
     Any case, Markdown bold or headings, and quotes are accepted. Lines after
@@ -126,37 +126,37 @@ def parse_summary(reply: str) -> Summary:
     for raw in reply.splitlines():
         match = _LABEL.match(raw)
         if match:
-            label, value = match.group(1).lower(), _clean(match.group(2))
+            label, value = match.group(1).lower(), clean(match.group(2))
             if label == "title" and title is None:
                 title = value
             elif label == "summary" and summary_lines is None:
                 summary_lines = [value] if value else []
             continue
         if summary_lines is not None and raw.strip():
-            summary_lines.append(_clean(raw))
+            summary_lines.append(clean(raw))
     summary = " ".join(s for s in (summary_lines or []) if s).strip()
     if not summary:
         raise SummaryParseError("no Summary: line in the model's reply")
     if not title:
         words = summary.split()[:_FALLBACK_TITLE_WORDS]
         title = " ".join(words).rstrip(".,;:!?")
-    return Summary(title[:TITLE_MAX_CHARS].strip(), summary)
+    return _Summary(title[:_TITLE_MAX_CHARS].strip(), summary)
 
 
-def _clean(value: str) -> str:
+def clean(value: str) -> str:
     value = value.strip().strip("*_").strip()
     if len(value) >= 2 and value[0] in _QUOTES and value[-1] in _QUOTES:
         value = value[1:-1].strip()
     return value
 
 
-def local_date(moment: datetime, zone: ZoneInfo) -> str:
+def _local_date(moment: datetime, zone: ZoneInfo) -> str:
     """``Tue 3 Nov 2026``, in alfred's timezone."""
     day = moment.astimezone(zone)
     return f"{day:%a} {day.day} {day:%b %Y}"
 
 
 def date_span(started: datetime, ended: datetime | None, zone: ZoneInfo) -> str:
-    start = local_date(started, zone)
-    end = local_date(ended, zone) if ended is not None else "now"
+    start = _local_date(started, zone)
+    end = _local_date(ended, zone) if ended is not None else "now"
     return f"{start} to {end}"

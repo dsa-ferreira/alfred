@@ -12,28 +12,28 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
 from alfred.agent.model import ModelReply, ToolCall
-from alfred.agent.turn import Agent, Model
-from alfred.app import build_toolsets
+from alfred.agent.turn import Agent, _Model
+from alfred.app import _build_toolsets
 from alfred.attachments import NewAttachment
 from alfred.attachments.inline import InlineAttachments
-from alfred.attachments.store import StoredObject, StoreError
+from alfred.attachments.store import StoreError, _StoredObject
 from alfred.attachments.tools import AttachmentTools
 from alfred.config import (
     AIConfig,
     AttachmentsConfig,
     Config,
-    HistoryConfig,
-    MCPConfig,
     McpServer,
     MemoryConfig,
     QueueConfig,
-    RemindersConfig,
     S3Key,
-    ServerConfig,
     Service,
     User,
     Users,
-    WebConfig,
+    _HistoryConfig,
+    _MCPConfig,
+    _RemindersConfig,
+    _ServerConfig,
+    _WebConfig,
 )
 from alfred.db.models import QueueItem
 from alfred.history import History
@@ -74,17 +74,17 @@ def make_config(
     return Config(
         users=Users(tuple(users)),
         ai=AIConfig(**(ai or {})),
-        history=HistoryConfig(**(history or {})),
+        history=_HistoryConfig(**(history or {})),
         queue=QueueConfig(**(queue or {})),
-        mcp=MCPConfig(list_timeout_s=5, call_timeout_s=5),
-        server=ServerConfig(),
+        mcp=_MCPConfig(list_timeout_s=5, call_timeout_s=5),
+        server=_ServerConfig(),
         services=tuple(services),
         mcp_servers=tuple(mcp_servers),
         telegram_bot_token=SecretStr("123:test"),
         database_url=SecretStr("postgresql+psycopg://unused"),
         memory=MemoryConfig(**(memory or {})),
-        web=WebConfig(**(web or {})),
-        reminders=RemindersConfig(**(reminders or {})),
+        web=_WebConfig(**(web or {})),
+        reminders=_RemindersConfig(**(reminders or {})),
         attachments=AttachmentsConfig(**attachments) if attachments is not None else None,
         s3_key=S3Key(SecretStr("key-id"), SecretStr("secret")) if attachments is not None else None,
     )
@@ -190,7 +190,7 @@ class FakeEmbedder:
 
 def make_agent(
     config: Config,
-    model: Model,
+    model: _Model,
     history: History,
     sessions: async_sessionmaker[AsyncSession],
     connect: Connector,
@@ -212,7 +212,7 @@ def make_agent(
     if store is not None and config.attachments is not None:
         attachments = AttachmentTools(store, sessions, brains, config.attachments)
         inline = InlineAttachments(store, config.attachments)
-    toolsets = build_toolsets(
+    toolsets = _build_toolsets(
         config,
         connect,
         brains=brains,
@@ -260,11 +260,11 @@ class FakeStore:
             raise StoreError(f"object store get {key} failed: NoSuchKey")
         return self.objects[key][0]
 
-    async def list(self, prefix: str) -> AsyncIterator[StoredObject]:
+    async def list(self, prefix: str) -> AsyncIterator[_StoredObject]:
         self._check("list", prefix)
         for key, (_, _, modified) in sorted(self.objects.items()):
             if key.startswith(prefix):
-                yield StoredObject(key, modified)
+                yield _StoredObject(key, modified)
 
     async def delete(self, key: str) -> None:
         self._check("delete", key)

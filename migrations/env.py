@@ -13,31 +13,31 @@ from sqlalchemy.engine import create_engine
 from alfred.config import load_database_url
 from alfred.db.models import Base
 
-config = context.config
+_config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
+if _config.config_file_name is not None:
+    fileConfig(_config.config_file_name, disable_existing_loggers=False)
 
-target_metadata = Base.metadata
+_target_metadata = Base.metadata
 
 
 def _url() -> str:
-    url = config.get_main_option("sqlalchemy.url")
+    url = _config.get_main_option("sqlalchemy.url")
     if url:
         return url
     return load_database_url() or ""
 
 
 def _run(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(connection=connection, target_metadata=_target_metadata)
     with context.begin_transaction():
         context.run_migrations()
 
 
-def run_migrations_offline() -> None:
+def _run_migrations_offline() -> None:
     context.configure(
         url=_url(),
-        target_metadata=target_metadata,
+        target_metadata=_target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -45,13 +45,13 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
+def _run_migrations_online() -> None:
     engine = create_engine(_url(), poolclass=pool.NullPool)
     with engine.connect() as conn:
         _run(conn)
 
 
 if context.is_offline_mode():
-    run_migrations_offline()
+    _run_migrations_offline()
 else:
-    run_migrations_online()
+    _run_migrations_online()

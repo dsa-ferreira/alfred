@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Entry
 from alfred.history import History
-from alfred.memory.search import OMITTED, ConversationSearch
+from alfred.memory.search import _OMITTED, ConversationSearch
 from tests.helpers import FakeEmbedder, make_config
 from tests.memory.test_search import at, seed
 
@@ -110,7 +110,7 @@ async def test_long_conversation_is_capped(sessions: async_sessionmaker[AsyncSes
     result = await memory(sessions, recall_max_chars=32000).recall("diogo", 41)
     assert result.ok
     assert len(result.text) <= 32000
-    head, tail = result.text.split(f"\n{OMITTED}\n")
+    head, tail = result.text.split(f"\n{_OMITTED}\n")
     assert head == '#41 "Long chat", Tue 3 Nov 2026 to Tue 3 Nov 2026\n' + (
         "Summary: A long talk about everything."
     )
@@ -125,7 +125,7 @@ async def test_cap_from_config(sessions: async_sessionmaker[AsyncSession]) -> No
     await seed(sessions, 41, "Steps", "Ten steps.", started=at(3), entries=lines)
     result = await memory(sessions, recall_max_chars=300).recall("diogo", 41)
     assert len(result.text) <= 300
-    assert "Summary: Ten steps." in result.text and OMITTED in result.text
+    assert "Summary: Ten steps." in result.text and _OMITTED in result.text
     assert result.text.endswith("step 9: " + "y" * 40)
 
 
@@ -135,7 +135,7 @@ async def test_tiny_cap_keeps_the_end(sessions: async_sessionmaker[AsyncSession]
     assert len(result.text) <= 100
     # No room for the summary: the header, the marker and as much of the end as fits.
     assert result.text.startswith('#41 "Chicken thighs recipe", Tue 3 Nov 2026')
-    assert OMITTED in result.text and result.text.endswith("garlic, 200°C")
+    assert _OMITTED in result.text and result.text.endswith("garlic, 200°C")
 
 
 async def test_recall_inside_recalled_conversation_shows_title_only(

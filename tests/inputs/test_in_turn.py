@@ -23,7 +23,7 @@ from alfred.inputs.loop import cancel_on_new_message
 from alfred.inputs.store import InputRequests
 from alfred.queue import Queue, Worker
 from alfred.reminders.store import Reminders
-from alfred.reminders.tools import REMIND_SET, ReminderTools
+from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from alfred.tools.base import AllowList
 from tests.agent.turn_helpers import LISBON, tool_rows
@@ -130,7 +130,7 @@ async def test_confirmed_call_then_a_reminder(sessions: async_sessionmaker[Async
         [
             calls(
                 ("mcparr_add_media", '{"title": "Dune"}'),
-                (REMIND_SET, '{"text": "watch Dune", "in_minutes": 60}'),
+                (_REMIND_SET, '{"text": "watch Dune", "in_minutes": 60}'),
             ),
             text("Dune is added, and I shall remind you in an hour, madam."),
         ]
@@ -156,7 +156,7 @@ async def test_confirmed_call_then_a_reminder(sessions: async_sessionmaker[Async
     assert [(r.tool, r.ok) for r in await tool_rows(sessions)] == [
         ("mcparr_add_media", False),
         ("mcparr_add_media", True),
-        (REMIND_SET, True),
+        (_REMIND_SET, True),
     ]
 
 

@@ -30,9 +30,9 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-MAX_MINUTES = 366 * 24 * 60  # about one year
-MAX_TEXT_CHARS = 500
-AT_FORMS = '"HH:MM" (24-hour), "YYYY-MM-DD HH:MM" or "YYYY-MM-DD"'
+_MAX_MINUTES = 366 * 24 * 60  # about one year
+_MAX_TEXT_CHARS = 500
+_AT_FORMS = '"HH:MM" (24-hour), "YYYY-MM-DD HH:MM" or "YYYY-MM-DD"'
 
 _CLOCK = re.compile(r"(\d{1,2}):(\d{2})")
 _DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -48,8 +48,8 @@ def parse_text(value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
         raise WhenError("Error: text is required: what to remind them of.")
     text = value.strip()
-    if len(text) > MAX_TEXT_CHARS:
-        raise WhenError(f"Error: text is too long (at most {MAX_TEXT_CHARS} characters).")
+    if len(text) > _MAX_TEXT_CHARS:
+        raise WhenError(f"Error: text is too long (at most {_MAX_TEXT_CHARS} characters).")
     return text
 
 
@@ -75,7 +75,7 @@ def resolve(
         return (now + timedelta(minutes=minutes)).replace(second=0, microsecond=0)
 
     if not isinstance(at, str):
-        raise WhenError(f"Error: at must be text in one of the forms {AT_FORMS}.")
+        raise WhenError(f"Error: at must be text in one of the forms {_AT_FORMS}.")
     value = at.strip()
     local_now = now.astimezone(zone)
 
@@ -94,19 +94,19 @@ def resolve(
         hour, minute = default_time.split(":")
         due = _local(day, _clock(hour, minute), zone)
     else:
-        raise WhenError(f"Error: can't read the time {value!r}. Use at as {AT_FORMS}.")
+        raise WhenError(f"Error: can't read the time {value!r}. Use at as {_AT_FORMS}.")
 
     if due <= now:
         raise WhenError(
             f"Error: {format_when(due, zone)} has already passed. "
             "Ask the user for a time in the future."
         )
-    if due - now > timedelta(minutes=MAX_MINUTES):
+    if due - now > timedelta(minutes=_MAX_MINUTES):
         raise WhenError("Error: a reminder can be at most one year ahead.")
     return due
 
 
-DATE_FORMS = '"YYYY-MM-DD" or "today"'
+_DATE_FORMS = '"YYYY-MM-DD" or "today"'
 
 
 def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
@@ -116,13 +116,13 @@ def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
     :class:`WhenError` with a message for the model.
     """
     if not isinstance(value, str):
-        raise WhenError(f"Error: a date must be text: {DATE_FORMS}.")
+        raise WhenError(f"Error: a date must be text: {_DATE_FORMS}.")
     text = value.strip()
     if text.lower() == "today":
         return now.astimezone(zone).date()
     if match := _DATE.fullmatch(text):
         return _date(*match.group(1, 2, 3))
-    raise WhenError(f"Error: can't read the date {value!r}. Use {DATE_FORMS}.")
+    raise WhenError(f"Error: can't read the date {value!r}. Use {_DATE_FORMS}.")
 
 
 def _whole_minutes(value: Any) -> int:
@@ -137,7 +137,7 @@ def _whole_minutes(value: Any) -> int:
         minutes = int(value.strip())
     if minutes is None or minutes < 1:
         raise WhenError("Error: in_minutes must be a whole number of minutes, 1 or more.")
-    if minutes > MAX_MINUTES:
+    if minutes > _MAX_MINUTES:
         raise WhenError("Error: a reminder can be at most one year ahead.")
     return minutes
 
@@ -164,11 +164,11 @@ def _local(day: date, clock: time, zone: ZoneInfo) -> datetime:
 # --- repeat rules (change add-recurring-reminders, design D2) ------------------
 
 REPEATS = ("daily", "weekdays", "weekends", "weekly")
-WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-DAY_NAMES = tuple(d[:3] for d in WEEKDAYS)  # "mon" ... "sun", as the tool offers them
-ALL_DAYS = 0b1111111
-_MASKS = {"daily": ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
-REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+DAY_NAMES = tuple(d[:3] for d in _WEEKDAYS)  # "mon" ... "sun", as the tool offers them
+_ALL_DAYS = 0b1111111
+_MASKS = {"daily": _ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
+_REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
 
 
 @dataclass(frozen=True)
@@ -191,7 +191,7 @@ class Rule:
         return cls(repeat, days, time(int(hour), int(minute)))
 
     def label(self) -> str:
-        return format_rule(self.repeat, self.days, self.clock)
+        return _format_rule(self.repeat, self.days, self.clock)
 
 
 def parse_rule(
@@ -239,7 +239,7 @@ def _days_mask(value: Any) -> int:
     mask = 0
     for raw in value:
         day = raw.strip().lower()
-        index = next((i for i, d in enumerate(WEEKDAYS) if day in (d, d[:3])), None)
+        index = next((i for i, d in enumerate(_WEEKDAYS) if day in (d, d[:3])), None)
         if index is None:
             raise WhenError(f"Error: {raw!r} is not a day. Days are {', '.join(DAY_NAMES)}.")
         mask |= 1 << index
@@ -274,16 +274,16 @@ def latest_occurrence(
     return latest
 
 
-def format_rule(repeat: str, days: int, clock: time) -> str:
+def _format_rule(repeat: str, days: int, clock: time) -> str:
     """``every weekday at 08:00``, ``every Tuesday and Friday at 20:00``."""
     at = f"at {clock:%H:%M}"
-    if days == ALL_DAYS:
+    if days == _ALL_DAYS:
         return f"every day {at}"
     if days == _MASKS["weekdays"]:
         return f"every weekday {at}"
     if days == _MASKS["weekends"]:
         return f"every weekend day {at}"
-    names = [WEEKDAYS[i].capitalize() for i in range(7) if days & (1 << i)]
+    names = [_WEEKDAYS[i].capitalize() for i in range(7) if days & (1 << i)]
     return f"every {_and(names)} {at}"
 
 
@@ -317,7 +317,7 @@ def format_day_time(moment: datetime, now: datetime, zone: ZoneInfo) -> str:
     return f"on {local:%A} {local.day} {local:%B}{year} at {clock}"
 
 
-def format_clock(moment: datetime, zone: ZoneInfo) -> str:
+def _format_clock(moment: datetime, zone: ZoneInfo) -> str:
     """``17:00`` in alfred's timezone."""
     return f"{moment.astimezone(zone):%H:%M}"
 
@@ -325,7 +325,7 @@ def format_clock(moment: datetime, zone: ZoneInfo) -> str:
 def format_now(now: datetime, due: datetime, zone: ZoneInfo) -> str:
     """The current time for a reminder input: ``17:12`` on the due day, else in full."""
     if now.astimezone(zone).date() == due.astimezone(zone).date():
-        return format_clock(now, zone)
+        return _format_clock(now, zone)
     return format_when(now, zone)
 
 

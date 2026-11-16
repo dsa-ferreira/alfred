@@ -11,7 +11,7 @@ from alfred.agent.model import ModelReply, ModelUnreachable
 from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.history import History
 from alfred.memory.duplicates import FactDuplicateJob
-from alfred.memory.embedding import EmbeddingUnreachable
+from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
@@ -522,7 +522,7 @@ async def _fact_row(sessions: async_sessionmaker[AsyncSession], fact_id: int) ->
 async def test_fact_added_while_ragman_is_down_is_embedded_later(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    down = EmbeddingUnreachable("down")
+    down = _EmbeddingUnreachable("down")
     embedder = FakeEmbedder([[1.0, 0.0], down, down], default=[0.99, 0.05])
     model = FakeModel([text("SAME 1")])
     mem, facts = fact_sweeper(sessions, embedder, model=model)

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.models import Conversation, Entry, QueueItem, Reminder
-from alfred.history import STAMP, History, HistoryEntry, Inline, strip_stamp, to_messages
+from alfred.history import _STAMP, History, HistoryEntry, Inline, strip_stamp, to_messages
 from alfred.reminders.store import Reminders
 from alfred.tools.base import ModelImage
 from tests.helpers import add_queue_item, image_file, owner_with_files, pdf_file
@@ -371,7 +371,7 @@ def test_message_times_never_change() -> None:
 async def test_stored_entries_are_stamped(sessions: async_sessionmaker[AsyncSession]) -> None:
     await History(sessions).append("diogo", "user", "hi")
     [message] = to_messages(await History(sessions).recent("diogo", 30), LISBON)
-    assert STAMP.match(message["content"])
+    assert _STAMP.match(message["content"])
     assert strip_stamp(message["content"]) == "hi"
 
 
@@ -443,7 +443,7 @@ async def test_inline_entry_gets_image_parts(sessions: async_sessionmaker[AsyncS
     )
     text_part, image_part = message["content"]
     assert strip_stamp(text_part["text"]) == "what's this? [attachment #1: image]"
-    assert STAMP.match(text_part["text"])
+    assert _STAMP.match(text_part["text"])
     assert image_part == {
         "type": "image_url",
         "image_url": {"url": "data:image/jpeg;base64,anBlZw=="},

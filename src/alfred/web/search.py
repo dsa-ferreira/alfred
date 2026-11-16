@@ -19,16 +19,16 @@ from alfred.web.allowlist import normalise
 
 log = logging.getLogger(__name__)
 
-TimeRange = Literal["day", "week", "month", "year"]
-Category = Literal["general", "news"]
+_TimeRange = Literal["day", "week", "month", "year"]
+_Category = Literal["general", "news"]
 TIME_RANGES: tuple[str, ...] = ("day", "week", "month", "year")
 CATEGORIES: tuple[str, ...] = ("general", "news")
 
-SNIPPET_CHARS = 400
-INFOBOX_CHARS = 500
-ANSWER_CHARS = 500
-MIN_SNIPPET_CHARS = 40
-FAILED_ENGINES = "(Some search engines did not respond.)"
+_SNIPPET_CHARS = 400
+_INFOBOX_CHARS = 500
+_ANSWER_CHARS = 500
+_MIN_SNIPPET_CHARS = 40
+_FAILED_ENGINES = "(Some search engines did not respond.)"
 
 
 class SearchUnavailable(Exception):
@@ -36,7 +36,7 @@ class SearchUnavailable(Exception):
 
 
 @dataclass(frozen=True)
-class SearchResults:
+class _SearchResults:
     text: str
     # The URLs listed in ``text``, as SearXNG gave them.
     urls: list[str]
@@ -68,7 +68,7 @@ class SearxngClient:
 
     async def search(
         self, query: str, *, time_range: str | None = None, category: str | None = None
-    ) -> SearchResults:
+    ) -> _SearchResults:
         params = {"q": query, "format": "json"}
         if time_range:
             params["time_range"] = time_range
@@ -89,16 +89,16 @@ class SearxngClient:
             raise SearchUnavailable("the search server's reply is not JSON") from None
         if not isinstance(data, dict):
             raise SearchUnavailable("the search server's reply can't be understood")
-        return shape(data, query, limit=self._results, max_chars=self._max_chars)
+        return _shape(data, query, limit=self._results, max_chars=self._max_chars)
 
 
-def shape(data: dict[str, Any], query: str, *, limit: int, max_chars: int) -> SearchResults:
+def _shape(data: dict[str, Any], query: str, *, limit: int, max_chars: int) -> _SearchResults:
     """SearXNG's JSON reply as the text the model reads, and the URLs it lists."""
     head: list[str] = []
     for answer in _list(data.get("answers"))[:1]:
         text = answer.get("answer") if isinstance(answer, dict) else answer
         if isinstance(text, str) and text.strip():
-            head.append(f"Answer: {_cut(_flat(text), ANSWER_CHARS)}")
+            head.append(f"Answer: {_cut(_flat(text), _ANSWER_CHARS)}")
     for box in _list(data.get("infoboxes"))[:1]:
         if not isinstance(box, dict):
             continue
@@ -106,14 +106,14 @@ def shape(data: dict[str, Any], query: str, *, limit: int, max_chars: int) -> Se
         content = _flat(_str(box.get("content")))
         if title or content:
             line = f"{title}: {content}" if title and content else title or content
-            head.append(f"Infobox: {_cut(line, INFOBOX_CHARS)}")
+            head.append(f"Infobox: {_cut(line, _INFOBOX_CHARS)}")
 
     items = _items(data.get("results"), limit)
-    tail = [FAILED_ENGINES] if _list(data.get("unresponsive_engines")) else []
+    tail = [_FAILED_ENGINES] if _list(data.get("unresponsive_engines")) else []
 
     if not items:
         body = [f'No web results found for "{query}".']
-        return SearchResults(_fit("\n".join(head + body + tail), max_chars), [])
+        return _SearchResults(_fit("\n".join(head + body + tail), max_chars), [])
 
     # Snippets share what is left of max_chars after everything else. If even
     # titles and URLs don't fit, the last results go, so every URL returned
@@ -124,15 +124,15 @@ def shape(data: dict[str, Any], query: str, *, limit: int, max_chars: int) -> Se
             break
         items.pop()
     room = (max_chars - len(fixed)) // len(items)
-    budget = min(SNIPPET_CHARS, room)
-    if budget < MIN_SNIPPET_CHARS:  # too little room for a useful snippet
+    budget = min(_SNIPPET_CHARS, room)
+    if budget < _MIN_SNIPPET_CHARS:  # too little room for a useful snippet
         budget = 0
     lines = [
         _render(n, item, _cut(item.snippet, budget) if budget else "")
         for n, item in enumerate(items, 1)
     ]
     text = "\n".join(head + lines + tail)
-    return SearchResults(_fit(text, max_chars), [item.url for item in items])
+    return _SearchResults(_fit(text, max_chars), [item.url for item in items])
 
 
 def _items(results: Any, limit: int) -> list[_Item]:

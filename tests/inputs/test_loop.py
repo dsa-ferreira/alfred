@@ -12,13 +12,13 @@ from alfred import notices
 from alfred.config import User, Users
 from alfred.db.models import QueueItem
 from alfred.history import History
-from alfred.inputs.loop import expire_once, run_expiry_loop
+from alfred.inputs.loop import _expire_once, run_expiry_loop
 from alfred.inputs.store import InputRequests
-from alfred.tools.base import confirm_question
+from alfred.tools.base import _confirm_question
 from tests.helpers import ANA, DIOGO, add_queue_item
 
 USERS = Users((DIOGO, ANA))
-QUESTION = confirm_question("mcparr_add_media", {"title": "Dune"})
+QUESTION = _confirm_question("mcparr_add_media", {"title": "Dune"})
 
 
 class Edits:
@@ -47,7 +47,7 @@ async def waiting(
 async def test_nobody_answers(sessions: async_sessionmaker[AsyncSession]) -> None:
     requests, item = await waiting(sessions, timedelta(minutes=-1))
     outbox = Edits()
-    ended = await expire_once(requests, outbox, USERS)
+    ended = await _expire_once(requests, outbox, USERS)
     assert [r.queue_item_id for r in ended] == [item]
     async with sessions() as session:
         row = await session.get(QueueItem, item)
@@ -63,7 +63,7 @@ async def test_nobody_answers(sessions: async_sessionmaker[AsyncSession]) -> Non
 async def test_open_requests_are_left_alone(sessions: async_sessionmaker[AsyncSession]) -> None:
     requests, item = await waiting(sessions, timedelta(hours=1))
     outbox = Edits()
-    assert await expire_once(requests, outbox, USERS) == []
+    assert await _expire_once(requests, outbox, USERS) == []
     assert outbox.edits == []
 
 

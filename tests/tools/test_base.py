@@ -5,8 +5,8 @@ from typing import Any
 import pytest
 
 from alfred.tools.base import (
-    CONFIRM,
-    DECLINED,
+    _CONFIRM,
+    _DECLINED,
     AllowList,
     AttemptContext,
     Confirmed,
@@ -16,10 +16,10 @@ from alfred.tools.base import (
     Question,
     ToolOutcome,
     TurnInput,
+    _safe_call,
     chat_only,
     dispatch,
     dispatch_resume,
-    safe_call,
 )
 from tests.helpers import DIOGO
 
@@ -61,7 +61,7 @@ async def test_unknown_tool() -> None:
 
 
 async def test_exception_becomes_an_error_result(caplog: pytest.LogCaptureFixture) -> None:
-    outcome = await safe_call(Broken(), "x", None, AttemptContext(CHAT))
+    outcome = await _safe_call(Broken(), "x", None, AttemptContext(CHAT))
     assert outcome == ToolOutcome(False, "Error: tool 'x' failed: ValueError")
     assert "tool x failed" in caplog.text
 
@@ -276,15 +276,15 @@ async def test_unparseable_arguments_go_to_the_inner_error() -> None:
 
 async def test_resume_true_runs_the_call_once() -> None:
     inner = Counting("x")
-    outcome = await confirmed(inner, "x").resume("x", ARGS, CONFIRM, True, AttemptContext(CHAT))
+    outcome = await confirmed(inner, "x").resume("x", ARGS, _CONFIRM, True, AttemptContext(CHAT))
     assert outcome == ToolOutcome(True, "ran x")
     assert inner.calls == [("x", ARGS)]
 
 
 async def test_resume_false_declines() -> None:
     inner = Counting("x")
-    outcome = await confirmed(inner, "x").resume("x", ARGS, CONFIRM, False, AttemptContext(CHAT))
-    assert outcome == ToolOutcome(False, DECLINED)
+    outcome = await confirmed(inner, "x").resume("x", ARGS, _CONFIRM, False, AttemptContext(CHAT))
+    assert outcome == ToolOutcome(False, _DECLINED)
     assert inner.calls == []
 
 

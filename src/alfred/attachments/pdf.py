@@ -21,11 +21,8 @@ import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
 
 from alfred.attachments import Unreadable
-from alfred.attachments.handles import has_text
 from alfred.attachments.images import encode
 from alfred.tools.base import ModelImage
-
-__all__ = ["MIME", "PdfText", "has_text", "read_pdf", "render_page"]
 
 MIME = "application/pdf"
 
@@ -34,7 +31,7 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdfium")
 
 
 @dataclass(frozen=True)
-class PdfText:
+class _PdfText:
     """Each page's text, page 1 first."""
 
     pages: list[str]
@@ -53,7 +50,7 @@ def _open(data: bytes) -> pdfium.PdfDocument:
         raise Unreadable("the PDF can't be opened (damaged or not a PDF)") from None
 
 
-def read_pdf(data: bytes) -> PdfText:
+def _read_pdf(data: bytes) -> _PdfText:
     """Every page's text; :class:`Unreadable` if the PDF can't be used."""
     with _lock:
         document = _open(data)
@@ -73,12 +70,12 @@ def read_pdf(data: bytes) -> PdfText:
                 finally:
                     page.close()
                 pages.append(text.replace("\r\n", "\n").replace("\r", "\n").strip())
-            return PdfText(pages)
+            return _PdfText(pages)
         finally:
             document.close()
 
 
-def render_page(data: bytes, page_number: int, max_px: int) -> ModelImage:
+def _render_page(data: bytes, page_number: int, max_px: int) -> ModelImage:
     """Page ``page_number`` (from 1) as an image whose longer side is ``max_px``."""
     with _lock:
         document = _open(data)
@@ -104,9 +101,9 @@ async def _run[T](function: Callable[..., T], *args: object) -> T:
     return await asyncio.get_running_loop().run_in_executor(_executor, function, *args)
 
 
-async def read_pdf_async(data: bytes) -> PdfText:
-    return await _run(read_pdf, data)
+async def read_pdf_async(data: bytes) -> _PdfText:
+    return await _run(_read_pdf, data)
 
 
 async def render_page_async(data: bytes, page_number: int, max_px: int) -> ModelImage:
-    return await _run(render_page, data, page_number, max_px)
+    return await _run(_render_page, data, page_number, max_px)

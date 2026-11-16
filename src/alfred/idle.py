@@ -32,7 +32,7 @@ from alfred.history import History
 log = logging.getLogger(__name__)
 
 # Longest sleep after a candidate couldn't be closed (a queue item, a new message).
-SKIPPED_RETRY_S = 60.0
+_SKIPPED_RETRY_S = 60.0
 
 
 class IdleCloser:
@@ -62,7 +62,7 @@ class IdleCloser:
             except Exception:
                 # A database blip: nothing changed, look again soon.
                 log.exception("closing idle conversations failed; trying again later")
-                wait = SKIPPED_RETRY_S
+                wait = _SKIPPED_RETRY_S
             await self._sleep(wait)
 
     async def close_once(self) -> float:
@@ -94,5 +94,5 @@ class IdleCloser:
             (soonest - now).total_seconds() if soonest is not None else self._after.total_seconds()
         )
         if skipped:
-            wait = min(wait, SKIPPED_RETRY_S)
+            wait = min(wait, _SKIPPED_RETRY_S)
         return max(0.0, wait)

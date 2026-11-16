@@ -23,22 +23,22 @@ from alfred.queue import Outbox, Queue
 
 log = logging.getLogger(__name__)
 
-NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+_NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class NotifyRequest(BaseModel):
+class _NotifyRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    text: NonEmpty
+    text: _NonEmpty
     user: str | None = None
 
 
-class AskRequest(BaseModel):
+class _AskRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    prompt: NonEmpty
+    prompt: _NonEmpty
     user: str | None = None
 
 
-class AskAccepted(BaseModel):
+class _AskAccepted(BaseModel):
     id: int
 
 
@@ -94,7 +94,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/notify")
-    async def notify(body: NotifyRequest, service: str = caller) -> JSONResponse:
+    async def notify(body: _NotifyRequest, service: str = caller) -> JSONResponse:
         user = target(body.user)
         # Sent directly, never through the AI queue.
         try:
@@ -112,10 +112,10 @@ def create_app(
         return JSONResponse({"status": "sent"})
 
     @app.post("/ask", status_code=status.HTTP_202_ACCEPTED)
-    async def ask(body: AskRequest, service: str = caller) -> AskAccepted:
+    async def ask(body: _AskRequest, service: str = caller) -> _AskAccepted:
         user = target(body.user)
         item_id = await queue.enqueue_ask(service, body.prompt, user.name)
         log.info("ask from %s for %s queued as item %s", service, user.name, item_id)
-        return AskAccepted(id=item_id)
+        return _AskAccepted(id=item_id)
 
     return app

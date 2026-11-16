@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from alfred.tools.base import AttemptContext, ToolOutcome, TurnInput
-from alfred.tools.dates import DATE, DATE_TOOL, DateTools
+from alfred.tools.dates import _DATE_TOOL, DATE, DateTools
 from tests.helpers import DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -49,11 +49,11 @@ async def error(**arguments: object) -> str:
 async def test_offered_on_every_turn(turn: TurnInput) -> None:
     tools = DateTools(LISBON)
     assert await tools.open(turn) is tools
-    assert tools.definitions == [DATE_TOOL]
+    assert tools.definitions == [_DATE_TOOL]
 
 
 def test_definition() -> None:
-    function = DATE_TOOL["function"]
+    function = _DATE_TOOL["function"]
     assert function["description"].startswith("Use for any date calculation")
     assert function["parameters"]["properties"]["op"]["enum"] == [
         "between",

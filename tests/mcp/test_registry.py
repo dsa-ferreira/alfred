@@ -21,7 +21,7 @@ from mcp.types import (
 )
 
 from alfred.config import McpServer
-from alfred.mcp.registry import build_turn_tools, call_tool, classify, tool_name
+from alfred.mcp.registry import _classify, _tool_name, build_turn_tools, call_tool
 from alfred.tools.base import ToolOutcome
 from tests.mcp.servers import (
     COOKBOOK_INSTRUCTIONS,
@@ -71,7 +71,7 @@ async def test_same_tool_on_two_servers() -> None:
 
 
 def test_name_cleaning() -> None:
-    assert tool_name("my-server", "get.things now") == "my-server_get_things_now"
+    assert _tool_name("my-server", "get.things now") == "my-server_get_things_now"
 
 
 async def test_definition_shape() -> None:
@@ -390,7 +390,7 @@ def test_titled_choices_use_their_titles() -> None:
             }
         },
     }
-    outcome = classify("mcparr", "mcparr_pick", _elicit(schema), 1)
+    outcome = _classify("mcparr", "mcparr_pick", _elicit(schema), 1)
     assert buttons(outcome) == [
         ("1080p", {"action": "accept", "content": {"quality": "hd"}}),
         ("4K", {"action": "accept", "content": {"quality": "uhd"}}),
@@ -447,8 +447,8 @@ def test_url_and_sampling_requests_cant_be_shown() -> None:
             )
         },
     )
-    assert "(url mode)" in classify("mcparr", "t", url, 1).text
-    assert "(a sampling/createMessage request)" in classify("mcparr", "t", sampling, 1).text
+    assert "(url mode)" in _classify("mcparr", "t", url, 1).text
+    assert "(a sampling/createMessage request)" in _classify("mcparr", "t", sampling, 1).text
 
 
 async def test_ordinary_calls_are_unchanged() -> None:

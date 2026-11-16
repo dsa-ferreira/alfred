@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from alfred.web.allowlist import Allowlist, find_urls, normalise
+from alfred.web.allowlist import Allowlist, _find_urls, normalise
 
 
 @pytest.mark.parametrize(
@@ -53,7 +53,7 @@ def test_extraction_strips_trailing_punctuation() -> None:
         "summarise https://example.com/article. Also (see https://example.org/x), "
         'and "https://example.net/q?a=1"! or <https://example.io/y>; last: http://a.example/b?'
     )
-    assert find_urls(text) == [
+    assert _find_urls(text) == [
         "https://example.com/article",
         "https://example.org/x",
         "https://example.net/q?a=1",

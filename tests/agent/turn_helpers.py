@@ -15,13 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.brains import Brains
 from alfred.agent.model import ModelFailed, ModelReply
-from alfred.agent.prompts import CALCULATE, DATE, operating_rules
+from alfred.agent.prompts import _CALCULATE, _DATE, _operating_rules
 from alfred.agent.turn import Agent, TurnResult
 from alfred.config import User, Users
 from alfred.db.models import TurnToolCall
 from alfred.history import History, strip_stamp
 from alfred.mcp.registry import ServerInstructions
-from alfred.mcp.toolset import server_instructions
+from alfred.mcp.toolset import _server_instructions
 from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch
 from alfred.reminders.store import Reminders
@@ -30,7 +30,7 @@ from alfred.tools.base import Resume, TurnInput
 from alfred.tools.brains import SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
-from alfred.web.tools import WEB_FETCH, WEB_SEARCH, WebTools
+from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH, WebTools
 from tests.helpers import (
     DIOGO,
     FakeEmbedder,
@@ -52,7 +52,7 @@ MCPARR = server_config("mcparr")
 COOKBOOK = server_config("cookbook")
 
 
-COOKBOOK_SECTION = server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS))
+COOKBOOK_SECTION = _server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS))
 
 
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
@@ -65,7 +65,7 @@ def rules(*tools: str, user: str = "diogo", others: tuple[str, ...] = ()) -> str
     alfred tools offered.
     """
     return (
-        operating_rules(user, {CALCULATE, DATE, *tools}, others)
+        _operating_rules(user, {_CALCULATE, _DATE, *tools}, others)
         + "\n\nToday is Monday, 2 November 2026."
         + "\n\nYou are running on the model gemma4:26b-a4b-it-qat."
     )
@@ -166,11 +166,11 @@ def web_tools(http: httpx.AsyncClient, *, page_chars: int = 8000) -> WebTools:
 
 
 def fetch_call(url: str, **extra: object) -> ModelReply:
-    return calls((WEB_FETCH, json.dumps({"url": url, **extra})))
+    return calls((_WEB_FETCH, json.dumps({"url": url, **extra})))
 
 
 def search_call(query: str) -> ModelReply:
-    return calls((WEB_SEARCH, json.dumps({"query": query})))
+    return calls((_WEB_SEARCH, json.dumps({"query": query})))
 
 
 def last_tool_result(model: FakeModel) -> str:

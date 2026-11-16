@@ -19,7 +19,7 @@ from alfred.db.models import Attachment, Conversation, QueueItem, Reminder, Remi
 log = logging.getLogger(__name__)
 
 
-async def stored_user_names(sessions: async_sessionmaker[AsyncSession]) -> set[str]:
+async def _stored_user_names(sessions: async_sessionmaker[AsyncSession]) -> set[str]:
     """Every user name some row refers to."""
     query = union(
         select(Conversation.user_name),
@@ -36,7 +36,7 @@ async def warn_unknown_users(
     sessions: async_sessionmaker[AsyncSession], configured: Collection[str]
 ) -> list[str]:
     """Log a warning for each stored user name that isn't configured; returns them."""
-    unknown = sorted((await stored_user_names(sessions)) - set(configured))
+    unknown = sorted((await _stored_user_names(sessions)) - set(configured))
     for name in unknown:
         log.warning(
             "the database has conversations, messages or reminders of user %r, who is not "

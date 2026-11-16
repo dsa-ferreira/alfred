@@ -20,38 +20,38 @@ from alfred.tools.base import ModelImage
 
 # Larger images are refused, so a small file can't decode into gigabytes.
 # Pillow itself raises at twice this.
-MAX_PIXELS = 64_000_000
-Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+_MAX_PIXELS = 64_000_000
+Image.MAX_IMAGE_PIXELS = _MAX_PIXELS
 
-MIME_BY_FORMAT = {
+_MIME_BY_FORMAT = {
     "JPEG": "image/jpeg",
     "PNG": "image/png",
     "WEBP": "image/webp",
     "GIF": "image/gif",  # its first frame
 }
-JPEG_QUALITY = 85
+_JPEG_QUALITY = 85
 # EXIF orientations that turn the image a quarter, swapping width and height.
 _QUARTER_TURNS = {5, 6, 7, 8}
 _ORIENTATION = 0x0112
 
 
 @dataclass(frozen=True)
-class ImageInfo:
+class _ImageInfo:
     mime: str
     # Upright, as it is shown.
     width: int
     height: int
 
 
-def inspect_image(data: bytes) -> ImageInfo:
+def _inspect_image(data: bytes) -> _ImageInfo:
     """The image's type and upright size; :class:`Unreadable` if it can't be used."""
     try:
         with Image.open(io.BytesIO(data)) as image:
-            mime = MIME_BY_FORMAT.get(image.format or "")
+            mime = _MIME_BY_FORMAT.get(image.format or "")
             if mime is None:
                 raise Unreadable(f"unsupported image format {image.format}")
             width, height = image.size
-            if width * height > MAX_PIXELS:
+            if width * height > _MAX_PIXELS:
                 raise Unreadable(f"image too large ({width}x{height})")
             image.load()  # decodes everything: a truncated file fails here
             orientation = image.getexif().get(_ORIENTATION)
@@ -61,10 +61,10 @@ def inspect_image(data: bytes) -> ImageInfo:
         raise Unreadable(f"image can't be decoded: {type(exc).__name__}") from None
     if orientation in _QUARTER_TURNS:
         width, height = height, width
-    return ImageInfo(mime, width, height)
+    return _ImageInfo(mime, width, height)
 
 
-def for_model(data: bytes, max_px: int) -> ModelImage:
+def _for_model(data: bytes, max_px: int) -> ModelImage:
     """The image upright, at most ``max_px`` on its longer side, as JPEG or PNG."""
     try:
         with Image.open(io.BytesIO(data)) as opened:
@@ -81,7 +81,7 @@ def encode(image: Image.Image) -> ModelImage:
     if _transparent(image):
         image.convert("RGBA").save(out, "PNG", optimize=True)
         return ModelImage(out.getvalue(), "image/png")
-    image.convert("RGB").save(out, "JPEG", quality=JPEG_QUALITY)
+    image.convert("RGB").save(out, "JPEG", quality=_JPEG_QUALITY)
     return ModelImage(out.getvalue(), "image/jpeg")
 
 
@@ -94,9 +94,9 @@ def _transparent(image: Image.Image) -> bool:
     return low < 255
 
 
-async def inspect_image_async(data: bytes) -> ImageInfo:
-    return await asyncio.to_thread(inspect_image, data)
+async def inspect_image_async(data: bytes) -> _ImageInfo:
+    return await asyncio.to_thread(_inspect_image, data)
 
 
 async def for_model_async(data: bytes, max_px: int) -> ModelImage:
-    return await asyncio.to_thread(for_model, data, max_px)
+    return await asyncio.to_thread(_for_model, data, max_px)

@@ -30,12 +30,12 @@ from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, parse_a
 
 CALCULATE = "alfred_calculate"
 
-MAX_CHARS = 500
-MAX_DIGITS = 1000  # largest integer result, in decimal digits
-MAX_UNIT_CHARS = 40
-SIGNIFICANT_DIGITS = 12
+_MAX_CHARS = 500
+_MAX_DIGITS = 1000  # largest integer result, in decimal digits
+_MAX_UNIT_CHARS = 40
+_SIGNIFICANT_DIGITS = 12
 
-FUNCTIONS: dict[str, Callable[..., Any]] = {
+_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "sqrt": math.sqrt,
     "abs": abs,
     "round": round,
@@ -47,7 +47,7 @@ FUNCTIONS: dict[str, Callable[..., Any]] = {
     "log10": math.log10,
     "exp": math.exp,
 }
-CONSTANTS: dict[str, float] = {"pi": math.pi, "e": math.e}
+_CONSTANTS: dict[str, float] = {"pi": math.pi, "e": math.e}
 
 _BINARY: dict[type[ast.operator], Callable[[Any, Any], Any]] = {
     ast.Add: operator.add,
@@ -62,9 +62,9 @@ _UNARY: dict[type[ast.unaryop], Callable[[Any], Any]] = {
     ast.UAdd: operator.pos,
 }
 
-ALLOWED = "numbers, + - * / // % **, parentheses, pi, e and the functions " + ", ".join(FUNCTIONS)
+_ALLOWED = "numbers, + - * / // % **, parentheses, pi, e and the functions " + ", ".join(_FUNCTIONS)
 
-CALCULATE_TOOL: dict[str, Any] = {
+_CALCULATE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": CALCULATE,
@@ -72,7 +72,7 @@ CALCULATE_TOOL: dict[str, Any] = {
             "Use for any arithmetic, percentage or unit conversion instead of working it "
             "out yourself: alfred computes it exactly. The expression uses numbers, "
             "+ - * / // ** and parentheses, % (remainder, not percent), pi, e and "
-            f"{', '.join(FUNCTIONS)}. Write percentages as /100 (15% of 80 is "
+            f"{', '.join(_FUNCTIONS)}. Write percentages as /100 (15% of 80 is "
             "0.15 * 80). To convert units, also pass from_unit and to_unit: the "
             "expression's result is taken in from_unit. Units such as cup, tbsp, tsp, "
             "floz, ml, l, g, kg, oz, lb, degC, degF, km, mi, km/h, mph, kcal, kJ, "
@@ -100,35 +100,35 @@ CALCULATE_TOOL: dict[str, Any] = {
 }
 
 
-class CalculationError(ValueError):
+class _CalculationError(ValueError):
     """The calculation can't be done; the message is written for the model."""
 
 
 # --- arithmetic (design D3) ------------------------------------------------------
 
 
-def evaluate(expression: str) -> int | float:
+def _evaluate(expression: str) -> int | float:
     """The value of ``expression``. Raises :class:`CalculationError`."""
     if not expression.strip():
-        raise CalculationError("the expression is empty.")
-    if len(expression) > MAX_CHARS:
-        raise CalculationError(f"the expression is too long (at most {MAX_CHARS} characters).")
+        raise _CalculationError("the expression is empty.")
+    if len(expression) > _MAX_CHARS:
+        raise _CalculationError(f"the expression is too long (at most {_MAX_CHARS} characters).")
     try:
         tree = ast.parse(expression.strip(), mode="eval")
     except (SyntaxError, ValueError, RecursionError, MemoryError):
-        raise CalculationError(f"can't read the expression. Use {ALLOWED}.") from None
+        raise _CalculationError(f"can't read the expression. Use {_ALLOWED}.") from None
     try:
         return _eval(tree.body)
-    except CalculationError:
+    except _CalculationError:
         raise
     except ZeroDivisionError:
-        raise CalculationError("it divides by zero.") from None
+        raise _CalculationError("it divides by zero.") from None
     except OverflowError:
-        raise CalculationError("the number is too large.") from None
+        raise _CalculationError("the number is too large.") from None
     except RecursionError:
-        raise CalculationError("the expression is nested too deeply.") from None
+        raise _CalculationError("the expression is nested too deeply.") from None
     except (ValueError, TypeError) as exc:
-        raise CalculationError(f"it has no result ({exc}).") from None
+        raise _CalculationError(f"it has no result ({exc}).") from None
 
 
 def _eval(node: ast.AST) -> int | float:
@@ -142,53 +142,53 @@ def _eval(node: ast.AST) -> int | float:
         case ast.BinOp(left=left, op=op, right=right) if type(op) in _BINARY:
             return _checked(_BINARY[type(op)](_eval(left), _eval(right)))
         case ast.Name(id=name):
-            if name in CONSTANTS:
-                return CONSTANTS[name]
-            raise CalculationError(f"{name} is not allowed. Use {ALLOWED}.")
-        case ast.Call(func=ast.Name(id=name), args=args, keywords=[]) if name in FUNCTIONS:
+            if name in _CONSTANTS:
+                return _CONSTANTS[name]
+            raise _CalculationError(f"{name} is not allowed. Use {_ALLOWED}.")
+        case ast.Call(func=ast.Name(id=name), args=args, keywords=[]) if name in _FUNCTIONS:
             if any(isinstance(a, ast.Starred) for a in args):
-                raise CalculationError(f"{name} takes plain numbers, not unpacked lists.")
-            return _checked(FUNCTIONS[name](*(_eval(a) for a in args)))
+                raise _CalculationError(f"{name} takes plain numbers, not unpacked lists.")
+            return _checked(_FUNCTIONS[name](*(_eval(a) for a in args)))
         case ast.Call(func=ast.Name(id=name)):
-            raise CalculationError(f"the function {name} is not allowed. Use {ALLOWED}.")
+            raise _CalculationError(f"the function {name} is not allowed. Use {_ALLOWED}.")
         case ast.Constant(value=value):
-            raise CalculationError(f"{value!r} is not a number. Use {ALLOWED}.")
+            raise _CalculationError(f"{value!r} is not a number. Use {_ALLOWED}.")
         case _:
-            raise CalculationError(
-                f"{ast.unparse(node)!r} is not allowed. Use {ALLOWED}."
+            raise _CalculationError(
+                f"{ast.unparse(node)!r} is not allowed. Use {_ALLOWED}."
                 if isinstance(node, ast.expr)
-                else f"that is not allowed. Use {ALLOWED}."
+                else f"that is not allowed. Use {_ALLOWED}."
             )
 
 
 def _power(base: int | float, exponent: int | float) -> int | float:
     """``base ** exponent``, refused before it is computed if it would be too large."""
     whole = isinstance(base, int) and isinstance(exponent, int) and exponent > 0 and abs(base) > 1
-    if whole and exponent * math.log10(abs(base)) > MAX_DIGITS:
-        raise CalculationError("the number is too large.")
+    if whole and exponent * math.log10(abs(base)) > _MAX_DIGITS:
+        raise _CalculationError("the number is too large.")
     result = base**exponent
     if isinstance(result, complex):
-        raise CalculationError("it has no real result.")
+        raise _CalculationError("it has no real result.")
     return _checked(result)
 
 
 def _checked(value: Any) -> int | float:
     if isinstance(value, complex):
-        raise CalculationError("it has no real result.")
-    if isinstance(value, int) and value.bit_length() > MAX_DIGITS * 3.33:
-        raise CalculationError("the number is too large.")
+        raise _CalculationError("it has no real result.")
+    if isinstance(value, int) and value.bit_length() > _MAX_DIGITS * 3.33:
+        raise _CalculationError("the number is too large.")
     if isinstance(value, float) and not math.isfinite(value):
-        raise CalculationError("the number is too large.")
+        raise _CalculationError("the number is too large.")
     return value
 
 
-def format_number(value: int | float) -> str:
+def _format_number(value: int | float) -> str:
     """Integers exactly; other numbers to 12 significant digits, without float noise."""
     if isinstance(value, int):
         return str(value)
     if value.is_integer() and abs(value) < 10**15:
         return str(int(value))
-    return format(value, f".{SIGNIFICANT_DIGITS}g")
+    return format(value, f".{_SIGNIFICANT_DIGITS}g")
 
 
 # --- units (design D4) -----------------------------------------------------------
@@ -210,40 +210,40 @@ _DIMENSIONS = {
 
 
 @functools.cache
-def registry() -> pint.UnitRegistry:
+def _registry() -> pint.UnitRegistry:
     """pint's units, loaded once (about half a second)."""
     return pint.UnitRegistry()
 
 
-def check_unit(unit: str) -> str:
+def _check_unit(unit: str) -> str:
     value = unit.strip()
-    if not value or len(value) > MAX_UNIT_CHARS or not _UNIT.fullmatch(value):
-        raise CalculationError(
+    if not value or len(value) > _MAX_UNIT_CHARS or not _UNIT.fullmatch(value):
+        raise _CalculationError(
             f"{unit!r} is not a unit alfred accepts: use a unit name such as cup, kg or degC "
             "(numbers only as a one-digit power, such as m^2)."
         )
     return value
 
 
-def convert(value: int | float, from_unit: str, to_unit: str) -> tuple[str, str]:
+def _convert(value: int | float, from_unit: str, to_unit: str) -> tuple[str, str]:
     """``value`` in ``from_unit`` and in ``to_unit``, each as ``<number> <unit>``."""
-    source, target = check_unit(from_unit), check_unit(to_unit)
-    units = registry()
+    source, target = _check_unit(from_unit), _check_unit(to_unit)
+    units = _registry()
     try:
         quantity = units.Quantity(value, source)
         converted = quantity.to(target)
     except pint.DimensionalityError:
-        raise CalculationError(_mismatch(units, source, target)) from None
+        raise _CalculationError(_mismatch(units, source, target)) from None
     except (pint.UndefinedUnitError, pint.DefinitionSyntaxError) as exc:
         name = getattr(exc, "unit_names", None) or (source, target)
         unknown = name if isinstance(name, str) else " or ".join(repr(n) for n in name)
-        raise CalculationError(f"unknown unit {unknown}.") from None
+        raise _CalculationError(f"unknown unit {unknown}.") from None
     except (pint.PintError, OverflowError, ZeroDivisionError) as exc:
-        raise CalculationError(f"can't convert {source} to {target} ({exc}).") from None
+        raise _CalculationError(f"can't convert {source} to {target} ({exc}).") from None
     magnitude = _checked(converted.magnitude)
     return (
-        f"{format_number(value)} {quantity.units}",
-        f"{format_number(magnitude)} {converted.units}",
+        f"{_format_number(value)} {quantity.units}",
+        f"{_format_number(magnitude)} {converted.units}",
     )
 
 
@@ -262,25 +262,25 @@ def _mismatch(units: pint.UnitRegistry, source: str, target: str) -> str:
 # --- the tool --------------------------------------------------------------------
 
 
-def calculate(arguments: dict[str, Any]) -> str:
+def _calculate(arguments: dict[str, Any]) -> str:
     """The tool's answer. Raises :class:`CalculationError`."""
     expression = arguments.get("expression")
     if isinstance(expression, bool) or not isinstance(expression, str | int | float):
-        raise CalculationError("expression is required: what to compute, such as 2 * 3.")
+        raise _CalculationError("expression is required: what to compute, such as 2 * 3.")
     expression = str(expression)
     from_unit = arguments.get("from_unit") or None
     to_unit = arguments.get("to_unit") or None
     if (from_unit is None) != (to_unit is None):
-        raise CalculationError("to convert units, pass both from_unit and to_unit.")
+        raise _CalculationError("to convert units, pass both from_unit and to_unit.")
     if from_unit is not None and not (isinstance(from_unit, str) and isinstance(to_unit, str)):
-        raise CalculationError("from_unit and to_unit must be text, such as degF and degC.")
+        raise _CalculationError("from_unit and to_unit must be text, such as degF and degC.")
 
-    value = evaluate(expression)
-    result = format_number(value)
+    value = _evaluate(expression)
+    result = _format_number(value)
     head = expression.strip()
     if from_unit is None:
         return f"{head} = {result}"
-    source, target = convert(value, from_unit, to_unit)  # type: ignore[arg-type]
+    source, target = _convert(value, from_unit, to_unit)  # type: ignore[arg-type]
     if head == result:
         return f"{source} = {target}"
     return f"{head} = {source} = {target}"
@@ -289,13 +289,13 @@ def calculate(arguments: dict[str, Any]) -> str:
 class CalculatorTools(LocalToolset):
     """``alfred_calculate``, on every turn."""
 
-    definitions = [CALCULATE_TOOL]
+    definitions = [_CALCULATE_TOOL]
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
         arguments = parse_arguments(raw_arguments)
         if isinstance(arguments, str):
             return ToolOutcome(False, arguments)
         try:
-            return ToolOutcome(True, calculate(arguments))
-        except CalculationError as exc:
+            return ToolOutcome(True, _calculate(arguments))
+        except _CalculationError as exc:
             return ToolOutcome(False, f"Error: {exc}")

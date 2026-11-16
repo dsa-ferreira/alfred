@@ -25,8 +25,8 @@ from alfred.inputs.store import InputRequests
 
 log = logging.getLogger(__name__)
 
-NO_LONGER_OPEN = "That question is no longer open."
-NOT_YOURS = "That question isn't yours to answer."
+_NO_LONGER_OPEN = "That question is no longer open."
+_NOT_YOURS = "That question isn't yours to answer."
 
 
 class QuestionEditor(Protocol):
@@ -56,16 +56,16 @@ class Taps:
             return
         parsed = parse_callback(callback.data)
         if parsed is None:
-            await self._acknowledge(callback, NO_LONGER_OPEN)
+            await self._acknowledge(callback, _NO_LONGER_OPEN)
             return
         request_id, option = parsed
         result = await self._requests.answer(request_id, option, user.name)
         if result.outcome == "not_yours":
             log.info("refused a tap on request %s from user %s", request_id, user.telegram_user_id)
-            await self._acknowledge(callback, NOT_YOURS)
+            await self._acknowledge(callback, _NOT_YOURS)
             return
         if result.outcome == "not_open":
-            await self._acknowledge(callback, NO_LONGER_OPEN)
+            await self._acknowledge(callback, _NO_LONGER_OPEN)
             ended = result.request
             if result.expired and ended is not None and ended.telegram_message_id is not None:
                 html = outcome_html(ended.question, ENDED_LINES["expired"])

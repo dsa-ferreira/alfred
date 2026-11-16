@@ -5,10 +5,10 @@ import re
 import pytest
 
 from alfred.telegram.formatting import (
-    TELEGRAM_LIMIT,
+    _TELEGRAM_LIMIT,
+    _to_telegram_html,
     split_for_telegram,
     split_markdown,
-    to_telegram_html,
 )
 
 
@@ -37,19 +37,19 @@ from alfred.telegram.formatting import (
     ],
 )
 def test_inline_and_lines(markdown: str, expected: str) -> None:
-    assert to_telegram_html(markdown) == expected
+    assert _to_telegram_html(markdown) == expected
 
 
 def test_fenced_code() -> None:
     markdown = "Run:\n```bash\necho '<hi>' && **x**\n```\ndone"
-    assert to_telegram_html(markdown) == (
+    assert _to_telegram_html(markdown) == (
         "Run:\n<pre><code class=\"language-bash\">echo '&lt;hi&gt;' &amp;&amp; **x**"
         "</code></pre>\ndone"
     )
 
 
 def test_fenced_code_without_language_and_unclosed() -> None:
-    assert to_telegram_html("```\na < b") == "<pre>a &lt; b</pre>"
+    assert _to_telegram_html("```\na < b") == "<pre>a &lt; b</pre>"
 
 
 def words(text: str) -> list[str]:
@@ -89,7 +89,7 @@ def test_code_block_crossing_a_split() -> None:
     # Each part with code renders as its own complete <pre> block.
     for part in parts:
         if "```" in part:
-            html = to_telegram_html(part)
+            html = _to_telegram_html(part)
             assert html.count("<pre") == 1
             assert html.count("</pre>") == 1
 
@@ -97,7 +97,7 @@ def test_code_block_crossing_a_split() -> None:
 def test_rendered_parts_fit_telegram() -> None:
     reply = "&<>" * 3000  # escaping grows this 4-5x
     pairs = split_for_telegram(reply)
-    assert all(len(html) <= TELEGRAM_LIMIT for _, html in pairs)
+    assert all(len(html) <= _TELEGRAM_LIMIT for _, html in pairs)
     assert "".join(md for md, _ in pairs) == reply
 
 

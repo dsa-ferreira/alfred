@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.prompts import NO_REPLY
+from alfred.agent.prompts import _NO_REPLY
 from alfred.history import History
 from alfred.tools.base import AttemptContext, TurnInput
 from alfred.tools.conversation import END_CONVERSATION, ConversationTools
@@ -51,7 +51,7 @@ async def test_end_conversation_not_offered_on_ask_turns(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
-    model = FakeModel([calls((END_CONVERSATION, "{}")), text(NO_REPLY)])
+    model = FakeModel([calls((END_CONVERSATION, "{}")), text(_NO_REPLY)])
     result = await agent(sessions, model).run(TurnInput("ask", "x", item, "disk-check", user=DIOGO))
     assert END_CONVERSATION not in model.tool_names()
     assert not result.reset_requested

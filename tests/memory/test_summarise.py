@@ -9,12 +9,12 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelReply, ModelUnreachable, Usage
+from alfred.agent.model import ModelReply, ModelUnreachable, _Usage
 from alfred.db.models import Conversation
 from alfred.history import History
-from alfred.memory.embedding import EmbeddingUnreachable
+from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.summaries import Summaries
-from alfred.memory.transcript import SUMMARY_PROMPT
+from alfred.memory.transcript import _SUMMARY_PROMPT
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
@@ -61,7 +61,7 @@ async def test_summary_and_embedding_stored(sessions: async_sessionmaker[AsyncSe
     assert len(model.requests) == 1
     messages, tools = model.requests[0]
     assert tools == []
-    assert messages[0] == {"role": "system", "content": SUMMARY_PROMPT}
+    assert messages[0] == {"role": "system", "content": _SUMMARY_PROMPT}
     assert messages[1]["content"] == "User: chicken thighs tonight?\nalfred: Lemon and garlic, sir."
     assert embedder.documents == [
         "Chicken thighs recipe. A lemon-garlic recipe, saved as recipe 12."
@@ -79,7 +79,7 @@ async def test_embedding_failure_keeps_title_and_summary(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     cid = await archived(sessions, "chicken?", "Lemon.")
-    mem = memory(sessions, FakeModel([text(REPLY)]), FakeEmbedder([EmbeddingUnreachable("down")]))
+    mem = memory(sessions, FakeModel([text(REPLY)]), FakeEmbedder([_EmbeddingUnreachable("down")]))
     assert await mem.summarise(cid) == "Chicken thighs recipe"
     stored = await row(sessions, cid)
     assert stored.title == "Chicken thighs recipe" and stored.summary is not None
@@ -135,7 +135,7 @@ async def test_success_after_failure_clears_retry(
 async def test_only_embedding_redone(sessions: async_sessionmaker[AsyncSession]) -> None:
     cid = await archived(sessions, "chicken?", "Lemon.")
     model = FakeModel([text(REPLY)])
-    first = memory(sessions, model, FakeEmbedder([EmbeddingUnreachable("down")]))
+    first = memory(sessions, model, FakeEmbedder([_EmbeddingUnreachable("down")]))
     await first.summarise(cid)
     second = memory(sessions, model, FakeEmbedder([[0.5]]))
     assert await second.summarise(cid) == "Chicken thighs recipe"
@@ -187,7 +187,7 @@ async def test_summary_token_counts_logged(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     cid = await archived(sessions, "chicken?", "Lemon.")
-    model = FakeModel([replace(text(REPLY), usage=Usage(3120, 58))])
+    model = FakeModel([replace(text(REPLY), usage=_Usage(3120, 58))])
     with caplog.at_level(logging.INFO):
         await memory(sessions, model, FakeEmbedder([[0.1, 0.2, 0.3]])).summarise(cid)
     assert summary_lines(caplog) == [

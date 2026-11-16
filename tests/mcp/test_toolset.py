@@ -15,8 +15,8 @@ from pydantic import SecretStr
 
 from alfred.config import McpServer, User
 from alfred.mcp.client import Connector
-from alfred.mcp.registry import ServerInstructions, late_answer
-from alfred.mcp.toolset import McpTools, OpenMcpTools, server_instructions, unavailable_note
+from alfred.mcp.registry import ServerInstructions, _late_answer
+from alfred.mcp.toolset import McpTools, _OpenMcpTools, _server_instructions, _unavailable_note
 from alfred.tools.base import (
     AllowList,
     AttemptContext,
@@ -75,11 +75,11 @@ async def test_prompt_notes() -> None:
     opened = await mcp_tools(mcparr=ConnectionError("down"), cookbook=make_cookbook()).open(TURN)
     assert opened.prompt_notes == [
         PromptNote(
-            server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS)),
+            _server_instructions(ServerInstructions("cookbook", COOKBOOK_INSTRUCTIONS)),
             "cookbook",
             len(COOKBOOK_INSTRUCTIONS),
         ),
-        PromptNote(unavailable_note(["mcparr"])),
+        PromptNote(_unavailable_note(["mcparr"])),
     ]
 
 
@@ -204,7 +204,7 @@ def asking_tools(servers: dict[str, object]) -> McpTools:
 
 async def first_leg(
     servers: dict[str, object], name: str, arguments: str
-) -> tuple[OpenMcpTools, ToolOutcome]:
+) -> tuple[_OpenMcpTools, ToolOutcome]:
     opened = await asking_tools(servers).open(TURN)
     outcome = await opened.call(name, arguments, AttemptContext(TURN))
     assert outcome.need is not None, outcome
@@ -261,7 +261,7 @@ async def test_server_with_a_new_key_gives_the_late_answer() -> None:
     _, need = await first_leg(servers, "mcparr_add_media", '{"title": "Dune"}')
     servers["mcparr"] = make_asking(ran=ran)  # restarted: a new process-local key
     outcome = await resume(servers, "mcparr_add_media", '{"title": "Dune"}', need, "Yes")
-    assert outcome == ToolOutcome(False, late_answer("mcparr", "mcparr_add_media"))
+    assert outcome == ToolOutcome(False, _late_answer("mcparr", "mcparr_add_media"))
     assert ran == []
 
 
@@ -270,7 +270,7 @@ async def test_changed_arguments_give_the_late_answer() -> None:
     servers: dict[str, object] = {"mcparr": make_asking(ran=ran)}
     _, need = await first_leg(servers, "mcparr_add_media", '{"title": "Dune"}')
     outcome = await resume(servers, "mcparr_add_media", '{"title": "Alien"}', need, "Yes")
-    assert outcome == ToolOutcome(False, late_answer("mcparr", "mcparr_add_media"))
+    assert outcome == ToolOutcome(False, _late_answer("mcparr", "mcparr_add_media"))
     assert ran == []
 
 

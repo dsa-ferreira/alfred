@@ -37,9 +37,9 @@ from alfred.tools.base import Question
 
 log = logging.getLogger(__name__)
 
-Answered = Literal["answered", "not_open", "not_yours"]
+_Answered = Literal["answered", "not_open", "not_yours"]
 # Why a request ended unanswered (``notices.NOT_DONE_REASONS``).
-EndReason = Literal["new_message", "expired", "not_delivered"]
+_EndReason = Literal["new_message", "expired", "not_delivered"]
 
 
 @dataclass(frozen=True)
@@ -76,10 +76,10 @@ class RequestRow:
 
 
 @dataclass(frozen=True)
-class Answer:
+class _Answer:
     """What a tap did, and the request it was for (``None`` when there is none)."""
 
-    outcome: Answered
+    outcome: _Answered
     request: RequestRow | None = None
     # The label of the option chosen, when answered.
     label: str | None = None
@@ -142,7 +142,7 @@ class InputRequests:
                 .values(telegram_message_id=message_id)
             )
 
-    async def answer(self, request_id: int, option: int, user: str) -> Answer:
+    async def answer(self, request_id: int, option: int, user: str) -> _Answer:
         """Apply ``user``'s tap on option ``option``: ``open -> answered``, item ``-> pending``.
 
         Only the request's own user, only while it is open and not expired.
@@ -158,19 +158,19 @@ class InputRequests:
                 )
             ).one_or_none()
             if found is None:
-                return Answer("not_open")
+                return _Answer("not_open")
             row, past = found
             if row.user_name != user:
-                return Answer("not_yours")
+                return _Answer("not_yours")
             if row.status != "open":
-                return Answer("not_open", RequestRow.of(row))
+                return _Answer("not_open", RequestRow.of(row))
             if past:
                 ended = await self._end_in(session, _by_id(request_id, user), "expired")
                 expired = ended[0] if ended else None
             else:
                 options = row.question.get("options", [])
                 if not 0 <= option < len(options):
-                    return Answer("not_open", RequestRow.of(row))
+                    return _Answer("not_open", RequestRow.of(row))
                 row.status = "answered"
                 row.answer = options[option]["answer"]
                 row.decided_at = func.now()
@@ -184,9 +184,9 @@ class InputRequests:
                     .values(status="pending", next_attempt_at=func.now())
                 )
                 await session.flush()
-                return Answer("answered", RequestRow.of(row), options[option]["label"])
+                return _Answer("answered", RequestRow.of(row), options[option]["label"])
         await self._record_endings([expired] if expired else [])
-        return Answer("not_open", expired, expired=expired is not None)
+        return _Answer("not_open", expired, expired=expired is not None)
 
     async def take_answered(self, item_id: int, user: str) -> RequestRow | None:
         """``answered -> running`` for the item's request: marked before the call runs again."""
@@ -228,12 +228,12 @@ class InputRequests:
                 .values(status="done")
             )
 
-    async def cancel_for(self, user: str, reason: EndReason = "new_message") -> list[RequestRow]:
+    async def cancel_for(self, user: str, reason: _EndReason = "new_message") -> list[RequestRow]:
         """End all of ``user``'s open requests (``answered`` ones go ahead)."""
         where = (InputRequest.user_name == user, InputRequest.status == "open")
         return await self._end(where, reason)
 
-    async def cancel(self, request_id: int, user: str, reason: EndReason) -> list[RequestRow]:
+    async def cancel(self, request_id: int, user: str, reason: _EndReason) -> list[RequestRow]:
         """End one open request, such as one whose question couldn't be sent."""
         return await self._end(_by_id(request_id, user), reason)
 
@@ -255,14 +255,14 @@ class InputRequests:
 
     # --- ending without an answer (design D5) -------------------------------------
 
-    async def _end(self, where: Sequence[Any], reason: EndReason) -> list[RequestRow]:
+    async def _end(self, where: Sequence[Any], reason: _EndReason) -> list[RequestRow]:
         async with self._sessions.begin() as session:
             ended = await self._end_in(session, where, reason)
         await self._record_endings(ended)
         return ended
 
     async def _end_in(
-        self, session: AsyncSession, where: Sequence[Any], reason: EndReason
+        self, session: AsyncSession, where: Sequence[Any], reason: _EndReason
     ) -> list[RequestRow]:
         """``open -> cancelled`` (``expired`` for expiry) and the items ``-> cancelled``."""
         status = "expired" if reason == "expired" else "cancelled"
