@@ -17,10 +17,9 @@ from alfred.kernel.users import Users
 from alfred.llm.chat import ModelUnreachable
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
-from alfred.reminders.tools import NAMES as REMINDER_TOOLS
-from alfred.tools.calculator import CALCULATE
-from alfred.tools.conversation import END_CONVERSATION
-from alfred.tools.dates import DATE
+from alfred.tools.calculator import _CALCULATE
+from alfred.tools.conversation import _END_CONVERSATION
+from alfred.tools.dates import _DATE
 from tests.agent.turn_helpers import (
     DUE,
     LISBON,
@@ -56,7 +55,7 @@ async def test_reminder_tools_offered_in_owner_turns(
     model = FakeModel([text("ok")])
     a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
     await a.run(await owner_turn(sessions, "hi"))
-    assert model.tool_names() >= REMINDER_TOOLS
+    assert model.tool_names() >= ReminderTools.names
 
 
 async def test_reminder_tools_not_offered_in_ask_turns(
@@ -68,10 +67,10 @@ async def test_reminder_tools_not_offered_in_ask_turns(
     a = agent(sessions, model, reminders=reminder_tools(sessions, clock), now=clock)
     item = await add_queue_item(sessions, "ask", "93%", "disk-check")
     await a.run(AskTurn("93%", item, "disk-check", user=DIOGO))
-    assert not REMINDER_TOOLS & model.tool_names(0)
+    assert not ReminderTools.names & model.tool_names(0)
     # A reminder turn gets only the list; setting is refused, nothing stored.
     await a.run(await reminder_turn(sessions))
-    assert REMINDER_TOOLS & model.tool_names(1) == {_REMINDERS_LIST}
+    assert ReminderTools.names & model.tool_names(1) == {_REMINDERS_LIST}
     assert "unknown tool" in model.requests[2][0][-1]["content"].lower()
     assert await Reminders(sessions).pending("diogo") == []
 
@@ -132,7 +131,7 @@ async def test_reminder_turn_gets_the_ask_tool_set_and_the_list(
         AskTurn("93%", item, "disk-check", user=DIOGO)
     )
     assert reminder_model.tool_names() == ask_model.tool_names() | {_REMINDERS_LIST}
-    assert END_CONVERSATION not in reminder_model.tool_names()
+    assert _END_CONVERSATION not in reminder_model.tool_names()
     assert reminder_model.tool_names() < owner_model.tool_names()
 
 
@@ -189,7 +188,7 @@ async def test_reminder_turn_offers_calculator_and_date_before_mcp(
     model = FakeModel([text("ok")])
     await agent(sessions, model, now=DUE).run(await reminder_turn(sessions))
     names = [t["function"]["name"] for t in model.requests[0][1]]
-    assert names.index(CALCULATE) < names.index(DATE) < names.index("mcparr_get_downloads")
+    assert names.index(_CALCULATE) < names.index(_DATE) < names.index("mcparr_get_downloads")
 
 
 # --- Set by someone else (change add-multiple-users) ----------------------------------

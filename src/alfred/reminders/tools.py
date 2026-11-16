@@ -52,7 +52,6 @@ log = logging.getLogger(__name__)
 _REMIND_SET = "alfred_remind_set"
 _REMINDERS_LIST = "alfred_reminders_list"
 _REMINDER_CANCEL = "alfred_reminder_cancel"
-NAMES = frozenset({_REMIND_SET, _REMINDERS_LIST, _REMINDER_CANCEL})
 
 
 _REMINDERS_LIST_TOOL: dict[str, Any] = {
@@ -89,6 +88,8 @@ _REMINDER_CANCEL_TOOL: dict[str, Any] = {
 class ReminderTools(LocalToolset):
     """The three reminder tools over a :class:`Reminders` store: all of them on chat
     turns, only the list on reminder turns, none on ``/ask`` turns."""
+
+    names = frozenset({_REMIND_SET, _REMINDERS_LIST, _REMINDER_CANCEL})
 
     def __init__(
         self,
@@ -335,6 +336,8 @@ def _remind_set_tool(users: list[str]) -> dict[str, Any]:
 
 class _ListOnly(LocalToolset):
     """``alfred_reminders_list`` alone, for reminder turns."""
+
+    names = ReminderTools.names
 
     def __init__(self, tools: ReminderTools) -> None:
         self._tools = tools

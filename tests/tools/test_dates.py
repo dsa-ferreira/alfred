@@ -10,7 +10,7 @@ import pytest
 
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
-from alfred.tools.dates import _DATE_TOOL, DATE, DateTools
+from alfred.tools.dates import _DATE, _DATE_TOOL, DateTools
 from tests.helpers import DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -20,7 +20,7 @@ OWNER = ChatTurn("how many days until Christmas?", 1, user=DIOGO)
 
 async def call(arguments: dict[str, object], now: datetime = NOW) -> ToolOutcome:
     tools = DateTools(LISBON, now=lambda: now)
-    return await tools.call(DATE, json.dumps(arguments), AttemptContext(OWNER))
+    return await tools.call(_DATE, json.dumps(arguments), AttemptContext(OWNER))
 
 
 async def result(now: datetime = NOW, **arguments: object) -> str:
@@ -248,5 +248,5 @@ async def test_unknown_op(arguments: dict[str, object]) -> None:
 
 
 async def test_invalid_json() -> None:
-    outcome = await DateTools(LISBON).call(DATE, "{nope", AttemptContext(OWNER))
+    outcome = await DateTools(LISBON).call(_DATE, "{nope", AttemptContext(OWNER))
     assert not outcome.ok and "not valid JSON" in outcome.text

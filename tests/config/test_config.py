@@ -727,12 +727,6 @@ def test_tools_entry_prefix_must_be_known(tmp_path: Path, entry: str) -> None:
     assert any("users[1] (ana)" in p and repr(entry) in p for p in found)
 
 
-def test_unknown_alfred_tool_in_tools(tmp_path: Path) -> None:
-    text = MINIMAL + ANA.replace('"alfred_*"', '"alfred_web_serach"')
-    found = problems(text, tmp_path)
-    assert any("users[1] (ana)" in p and "'alfred_web_serach'" in p for p in found)
-
-
 def test_valid_tools_entries(tmp_path: Path) -> None:
     tools = '["*", "alfred_web_search", "alfred_web_*", "mcparr_*", "cookbook_list_recipes"]'
     text = MINIMAL + COOKBOOK + ANA.replace('["alfred_*", "mcparr_find_media"]', tools)
@@ -890,7 +884,7 @@ def test_confirm_list_is_read(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("entry", "why"),
-    [("add_media", "must be *"), ("alfred_nope", "is not an alfred tool"), ("sonarr_*", "must")],
+    [("add_media", "must be *"), ("sonarr_*", "must")],
 )
 def test_confirm_entries_follow_the_tools_rules(tmp_path: Path, entry: str, why: str) -> None:
     found = problems(MINIMAL + ANA + f'confirm = ["{entry}"]\n', tmp_path)

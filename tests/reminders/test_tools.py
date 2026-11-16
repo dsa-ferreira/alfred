@@ -15,7 +15,6 @@ from alfred.reminders.tools import (
     _REMIND_SET,
     _REMINDER_CANCEL,
     _REMINDERS_LIST,
-    NAMES,
     ReminderTools,
 )
 from tests.helpers import ANA, DIOGO
@@ -46,7 +45,7 @@ def tools(sessions: async_sessionmaker[AsyncSession], clock: Clock) -> ReminderT
 
 def test_definitions(tools: ReminderTools) -> None:
     names = {d["function"]["name"] for d in tools.definitions}
-    assert names == NAMES
+    assert names == ReminderTools.names
     set_description = next(
         d["function"]["description"]
         for d in tools.definitions
@@ -189,7 +188,7 @@ async def test_offered_by_turn_kind(tools: ReminderTools) -> None:
     assert reminder_turn is not None and _names(reminder_turn) == {_REMINDERS_LIST}
     assert reminder_turn.handles(_REMINDERS_LIST)
     assert not reminder_turn.handles(_REMIND_SET) and not reminder_turn.handles(_REMINDER_CANCEL)
-    assert all(tools.handles(name) for name in NAMES)
+    assert all(tools.handles(name) for name in ReminderTools.names)
     assert not tools.handles("alfred_web_fetch")
 
 

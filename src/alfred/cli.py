@@ -29,6 +29,9 @@ def _cmd_serve() -> int:
     configure_logging(config.server.log_level)
     try:
         asyncio.run(serve(config))
+    except ConfigError as exc:
+        print(f"alfred: {exc}", file=sys.stderr)
+        return 2
     except RuntimeError as exc:
         print(f"alfred: {exc}", file=sys.stderr)
         return 1

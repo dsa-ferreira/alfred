@@ -17,15 +17,11 @@ from alfred.agent.messages import strip_stamp
 from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.kernel.users import User
-from alfred.memory.search import (
-    RECALL_CONVERSATION,
-    SEARCH_CONVERSATIONS,
-    ConversationSearch,
-)
+from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS, ConversationSearch
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
-from alfred.tools.conversation import END_CONVERSATION
+from alfred.tools.conversation import _END_CONVERSATION
 from alfred.worker import Worker
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
 from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
@@ -101,16 +97,16 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel(
         [
             # 0, 1: diogo talks about chicken, then archives the conversation.
-            calls((END_CONVERSATION, "{}")),
+            calls((_END_CONVERSATION, "{}")),
             text("Very good, sir."),
             # 2, 3: diogo reminds ana.
             calls((_REMIND_SET, json.dumps(remind_ana))),
             text("Very good. I shall remind ana at six."),
             # 4, 5: ana searches her memory for chicken: nothing of hers.
-            calls((SEARCH_CONVERSATIONS, json.dumps({"query": "chicken"}))),
+            calls((_SEARCH_CONVERSATIONS, json.dumps({"query": "chicken"}))),
             text("I find nothing, madam."),
             # 6, 7: ana tries to recall diogo's conversation by number.
-            calls((RECALL_CONVERSATION, json.dumps({"id": 1}))),
+            calls((_RECALL_CONVERSATION, json.dumps({"id": 1}))),
             text("There is no such conversation, madam."),
             # 8, 9: ana lists her reminders.
             calls((_REMINDERS_LIST, "{}")),
@@ -131,7 +127,7 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
     diogo_tools, ana_tools = offered(model, 0), offered(model, 4)
     assert {"mcparr_get_downloads", "cookbook_delete_recipe"} <= diogo_tools
     assert not {"mcparr_get_downloads", "mcparr_check_health"} & ana_tools
-    assert {"mcparr_add_media", "cookbook_get_recipe", _REMIND_SET, SEARCH_CONVERSATIONS} <= (
+    assert {"mcparr_add_media", "cookbook_get_recipe", _REMIND_SET, _SEARCH_CONVERSATIONS} <= (
         ana_tools
     )
 

@@ -22,11 +22,13 @@ from alfred.kernel.turn import TurnInput
 
 log = logging.getLogger(__name__)
 
-SET_MODEL = "alfred_set_model"
+_SET_MODEL = "alfred_set_model"
 
 
 class BrainTools(LocalToolset):
     """``alfred_set_model``: on the admin's chat turns, when there is a brain to switch to."""
+
+    names = frozenset({_SET_MODEL})
 
     def __init__(self, brains: Brains) -> None:
         self._brains = brains
@@ -64,7 +66,7 @@ def _set_model_tool(names: list[str]) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": SET_MODEL,
+            "name": _SET_MODEL,
             "description": (
                 "Switch the model that answers, for every user, from the next message on. The "
                 "user may call it your model or your brain (for example 'change brains to "

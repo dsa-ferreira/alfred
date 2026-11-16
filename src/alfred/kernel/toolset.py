@@ -42,7 +42,7 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from alfred.kernel.content import ModelImage
 from alfred.kernel.questions import InputNeed
@@ -150,11 +150,13 @@ class Toolset(Protocol):
 class LocalToolset:
     """Base for alfred's own tools: fixed definitions, no prompt notes, no state.
 
-    Subclasses set ``definitions`` and implement ``call``; ``offered`` says on
-    which turns they are offered (every turn by default). ``open`` returns the
+    Subclasses set ``names`` (every name they can ever offer, checked against
+    allow-lists at startup) and ``definitions``, and implement ``call``;
+    ``offered`` says on which turns they are offered (every turn by default). ``open`` returns the
     toolset itself, so a subclass with per-turn state overrides it.
     """
 
+    names: ClassVar[frozenset[str]] = frozenset()
     definitions: list[dict[str, Any]] = []
     prompt_notes: Sequence[PromptNote] = ()
 

@@ -26,14 +26,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, parse_arguments
 from alfred.times import WhenError, parse_date
 
-DATE = "alfred_date"
+_DATE = "alfred_date"
 
 _OPS = ("between", "shift", "weekday", "now_in")
 
 _DATE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": DATE,
+        "name": _DATE,
         "description": (
             "Use for any date calculation instead of working it out yourself: the days "
             "between two dates (between), a date plus or minus days, weeks or months "
@@ -71,6 +71,7 @@ _WHOLE = re.compile(r"[+-]?\d+")
 class DateTools(LocalToolset):
     """``alfred_date``, on every turn, in the user's timezone."""
 
+    names = frozenset({_DATE})
     definitions = [_DATE_TOOL]
 
     def __init__(

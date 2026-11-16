@@ -45,8 +45,8 @@ from alfred.kernel.turn import TurnInput
 
 log = logging.getLogger(__name__)
 
-VIEW_ATTACHMENT = "alfred_view_attachment"
-READ_DOCUMENT = "alfred_read_document"
+_VIEW_ATTACHMENT = "alfred_view_attachment"
+_READ_DOCUMENT = "alfred_read_document"
 
 _ID = re.compile(r"#?\s*(\d+)")
 _PAGES = re.compile(r"(\d+)(?:\s*-\s*(\d+))?")
@@ -54,7 +54,7 @@ _PAGES = re.compile(r"(\d+)(?:\s*-\s*(\d+))?")
 _VIEW_ATTACHMENT_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": VIEW_ATTACHMENT,
+        "name": _VIEW_ATTACHMENT,
         "description": (
             "Look at an attachment again: an image, or one page of a PDF rendered as an "
             "image. Use it when the user asks about an attachment whose image is not in "
@@ -78,7 +78,7 @@ _VIEW_ATTACHMENT_TOOL: dict[str, Any] = {
 _READ_DOCUMENT_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": READ_DOCUMENT,
+        "name": _READ_DOCUMENT,
         "description": (
             "Read the text of a PDF attachment, by pages. Each page comes marked with its "
             "number. A long range is cut, and the result says which page to read from next."
@@ -142,6 +142,8 @@ _TEXT_ONLY_NOTE = (
 class AttachmentTools(LocalToolset):
     """The view and read tools, opened per turn with the current brain's vision."""
 
+    names = frozenset({_VIEW_ATTACHMENT, _READ_DOCUMENT})
+
     def __init__(
         self,
         store: ObjectStore,
@@ -163,8 +165,8 @@ class AttachmentTools(LocalToolset):
         vision = self._brains.current.vision
         # The gate hides what the allow-list doesn't match; the note must not
         # describe it either.
-        view = vision and turn.user.tools.matches(VIEW_ATTACHMENT)
-        read = turn.user.tools.matches(READ_DOCUMENT)
+        view = vision and turn.user.tools.matches(_VIEW_ATTACHMENT)
+        read = turn.user.tools.matches(_READ_DOCUMENT)
         if not (view or read):
             return None
         return _OpenAttachmentTools(self, vision=vision, view=view, read=read)
@@ -177,7 +179,7 @@ class AttachmentTools(LocalToolset):
         if attachment_id is None:
             return ToolOutcome(False, "Error: id must be an attachment number, such as 7.")
         user = attempt.turn.user.name
-        if name == VIEW_ATTACHMENT:
+        if name == _VIEW_ATTACHMENT:
             return await self._view(user, attachment_id, arguments.get("page"))
         return await self.read(user, attachment_id, arguments.get("pages"))
 
@@ -294,6 +296,8 @@ class _OpenAttachmentTools(LocalToolset):
 
     ``view`` and ``read`` say which tools the user's allow-list leaves.
     """
+
+    names = AttachmentTools.names
 
     def __init__(
         self, tools: AttachmentTools, *, vision: bool, view: bool = True, read: bool = True

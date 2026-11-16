@@ -7,16 +7,16 @@ import json
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.attachments.tools import _TEXT_ONLY_NOTE, _VISION_NOTE, READ_DOCUMENT, VIEW_ATTACHMENT
+from alfred.attachments.tools import _READ_DOCUMENT, _TEXT_ONLY_NOTE, _VIEW_ATTACHMENT, _VISION_NOTE
 from alfred.brains import Brains
 from alfred.config import BrainEntry
 from alfred.history import History
 from alfred.kernel.turn import ChatTurn
-from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.brains import SET_MODEL
-from alfred.tools.calculator import CALCULATE
-from alfred.tools.conversation import END_CONVERSATION
-from alfred.tools.dates import DATE
+from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
+from alfred.tools.brains import _SET_MODEL
+from alfred.tools.calculator import _CALCULATE
+from alfred.tools.conversation import _END_CONVERSATION
+from alfred.tools.dates import _DATE
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.test_turn import MCP_TOOLS
 from tests.agent.turn_helpers import (
@@ -70,17 +70,17 @@ async def test_tool_order_with_attachments(
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         _WEB_SEARCH,
         _WEB_FETCH,
-        END_CONVERSATION,
-        SEARCH_CONVERSATIONS,
-        RECALL_CONVERSATION,
-        VIEW_ATTACHMENT,
-        READ_DOCUMENT,
+        _END_CONVERSATION,
+        _SEARCH_CONVERSATIONS,
+        _RECALL_CONVERSATION,
+        _VIEW_ATTACHMENT,
+        _READ_DOCUMENT,
         "alfred_remind_set",
         "alfred_reminders_list",
         "alfred_reminder_cancel",
-        SET_MODEL,
-        CALCULATE,
-        DATE,
+        _SET_MODEL,
+        _CALCULATE,
+        _DATE,
         *MCP_TOOLS,
     ]
 
@@ -94,7 +94,7 @@ async def test_no_attachment_tools_without_the_section(
         ChatTurn("hi", item, user=DIOGO)
     )
     names = {t["function"]["name"] for t in model.requests[0][1]}
-    assert not names & {VIEW_ATTACHMENT, READ_DOCUMENT}
+    assert not names & {_VIEW_ATTACHMENT, _READ_DOCUMENT}
     assert "[attachment #" not in model.requests[0][0][0]["content"]
 
 
@@ -107,7 +107,7 @@ async def test_owner_turn_views_an_earlier_photo(
     )
     await History(sessions).append("diogo", "assistant", "12.40 EUR, sir.")
     item, _ = await owner_with_files(sessions, "and the date on it?", [])
-    model = FakeModel([calls((VIEW_ATTACHMENT, json.dumps({"id": 1}))), text("9 November, sir.")])
+    model = FakeModel([calls((_VIEW_ATTACHMENT, json.dumps({"id": 1}))), text("9 November, sir.")])
     a = agent(sessions, model, brains=vision_brains(), store=store, attachments=ATTACHMENTS)
     result = await a.run(ChatTurn("and the date on it?", item, user=DIOGO))
 
@@ -119,7 +119,7 @@ async def test_owner_turn_views_an_earlier_photo(
     assert tool_result["content"][0]["text"].startswith('[attachment #1: image "receipt.jpg"]')
     assert tool_result["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     (row,) = await tool_rows(sessions)
-    assert (row.tool, row.ok) == (VIEW_ATTACHMENT, True)
+    assert (row.tool, row.ok) == (_VIEW_ATTACHMENT, True)
     assert row.result_excerpt.endswith("[1 image]")
 
 
@@ -133,6 +133,6 @@ async def test_text_only_brain_explains_no_view_tool(
     )
     await a.run(ChatTurn("hi", item, user=DIOGO))
     system = model.requests[0][0][0]["content"]
-    assert _TEXT_ONLY_NOTE in system and VIEW_ATTACHMENT not in system
+    assert _TEXT_ONLY_NOTE in system and _VIEW_ATTACHMENT not in system
     names = {t["function"]["name"] for t in model.requests[0][1]}
-    assert READ_DOCUMENT in names and VIEW_ATTACHMENT not in names
+    assert _READ_DOCUMENT in names and _VIEW_ATTACHMENT not in names

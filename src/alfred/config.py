@@ -583,11 +583,8 @@ def _tool_entry_problem(entry: object, server_names: set[str]) -> str | None:
     if not isinstance(entry, str) or not entry or entry == _ALL_TOOLS:
         return None  # wrong types are reported by the model validation
     if entry.startswith("alfred_"):
-        if entry.endswith("*"):
-            return None
-        from alfred.tools.catalog import alfred_tool_names
-
-        return None if entry in alfred_tool_names() else "is not an alfred tool"
+        # Exact names are checked against the toolsets at startup (alfred.startup).
+        return None
     if any(entry.startswith(f"{server}_") for server in server_names):
         return None
     return "must be *, or start with alfred_ or with a configured MCP server's name and _"

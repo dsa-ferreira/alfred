@@ -31,19 +31,20 @@ configured MCP servers, and runs the tool calls itself. Planning lives in `opens
 ## Adding a tool group
 
 Everything the model can call is a toolset. The contract lives in
-`alfred.tools.base`, which imports nothing else from alfred; the turn loop in
-`agent/turn.py` names no tool. To add one:
+`alfred.kernel` (`toolset.py`, with turns in `turn.py` and the allow and
+confirm lists in `access.py`), which imports nothing else from alfred; the
+turn loop in `agent/turn.py` names no tool. To add one:
 
 - Subclass `LocalToolset` in the feature's own package, or in `alfred/tools/`
   if it belongs to no feature (like `conversation.py` and `brains.py`). Set
-  `definitions`, implement `call(name, raw_arguments, attempt)`, and
+  `names` (every name it can ever offer) and `definitions`, implement `call(name, raw_arguments, attempt)`, and
   override `offered` if it is not for every turn (`chat_only` for turns
   started by a user's chat message). A turn is a `ChatTurn`, `AskTurn` or
   `ReminderTurn` (`TurnInput` is their union); tell them apart with
   `isinstance`, never by a kind string. Override `open` / `new_attempt`
   only for per-turn or per-attempt state (see `web/tools.py`).
 - Don't check the user's tool allow-list or confirm list yourself: `turn.py`
-  wraps every opened toolset in `Confirmed(Gated(...))` (`alfred.tools.base`).
+  wraps every opened toolset in `Confirmed(Gated(...))` (`alfred.kernel.access`).
   `Gated` hides and refuses the names the turn user's `AllowList` doesn't
   match; `Confirmed` holds back the calls their confirm list matches until
   they tap **Do it**. Only prompt notes about tools the list hides need care
@@ -58,10 +59,11 @@ Everything the model can call is a toolset. The contract lives in
 - Whose turn it is is `turn.user` (`attempt.turn.user` in `call`). Data a
   tool reads or writes belongs to that user; filter by `user.name` in the
   query, never in the prompt.
-- Add the tool's name to `alfred/tools/catalog.py`, so exact
-  `alfred_*` allow-list entries naming it pass the startup check.
-- Add it to `_build_toolsets` in `app.py`. The list order is the order the
-  tools are offered in; alfred's own tools come before `McpTools`.
+- Add it to `_build_toolsets` and `_TOOLSET_TYPES` in `app.py`, in the
+  same place in both. The list order is the order the tools are offered in;
+  alfred's own tools come before `McpTools`. At startup,
+  `startup.check_tool_names` checks exact `alfred_*` allow-list entries
+  against the `names` of `_TOOLSET_TYPES`.
 - Exceptions from `call` become error results for the model (`_safe_call`).
 - Test the toolset alone, and a whole turn with `tests/agent/turn_helpers.py`.
 

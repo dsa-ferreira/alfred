@@ -39,13 +39,13 @@ from alfred.memory.transcript import TranscriptEntry, date_span, recall_label, r
 
 log = logging.getLogger(__name__)
 
-SEARCH_CONVERSATIONS = "alfred_search_conversations"
-RECALL_CONVERSATION = "alfred_recall_conversation"
+_SEARCH_CONVERSATIONS = "alfred_search_conversations"
+_RECALL_CONVERSATION = "alfred_recall_conversation"
 
 _SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": SEARCH_CONVERSATIONS,
+        "name": _SEARCH_CONVERSATIONS,
         "description": (
             "Search earlier, archived conversations with the user by topic, by date, or "
             "both. Use when the user refers to something discussed before ('remember "
@@ -78,7 +78,7 @@ _SEARCH_CONVERSATIONS_TOOL: dict[str, Any] = {
 _RECALL_CONVERSATION_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": RECALL_CONVERSATION,
+        "name": _RECALL_CONVERSATION,
         "description": (
             "Bring an archived conversation, by its number, into this conversation so you "
             "can use what was said. Use when the user names a conversation number or after "
@@ -378,6 +378,7 @@ class Searcher(Protocol):
 class MemoryTools(LocalToolset):
     """Search and recall of the turn user's conversations, offered on chat turns."""
 
+    names = frozenset({_SEARCH_CONVERSATIONS, _RECALL_CONVERSATION})
     definitions = [_SEARCH_CONVERSATIONS_TOOL, _RECALL_CONVERSATION_TOOL]
 
     def __init__(self, search: Searcher) -> None:
@@ -391,7 +392,7 @@ class MemoryTools(LocalToolset):
         if isinstance(arguments, str):
             return ToolOutcome(False, arguments)
         user = attempt.turn.user.name
-        if name == SEARCH_CONVERSATIONS:
+        if name == _SEARCH_CONVERSATIONS:
             return await self._search.search(
                 user, arguments.get("query"), arguments.get("after"), arguments.get("before")
             )

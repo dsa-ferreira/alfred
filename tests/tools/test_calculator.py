@@ -9,14 +9,14 @@ import pytest
 
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
-from alfred.tools.calculator import _CALCULATE_TOOL, CALCULATE, CalculatorTools
+from alfred.tools.calculator import _CALCULATE, _CALCULATE_TOOL, CalculatorTools
 from tests.helpers import DIOGO
 
 OWNER = ChatTurn("what's 347 times 28.5?", 1, user=DIOGO)
 
 
 async def calc(**arguments: object) -> ToolOutcome:
-    return await CalculatorTools().call(CALCULATE, json.dumps(arguments), AttemptContext(OWNER))
+    return await CalculatorTools().call(_CALCULATE, json.dumps(arguments), AttemptContext(OWNER))
 
 
 async def result(**arguments: object) -> str:
@@ -160,12 +160,12 @@ async def test_no_result(expression: str) -> None:
 
 @pytest.mark.parametrize("arguments", [{}, {"expression": ""}, {"expression": True}])
 async def test_expression_required(arguments: dict[str, object]) -> None:
-    outcome = await CalculatorTools().call(CALCULATE, json.dumps(arguments), AttemptContext(OWNER))
+    outcome = await CalculatorTools().call(_CALCULATE, json.dumps(arguments), AttemptContext(OWNER))
     assert not outcome.ok
 
 
 async def test_invalid_json() -> None:
-    outcome = await CalculatorTools().call(CALCULATE, "{not json", AttemptContext(OWNER))
+    outcome = await CalculatorTools().call(_CALCULATE, "{not json", AttemptContext(OWNER))
     assert not outcome.ok and "not valid JSON" in outcome.text
 
 

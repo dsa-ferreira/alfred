@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.turn import Agent
 from alfred.attachments.tools import (
+    _READ_DOCUMENT,
     _READ_ONLY_NOTE,
     _TEXT_ONLY_NOTE,
+    _VIEW_ATTACHMENT,
     _VIEW_ONLY_NOTE,
     _VISION_NOTE,
-    READ_DOCUMENT,
-    VIEW_ATTACHMENT,
     AttachmentTools,
 )
 from alfred.brains import Brains
@@ -88,10 +88,10 @@ def size(outcome: ToolOutcome) -> tuple[int, int]:
 async def test_owner_turn_on_a_vision_brain(sessions: async_sessionmaker[AsyncSession]) -> None:
     opened = await tools(sessions, FakeStore()).open(ChatTurn("hi", 1, user=DIOGO))
     assert opened is not None
-    assert [d["function"]["name"] for d in opened.definitions] == [VIEW_ATTACHMENT, READ_DOCUMENT]
+    assert [d["function"]["name"] for d in opened.definitions] == [_VIEW_ATTACHMENT, _READ_DOCUMENT]
     (note,) = opened.prompt_notes
     assert note.text == _VISION_NOTE
-    for words in ("[attachment #7", VIEW_ATTACHMENT, READ_DOCUMENT, "A handle alone does not"):
+    for words in ("[attachment #7", _VIEW_ATTACHMENT, _READ_DOCUMENT, "A handle alone does not"):
         assert words in note.text
 
 
@@ -100,10 +100,10 @@ async def test_text_only_brain(sessions: async_sessionmaker[AsyncSession]) -> No
         ChatTurn("hi", 1, user=DIOGO)
     )
     assert opened is not None
-    assert [d["function"]["name"] for d in opened.definitions] == [READ_DOCUMENT]
+    assert [d["function"]["name"] for d in opened.definitions] == [_READ_DOCUMENT]
     (note,) = opened.prompt_notes
     assert note.text == _TEXT_ONLY_NOTE
-    assert VIEW_ATTACHMENT not in note.text and READ_DOCUMENT in note.text
+    assert _VIEW_ATTACHMENT not in note.text and _READ_DOCUMENT in note.text
 
 
 async def test_not_offered_on_ask_and_reminder_turns(
@@ -123,7 +123,7 @@ async def test_look_again(sessions: async_sessionmaker[AsyncSession]) -> None:
         sessions, "total?", [image_file(name="receipt.jpg")], store, [image_bytes(4000, 3000)]
     )
     await History(sessions).append("diogo", "user", "and the date on it?")
-    outcome = await call(tools(sessions, store), VIEW_ATTACHMENT, id=1)
+    outcome = await call(tools(sessions, store), _VIEW_ATTACHMENT, id=1)
     assert outcome.ok
     assert outcome.text == '[attachment #1: image "receipt.jpg"]: the image, attached.'
     assert size(outcome) == (1536, 1152)
@@ -132,7 +132,7 @@ async def test_look_again(sessions: async_sessionmaker[AsyncSession]) -> None:
 async def test_pdf_page(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     await invoice(sessions, store)
-    outcome = await call(tools(sessions, store), VIEW_ATTACHMENT, id="#1", page=4)
+    outcome = await call(tools(sessions, store), _VIEW_ATTACHMENT, id="#1", page=4)
     assert outcome.ok and "page 4 of 12" in outcome.text
     assert size(outcome) == (768, 1536)
 
@@ -140,7 +140,7 @@ async def test_pdf_page(sessions: async_sessionmaker[AsyncSession]) -> None:
 async def test_page_out_of_range(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     await invoice(sessions, store)
-    outcome = await call(tools(sessions, store), VIEW_ATTACHMENT, id=1, page=13)
+    outcome = await call(tools(sessions, store), _VIEW_ATTACHMENT, id=1, page=13)
     assert not outcome.ok
     assert outcome.text == "Error: attachment #1 is a PDF with 12 pages."
     assert store.gets == []
@@ -150,14 +150,14 @@ async def test_store_down_on_a_follow_up(sessions: async_sessionmaker[AsyncSessi
     store = FakeStore()
     await owner_with_files(sessions, "total?", [image_file()], store, [image_bytes()])
     store.failing = True
-    outcome = await call(tools(sessions, store), VIEW_ATTACHMENT, id=1)
+    outcome = await call(tools(sessions, store), _VIEW_ATTACHMENT, id=1)
     assert not outcome.ok and outcome.images == ()
     assert "isn't available right now" in outcome.text
 
 
 async def test_bad_id(sessions: async_sessionmaker[AsyncSession]) -> None:
     for value in (None, "receipt", 0, -1, True):
-        outcome = await call(tools(sessions, FakeStore()), VIEW_ATTACHMENT, id=value)
+        outcome = await call(tools(sessions, FakeStore()), _VIEW_ATTACHMENT, id=value)
         assert not outcome.ok and "attachment number" in outcome.text
 
 
@@ -166,7 +166,7 @@ async def test_view_refused_on_a_text_only_brain(
 ) -> None:
     store = FakeStore()
     await owner_with_files(sessions, "total?", [image_file()], store, [image_bytes()])
-    outcome = await call(tools(sessions, store, brains(vision=False)), VIEW_ATTACHMENT, id=1)
+    outcome = await call(tools(sessions, store, brains(vision=False)), _VIEW_ATTACHMENT, id=1)
     assert not outcome.ok and "can't see images" in outcome.text
 
 
@@ -190,7 +190,7 @@ async def test_from_a_recalled_conversation(sessions: async_sessionmaker[AsyncSe
         "diogo", archived
     )
     assert recall.ok and "[attachment #1: PDF" in recall.text
-    outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1, pages="2")
+    outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1, pages="2")
     assert outcome.ok and PAGES[1] in outcome.text
 
 
@@ -198,7 +198,7 @@ async def test_from_an_unrelated_conversation(sessions: async_sessionmaker[Async
     store = FakeStore()
     await archived_with_invoice(sessions, store)
     toolset = tools(sessions, store)
-    for name in (VIEW_ATTACHMENT, READ_DOCUMENT):
+    for name in (_VIEW_ATTACHMENT, _READ_DOCUMENT):
         outcome = await call(toolset, name, id=1)
         assert not outcome.ok
         assert outcome.text == "Error: there is no attachment #1 in this conversation."
@@ -215,7 +215,7 @@ async def test_recalled_inside_a_recalled_conversation_is_not_reachable(
     second = (await History(sessions).reset("diogo")).archived_id
     await History(sessions).append("diogo", "user", "hi")
     assert second is not None and (await search.recall("diogo", second)).ok  # #2 into #3
-    outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1)
+    outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1)
     assert not outcome.ok and "no attachment #1" in outcome.text
 
 
@@ -225,7 +225,7 @@ async def test_recalled_inside_a_recalled_conversation_is_not_reachable(
 async def test_read_pages(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     await invoice(sessions, store)
-    outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1, pages="3-5")
+    outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1, pages="3-5")
     assert outcome.ok
     assert outcome.text == "\n".join(
         [
@@ -241,7 +241,7 @@ async def test_read_pages(sessions: async_sessionmaker[AsyncSession]) -> None:
 async def test_read_from_page_one_by_default(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     await invoice(sessions, store)
-    outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1)
+    outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1)
     assert outcome.text.count("--- page") == 12
     assert "continue" not in outcome.text
 
@@ -251,9 +251,9 @@ async def test_range_past_the_end_is_cut_to_the_last_page(
 ) -> None:
     store = FakeStore()
     await invoice(sessions, store)
-    outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1, pages="11-20")
+    outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1, pages="11-20")
     assert outcome.ok and outcome.text.count("--- page") == 2
-    bad = await call(tools(sessions, store), READ_DOCUMENT, id=1, pages="13")
+    bad = await call(tools(sessions, store), _READ_DOCUMENT, id=1, pages="13")
     assert bad.text == "Error: attachment #1 is a PDF with 12 pages."
 
 
@@ -261,7 +261,7 @@ async def test_bad_page_ranges(sessions: async_sessionmaker[AsyncSession]) -> No
     store = FakeStore()
     await invoice(sessions, store)
     for pages in ("five", "5-3", "0", "1,2"):
-        outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1, pages=pages)
+        outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1, pages=pages)
         assert not outcome.ok and "pages must be" in outcome.text
 
 
@@ -270,7 +270,7 @@ async def test_long_range(sessions: async_sessionmaker[AsyncSession]) -> None:
     await invoice(sessions, store)
     block = len(f"--- page 1 ---\n{PAGES[0]}")
     toolset = tools(sessions, store, read_chars=block * 3 + 5)
-    outcome = await call(toolset, READ_DOCUMENT, id=1, pages="2-9")
+    outcome = await call(toolset, _READ_DOCUMENT, id=1, pages="2-9")
     assert outcome.text.count("--- page") == 3
     assert outcome.text.endswith(f"--- page 4 ---\n{PAGES[3]}\n(continue from page 5)")
 
@@ -279,25 +279,25 @@ async def test_one_page_longer_than_the_limit(sessions: async_sessionmaker[Async
     store = FakeStore()
     long = "word " * 400
     await owner_with_files(sessions, "", [pdf_file([long, "page two text, long enough"])], store)
-    outcome = await call(tools(sessions, store, read_chars=100), READ_DOCUMENT, id=1)
+    outcome = await call(tools(sessions, store, read_chars=100), _READ_DOCUMENT, id=1)
     assert outcome.text.endswith("\n(page 1 cut at 100 characters)\n(continue from page 2)")
 
 
 async def test_page_without_text(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     await owner_with_files(sessions, "", [pdf_file(["", "12", PAGES[0]])], store)
-    vision = await call(tools(sessions, store), READ_DOCUMENT, id=1)
+    vision = await call(tools(sessions, store), _READ_DOCUMENT, id=1)
     assert "--- page 1 ---\n(no text on this page; use alfred_view_attachment)" in vision.text
     assert "--- page 2 ---\n12\n(no text on this page; use alfred_view_attachment)" in vision.text
-    blind = await call(tools(sessions, store, brains(vision=False)), READ_DOCUMENT, id=1)
+    blind = await call(tools(sessions, store, brains(vision=False)), _READ_DOCUMENT, id=1)
     assert "--- page 1 ---\n(no text on this page)\n" in blind.text
-    assert VIEW_ATTACHMENT not in blind.text
+    assert _VIEW_ATTACHMENT not in blind.text
 
 
 async def test_not_a_pdf(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     await owner_with_files(sessions, "", [image_file()], store, [image_bytes()])
-    outcome = await call(tools(sessions, store), READ_DOCUMENT, id=1)
+    outcome = await call(tools(sessions, store), _READ_DOCUMENT, id=1)
     assert not outcome.ok
     assert outcome.text == (
         "Error: attachment #1 is an image, not a PDF. Look at it with alfred_view_attachment."
@@ -311,7 +311,7 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     config = make_config(ai={"tool_result_max_chars": 4000}, mcp_servers=[])
     the_brains = brains()
     toolset = AttachmentTools(store, sessions, the_brains, SETTINGS)  # read_chars 8000
-    model = FakeModel([calls((READ_DOCUMENT, '{"id": 1}')), text("Read.")])
+    model = FakeModel([calls((_READ_DOCUMENT, '{"id": 1}')), text("Read.")])
     item = (await owner_with_files(sessions, "read it", []))[0]
     agent = Agent(
         config,
@@ -341,7 +341,7 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     )
     the_brains.set("bonsai")
     toolset = AttachmentTools(store, sessions, the_brains, SETTINGS)
-    model = FakeModel([BAD_MODEL, calls((VIEW_ATTACHMENT, '{"id": 1}')), text("Sorry, sir.")])
+    model = FakeModel([BAD_MODEL, calls((_VIEW_ATTACHMENT, '{"id": 1}')), text("Sorry, sir.")])
     item = (await owner_with_files(sessions, "what's on it?", []))[0]
     agent = Agent(
         make_config(),
@@ -371,11 +371,11 @@ async def test_another_users_attachment_is_not_reachable(
     await invoice(sessions, store)  # diogo's, attachment 1
     await History(sessions).append("ana", "user", "and the invoice?")
     toolset = tools(sessions, store)
-    for name in (READ_DOCUMENT, VIEW_ATTACHMENT):
+    for name in (_READ_DOCUMENT, _VIEW_ATTACHMENT):
         outcome = await call(toolset, name, user=ANA, id=1)
         assert not outcome.ok
         assert outcome.text == "Error: there is no attachment #1 in this conversation."
-    assert (await call(toolset, READ_DOCUMENT, id=1, pages="1")).ok
+    assert (await call(toolset, _READ_DOCUMENT, id=1, pages="1")).ok
 
 
 async def test_attachments_belong_to_the_sender(
@@ -389,10 +389,10 @@ async def test_attachments_belong_to_the_sender(
         sessions, "mine", [image_file("attachments/s")], store, [image_bytes()]
     )
     toolset = tools(sessions, store)
-    assert (await call(toolset, VIEW_ATTACHMENT, user=ANA, id=1)).ok
-    assert not (await call(toolset, VIEW_ATTACHMENT, user=ANA, id=2)).ok
-    assert not (await call(toolset, VIEW_ATTACHMENT, id=1)).ok
-    assert (await call(toolset, VIEW_ATTACHMENT, id=2)).ok
+    assert (await call(toolset, _VIEW_ATTACHMENT, user=ANA, id=1)).ok
+    assert not (await call(toolset, _VIEW_ATTACHMENT, user=ANA, id=2)).ok
+    assert not (await call(toolset, _VIEW_ATTACHMENT, id=1)).ok
+    assert (await call(toolset, _VIEW_ATTACHMENT, id=2)).ok
 
 
 def chat(allow: AllowList) -> TurnInput:
@@ -405,7 +405,7 @@ async def test_only_allowed_tools_are_described(
     toolset = tools(sessions, FakeStore())
     read_only = await toolset.open(chat(AllowList.of("alfred_read_document")))
     assert read_only is not None
-    assert [d["function"]["name"] for d in read_only.definitions] == [READ_DOCUMENT]
+    assert [d["function"]["name"] for d in read_only.definitions] == [_READ_DOCUMENT]
     assert [n.text for n in read_only.prompt_notes] == [_READ_ONLY_NOTE]
     assert "alfred_view_attachment" not in _READ_ONLY_NOTE
     view_only = await toolset.open(chat(AllowList.of("alfred_view_attachment")))

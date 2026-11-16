@@ -28,7 +28,7 @@ import pint
 
 from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, parse_arguments
 
-CALCULATE = "alfred_calculate"
+_CALCULATE = "alfred_calculate"
 
 _MAX_CHARS = 500
 _MAX_DIGITS = 1000  # largest integer result, in decimal digits
@@ -67,7 +67,7 @@ _ALLOWED = "numbers, + - * / // % **, parentheses, pi, e and the functions " + "
 _CALCULATE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": CALCULATE,
+        "name": _CALCULATE,
         "description": (
             "Use for any arithmetic, percentage or unit conversion instead of working it "
             "out yourself: alfred computes it exactly. The expression uses numbers, "
@@ -119,6 +119,7 @@ _DIMENSIONS = {
 class CalculatorTools(LocalToolset):
     """``alfred_calculate``, on every turn."""
 
+    names = frozenset({_CALCULATE})
     definitions = [_CALCULATE_TOOL]
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:

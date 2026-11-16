@@ -9,7 +9,7 @@ from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Entry
 from alfred.history import History
 from alfred.kernel.turn import AskTurn
-from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
+from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from tests.agent.turn_helpers import agent, contents, memory, owner_turn, tool_rows
 from tests.helpers import DIOGO, FakeEmbedder, FakeModel, add_queue_item, calls, text
 from tests.memory.test_search import CHICKEN, at, seed
@@ -24,9 +24,11 @@ async def test_memory_tools_offered_on_owner_turns(
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
         await owner_turn(sessions, "hi")
     )
-    assert {SEARCH_CONVERSATIONS, RECALL_CONVERSATION} <= model.tool_names()
+    assert {_SEARCH_CONVERSATIONS, _RECALL_CONVERSATION} <= model.tool_names()
     search = next(
-        t["function"] for t in model.requests[0][1] if t["function"]["name"] == SEARCH_CONVERSATIONS
+        t["function"]
+        for t in model.requests[0][1]
+        if t["function"]["name"] == _SEARCH_CONVERSATIONS
     )
     assert set(search["parameters"]["properties"]) == {"query", "after", "before"}
     assert "required" not in search["parameters"]
@@ -39,11 +41,11 @@ async def test_memory_tools_not_offered_on_ask_turns(
 ) -> None:
     await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(1))
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
-    model = FakeModel([calls((RECALL_CONVERSATION, '{"id": 41}')), text(_NO_REPLY)])
+    model = FakeModel([calls((_RECALL_CONVERSATION, '{"id": 41}')), text(_NO_REPLY)])
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
         AskTurn("x", item, "disk-check", user=DIOGO)
     )
-    assert not {SEARCH_CONVERSATIONS, RECALL_CONVERSATION} & model.tool_names()
+    assert not {_SEARCH_CONVERSATIONS, _RECALL_CONVERSATION} & model.tool_names()
     assert "unknown tool" in model.requests[1][0][-1]["content"]
     async with sessions() as session:
         assert list(await session.scalars(select(Entry).where(Entry.kind == "recall"))) == []
@@ -64,8 +66,8 @@ async def test_search_then_recall_then_follow_up(
     mem = memory(sessions, FakeEmbedder([CHICKEN]))
     model = FakeModel(
         [
-            calls((SEARCH_CONVERSATIONS, '{"query": "chicken recipe"}')),
-            calls((RECALL_CONVERSATION, '{"id": 41}')),
+            calls((_SEARCH_CONVERSATIONS, '{"query": "chicken recipe"}')),
+            calls((_RECALL_CONVERSATION, '{"id": 41}')),
             text("That was #41, sir: lemon and garlic."),
             text("40 minutes, sir."),
         ]
@@ -83,8 +85,8 @@ async def test_search_then_recall_then_follow_up(
     assert recall_result.startswith('#41 "Chicken thighs recipe", Sun 1 Nov 2026')
     rows = await tool_rows(sessions)
     assert [(r.tool, r.arguments, r.ok) for r in rows] == [
-        (SEARCH_CONVERSATIONS, {"query": "chicken recipe"}, True),
-        (RECALL_CONVERSATION, {"id": 41}, True),
+        (_SEARCH_CONVERSATIONS, {"query": "chicken recipe"}, True),
+        (_RECALL_CONVERSATION, {"id": 41}, True),
     ]
 
     # The recall stays in the conversation: the next turn still sees it.
@@ -105,7 +107,7 @@ async def test_memory_tool_errors_reach_the_model(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     model = FakeModel(
-        [calls((SEARCH_CONVERSATIONS, "{}"), (RECALL_CONVERSATION, '{"id": 9999}')), text("?")]
+        [calls((_SEARCH_CONVERSATIONS, "{}"), (_RECALL_CONVERSATION, '{"id": 9999}')), text("?")]
     )
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
         await owner_turn(sessions, "remember?")
@@ -117,7 +119,7 @@ async def test_memory_tool_errors_reach_the_model(
 
 
 async def test_memory_tool_with_invalid_json(sessions: async_sessionmaker[AsyncSession]) -> None:
-    model = FakeModel([calls((RECALL_CONVERSATION, "{oops")), text("?")])
+    model = FakeModel([calls((_RECALL_CONVERSATION, "{oops")), text("?")])
     await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
         await owner_turn(sessions, "remember 41")
     )

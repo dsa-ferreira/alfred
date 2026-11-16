@@ -7,8 +7,8 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.kernel.turn import AskTurn
-from alfred.tools.calculator import CALCULATE
-from alfred.tools.dates import DATE
+from alfred.tools.calculator import _CALCULATE
+from alfred.tools.dates import _DATE
 from tests.agent.turn_helpers import agent, owner_turn, tool_result, tool_rows
 from tests.helpers import DIOGO, FakeModel, add_queue_item, calls, text
 
@@ -18,8 +18,8 @@ async def test_calculate_then_date_then_answer(
 ) -> None:
     model = FakeModel(
         [
-            calls((CALCULATE, json.dumps({"expression": "347 * 28.5"}))),
-            calls((DATE, json.dumps({"op": "between", "from": "today", "to": "2026-12-25"}))),
+            calls((_CALCULATE, json.dumps({"expression": "347 * 28.5"}))),
+            calls((_DATE, json.dumps({"op": "between", "from": "today", "to": "2026-12-25"}))),
             text("9889.5, sir, and Christmas is 53 days away."),
         ]
     )
@@ -33,15 +33,15 @@ async def test_calculate_then_date_then_answer(
         "Friday 25 December 2026 is 53 days (7 weeks and 4 days) after Monday 2 November 2026."
     )
     rows = await tool_rows(sessions)
-    assert [(r.tool, r.ok) for r in rows] == [(CALCULATE, True), (DATE, True)]
+    assert [(r.tool, r.ok) for r in rows] == [(_CALCULATE, True), (_DATE, True)]
 
 
 async def test_errors_reach_the_model(sessions: async_sessionmaker[AsyncSession]) -> None:
     model = FakeModel(
         [
             calls(
-                (CALCULATE, json.dumps({"expression": "1", "from_unit": "cup", "to_unit": "g"})),
-                (DATE, json.dumps({"op": "now_in", "zone": "Tokyo"})),
+                (_CALCULATE, json.dumps({"expression": "1", "from_unit": "cup", "to_unit": "g"})),
+                (_DATE, json.dumps({"op": "now_in", "zone": "Tokyo"})),
             ),
             text("I'm afraid I need the flour's density, sir."),
         ]
@@ -57,7 +57,7 @@ async def test_ask_turn_can_calculate(sessions: async_sessionmaker[AsyncSession]
     item = await add_queue_item(sessions, "ask", "used 930 of 1000 GB", "disk-check")
     model = FakeModel(
         [
-            calls((CALCULATE, json.dumps({"expression": "930 / 1000 * 100"}))),
+            calls((_CALCULATE, json.dumps({"expression": "930 / 1000 * 100"}))),
             text("The data disk is 93% full, sir."),
         ]
     )

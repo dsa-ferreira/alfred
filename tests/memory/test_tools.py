@@ -6,7 +6,7 @@ from typing import Any
 
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
-from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS, MemoryTools
+from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS, MemoryTools
 from tests.helpers import DIOGO
 
 OWNER = ChatTurn("remember the chicken?", 1, user=DIOGO)
@@ -33,8 +33,8 @@ async def test_offered_on_owner_turns_only() -> None:
     assert await tools.open(AskTurn("x", 2, "svc", user=DIOGO)) is None
     assert await tools.open(ReminderTurn("x", 3, user=DIOGO)) is None
     assert [d["function"]["name"] for d in tools.definitions] == [
-        SEARCH_CONVERSATIONS,
-        RECALL_CONVERSATION,
+        _SEARCH_CONVERSATIONS,
+        _RECALL_CONVERSATION,
     ]
 
 
@@ -42,8 +42,8 @@ async def test_arguments_passed_on() -> None:
     search = FakeSearch()
     tools = MemoryTools(search)
     ctx = AttemptContext(OWNER)
-    await tools.call(SEARCH_CONVERSATIONS, '{"query": "chicken", "after": "2026-11-01"}', ctx)
-    await tools.call(RECALL_CONVERSATION, {"id": 41}, ctx)
+    await tools.call(_SEARCH_CONVERSATIONS, '{"query": "chicken", "after": "2026-11-01"}', ctx)
+    await tools.call(_RECALL_CONVERSATION, {"id": 41}, ctx)
     assert search.calls == [
         ("search", "diogo", "chicken", "2026-11-01", None),
         ("recall", "diogo", 41),
@@ -52,7 +52,7 @@ async def test_arguments_passed_on() -> None:
 
 async def test_invalid_json() -> None:
     search = FakeSearch()
-    outcome = await MemoryTools(search).call(SEARCH_CONVERSATIONS, "{nope", AttemptContext(OWNER))
+    outcome = await MemoryTools(search).call(_SEARCH_CONVERSATIONS, "{nope", AttemptContext(OWNER))
     assert not outcome.ok and outcome.text.startswith("Error: the arguments are not valid JSON")
     assert search.calls == []
 

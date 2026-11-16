@@ -21,13 +21,13 @@ from alfred.kernel.content import ModelImage
 from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome
 from alfred.kernel.turn import AskTurn, TurnInput
 from alfred.llm.chat import ModelFailed, ModelUnreachable
-from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
+from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET
-from alfred.tools.brains import SET_MODEL
-from alfred.tools.calculator import CALCULATE
-from alfred.tools.conversation import END_CONVERSATION
-from alfred.tools.dates import DATE
+from alfred.tools.brains import _SET_MODEL
+from alfred.tools.calculator import _CALCULATE
+from alfred.tools.conversation import _END_CONVERSATION
+from alfred.tools.dates import _DATE
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
     BAD_MODEL,
@@ -331,7 +331,7 @@ async def test_fallback_before_any_tool_runs_the_turn_again(
     assert model.models == ["bonsai:8b", GEMMA]
     assert brains.current.name == "gemma"
     retry = model.requests[1][0]
-    assert brain_line("gemma", GEMMA, ["bonsai"], {SET_MODEL}) in retry[0]["content"]
+    assert brain_line("gemma", GEMMA, ["bonsai"], {_SET_MODEL}) in retry[0]["content"]
     assert contents(retry[1:]) == ["hi"]
     [warning] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert "bonsai" in warning and "gemma" in warning and "does not support tools" in warning
@@ -428,15 +428,15 @@ async def test_tool_order_on_owner_turns(
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         _WEB_SEARCH,
         _WEB_FETCH,
-        END_CONVERSATION,
-        SEARCH_CONVERSATIONS,
-        RECALL_CONVERSATION,
+        _END_CONVERSATION,
+        _SEARCH_CONVERSATIONS,
+        _RECALL_CONVERSATION,
         "alfred_remind_set",
         "alfred_reminders_list",
         "alfred_reminder_cancel",
-        SET_MODEL,
-        CALCULATE,
-        DATE,
+        _SET_MODEL,
+        _CALCULATE,
+        _DATE,
         *MCP_TOOLS,
     ]
 
@@ -452,8 +452,8 @@ async def test_tool_order_on_ask_turns(
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         _WEB_SEARCH,
         _WEB_FETCH,
-        CALCULATE,
-        DATE,
+        _CALCULATE,
+        _DATE,
         *MCP_TOOLS,
     ]
 

@@ -6,7 +6,7 @@ from alfred.agent.prompts import _NO_REPLY
 from alfred.history import History
 from alfred.kernel.toolset import AttemptContext
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
-from alfred.tools.conversation import END_CONVERSATION, ConversationTools
+from alfred.tools.conversation import _END_CONVERSATION, ConversationTools
 from tests.agent.turn_helpers import agent, owner_turn
 from tests.helpers import DIOGO, FakeModel, add_queue_item, calls, text
 
@@ -22,7 +22,7 @@ async def test_offered_on_owner_turns_only() -> None:
 
 async def test_call_requests_a_reset() -> None:
     ctx = AttemptContext(OWNER)
-    outcome = await ConversationTools().call(END_CONVERSATION, "{}", ctx)
+    outcome = await ConversationTools().call(_END_CONVERSATION, "{}", ctx)
     assert ctx.reset
     assert outcome.ok
     assert outcome.text == (
@@ -38,12 +38,12 @@ async def test_end_conversation_offered_on_owner_turns(
 ) -> None:
     model = FakeModel([text("ok")])
     await agent(sessions, model).run(await owner_turn(sessions, "hi"))
-    assert END_CONVERSATION in model.tool_names()
+    assert _END_CONVERSATION in model.tool_names()
     assert "mcparr_get_downloads" in model.tool_names()
     description = next(
         t["function"]["description"]
         for t in model.requests[0][1]
-        if t["function"]["name"] == END_CONVERSATION
+        if t["function"]["name"] == _END_CONVERSATION
     )
     assert "ONLY" in description
 
@@ -52,15 +52,15 @@ async def test_end_conversation_not_offered_on_ask_turns(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     item = await add_queue_item(sessions, "ask", "x", "disk-check")
-    model = FakeModel([calls((END_CONVERSATION, "{}")), text(_NO_REPLY)])
+    model = FakeModel([calls((_END_CONVERSATION, "{}")), text(_NO_REPLY)])
     result = await agent(sessions, model).run(AskTurn("x", item, "disk-check", user=DIOGO))
-    assert END_CONVERSATION not in model.tool_names()
+    assert _END_CONVERSATION not in model.tool_names()
     assert not result.reset_requested
     assert "unknown tool" in model.requests[1][0][-1]["content"]
 
 
 async def test_end_conversation_marks_reset(sessions: async_sessionmaker[AsyncSession]) -> None:
-    model = FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍")])
+    model = FakeModel([calls((_END_CONVERSATION, "{}")), text("Done 👍")])
     result = await agent(sessions, model).run(await owner_turn(sessions, "we're done here"))
     assert result.reply == "Done 👍"
     assert result.reset_requested

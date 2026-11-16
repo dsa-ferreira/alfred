@@ -7,12 +7,12 @@ from typing import Any
 from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, chat_only
 from alfred.kernel.turn import TurnInput
 
-END_CONVERSATION = "alfred_end_conversation"
+_END_CONVERSATION = "alfred_end_conversation"
 
 _END_CONVERSATION_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": END_CONVERSATION,
+        "name": _END_CONVERSATION,
         "description": (
             "End the current conversation and start a fresh one with no memory of it. "
             "Call this ONLY when the user clearly says the conversation or topic is "
@@ -28,6 +28,7 @@ _END_CONVERSATION_TOOL: dict[str, Any] = {
 class ConversationTools(LocalToolset):
     """Offered on chat turns; the worker archives the user's conversation after the reply."""
 
+    names = frozenset({_END_CONVERSATION})
     definitions = [_END_CONVERSATION_TOOL]
 
     def offered(self, turn: TurnInput) -> bool:

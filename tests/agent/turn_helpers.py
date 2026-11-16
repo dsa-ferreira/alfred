@@ -28,7 +28,7 @@ from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.brains import SET_MODEL
+from alfred.tools.brains import _SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH, WebTools
@@ -148,7 +148,7 @@ def two_brains(current: str = "gemma") -> Brains:
 
 
 def set_model(name: str) -> object:
-    return calls((SET_MODEL, json.dumps({"model": name})))
+    return calls((_SET_MODEL, json.dumps({"model": name})))
 
 
 def contents(messages: list[dict[str, Any]]) -> list[str]:

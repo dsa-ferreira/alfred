@@ -36,7 +36,6 @@ from alfred.attachments.tools import AttachmentTools
 from alfred.brains import Brains
 from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
-from alfred.db.users import warn_unknown_users
 from alfred.history import History
 from alfred.idle import IdleCloser
 from alfred.inputs.callbacks import Taps
@@ -57,6 +56,7 @@ from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
+from alfred.startup import check_tool_names, warn_unknown_users
 from alfred.telegram.bot import (
     ALLOWED_UPDATES,
     MemoryCommand,
@@ -73,6 +73,19 @@ from alfred.web.tools import WebTools
 from alfred.worker import Worker
 
 log = logging.getLogger(__name__)
+
+# alfred's own toolsets, in the order ``_build_toolsets`` offers them.
+_TOOLSET_TYPES = (
+    WebTools,
+    ConversationTools,
+    MemoryTools,
+    FactTools,
+    AttachmentTools,
+    ReminderTools,
+    BrainTools,
+    CalculatorTools,
+    DateTools,
+)
 
 # The tasks stopped by cancelling them; the API and polling stop on their own.
 _CANCELLED_ON_STOP = frozenset(
@@ -91,6 +104,12 @@ def configure_logging(level: str) -> None:
 
 
 async def serve(config: Config) -> None:
+    """Run everything until stopped.
+
+    Raises :class:`~alfred.settings.ConfigError` before connecting to anything
+    when an allow-list names a tool alfred doesn't have.
+    """
+    check_tool_names(config.users, _TOOLSET_TYPES)
     async with contextlib.AsyncExitStack() as stack:
         services = await _build_services(config, stack)
         _log_startup(config, services.brains)

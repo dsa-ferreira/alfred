@@ -62,7 +62,6 @@ _DUPLICATE_CANDIDATES = 5
 
 _REMEMBER = "alfred_remember"
 _FORGET = "alfred_forget"
-NAMES = (_REMEMBER, _FORGET)
 
 _REMEMBER_TOOL: dict[str, Any] = {
     "type": "function",
@@ -517,6 +516,8 @@ class FactTools(LocalToolset):
     Offered on chat turns only. Both act on the turn user's facts.
     """
 
+    names = frozenset({_REMEMBER, _FORGET})
+
     def __init__(self, facts: FactStore, memory: MemoryConfig) -> None:
         self._facts = facts
         self._memory = memory
@@ -670,6 +671,8 @@ def _facts_note(remember: bool, forget: bool) -> str | None:
 
 
 class _OpenFactTools(LocalToolset):
+    names = FactTools.names
+
     def __init__(self, tools: FactTools, turn: TurnInput, *, forget: bool) -> None:
         self._tools = tools
         self.definitions = [_REMEMBER_TOOL, *([_FORGET_TOOL] if forget else [])]

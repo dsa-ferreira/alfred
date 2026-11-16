@@ -31,7 +31,7 @@ from alfred.notices import reset_marker
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
-from alfred.tools.conversation import END_CONVERSATION
+from alfred.tools.conversation import _END_CONVERSATION
 from alfred.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import (
@@ -419,7 +419,7 @@ async def test_reset_sequence(sessions: async_sessionmaker[AsyncSession]) -> Non
     summary_model = BlockingModel()
     s = Setup(
         sessions,
-        FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍"), text("Hi again")]),
+        FakeModel([calls((_END_CONVERSATION, "{}")), text("Done 👍"), text("Hi again")]),
         summary_model=summary_model,
     )
     await s.queue.enqueue_user("diogo", "great, that's sorted, we're done here")
@@ -440,7 +440,7 @@ async def test_next_message_does_not_wait_for_the_summary(
     summary_model = BlockingModel()
     s = Setup(
         sessions,
-        FakeModel([calls((END_CONVERSATION, "{}")), text("Done 👍"), text("Dinner: soup")]),
+        FakeModel([calls((_END_CONVERSATION, "{}")), text("Done 👍"), text("Dinner: soup")]),
         summary_model=summary_model,
     )
     assert s.memory is not None
@@ -462,7 +462,7 @@ async def test_next_message_does_not_wait_for_the_summary(
 
 async def test_reset_end_reason_is_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     await start_at_41(sessions)
-    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]))
+    s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye")]))
     await s.queue.enqueue_user("diogo", "we're done")
     await s.drain()
     async with sessions() as session:
@@ -472,7 +472,7 @@ async def test_reset_end_reason_is_user(sessions: async_sessionmaker[AsyncSessio
 
 async def test_reset_without_memory_sends_ids(sessions: async_sessionmaker[AsyncSession]) -> None:
     await start_at_41(sessions)
-    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]))
+    s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye")]))
     await s.queue.enqueue_user("diogo", "we're done")
     await s.drain()
     assert s.outbox.sent == ["Bye", "— #41 archived —\n— new conversation #42 —"]
@@ -481,7 +481,7 @@ async def test_reset_without_memory_sends_ids(sessions: async_sessionmaker[Async
 async def test_notice_after_reset_in_new_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye")]))
+    s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye")]))
     await s.queue.enqueue_user("diogo", "we're done")
     await s.drain()
     await s.history.append("diogo", "notice", "backup ok", source="backup")
@@ -652,7 +652,7 @@ async def test_summary_ignores_the_chosen_brain(
     # One client for turns and summaries, as in serve when no summary model is
     # set: turns ask for the brain's tag, the summary for the client's own model.
     await start_at_41(sessions)
-    model = FakeModel([calls((END_CONVERSATION, "{}")), text("Done."), text(SUMMARY)])
+    model = FakeModel([calls((_END_CONVERSATION, "{}")), text("Done."), text(SUMMARY)])
     s = Setup(sessions, model, summary_model=model, brains=on_bonsai())
     assert s.memory is not None
     await s.queue.enqueue_user("diogo", "we're done")
@@ -936,7 +936,7 @@ async def test_failure_reaches_only_its_user(sessions: async_sessionmaker[AsyncS
 
 
 async def test_reset_marker_goes_to_its_user(sessions: async_sessionmaker[AsyncSession]) -> None:
-    model = FakeModel([calls((END_CONVERSATION, "{}")), text("Bye.")])
+    model = FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye.")])
     s = Setup(sessions, model, users=(DIOGO, ANA))
     await s.history.append("diogo", "user", "keep this")
     diogo = await s.history.current_conversation_id("diogo")
@@ -1137,7 +1137,7 @@ async def test_no_idle_marker_after_a_user_reset(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     await start_at_41(sessions)
-    s = Setup(sessions, FakeModel([calls((END_CONVERSATION, "{}")), text("Bye"), text("Hi")]))
+    s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye"), text("Hi")]))
     await s.queue.enqueue_user("diogo", "we're done")
     await s.queue.enqueue_user("diogo", "hello again")
     await s.drain()

@@ -10,7 +10,7 @@ from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Conversation, Entry
 from alfred.history import History
 from alfred.kernel.turn import AskTurn
-from alfred.tools.conversation import END_CONVERSATION
+from alfred.tools.conversation import _END_CONVERSATION
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
     NOW,
@@ -37,7 +37,7 @@ async def test_web_tools_offered_in_owner_turns(
     names = [t["function"]["name"] for t in model.requests[0][1]]
     assert {_WEB_SEARCH, _WEB_FETCH} <= set(names)
     # Ahead of the owner-only local tools, which come before the MCP tools.
-    assert names[:3] == [_WEB_SEARCH, _WEB_FETCH, END_CONVERSATION]
+    assert names[:3] == [_WEB_SEARCH, _WEB_FETCH, _END_CONVERSATION]
 
 
 async def test_web_tools_offered_in_ask_turns(
@@ -49,7 +49,7 @@ async def test_web_tools_offered_in_ask_turns(
         AskTurn("anything new?", item, "backup", user=DIOGO)
     )
     assert {_WEB_SEARCH, _WEB_FETCH} <= model.tool_names()
-    assert END_CONVERSATION not in model.tool_names()
+    assert _END_CONVERSATION not in model.tool_names()
 
 
 async def test_no_web_tools_without_web(sessions: async_sessionmaker[AsyncSession]) -> None:
