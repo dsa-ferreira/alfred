@@ -44,6 +44,18 @@ def memory(
     return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder, now=clock), now=clock)
 
 
+async def stop(*tasks: asyncio.Task[None]) -> None:
+    """Cancel background tasks and wait for them, before the fixtures tear down.
+
+    Left to the event loop's own teardown, a task cancelled mid-query rolls
+    back on an engine the ``engine`` fixture has already disposed, and the
+    test run hangs.
+    """
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def until(condition) -> None:  # type: ignore[no-untyped-def]
     for _ in range(500):
         if await condition():
@@ -69,7 +81,7 @@ async def test_backfills_conversations_without_summary(
 
         await until(both_done)
     finally:
-        task.cancel()
+        await stop(task)
     # Oldest first.
     assert (await row(sessions, first)).title == "Chicken thighs recipe"
     assert (await row(sessions, second)).title == "Disk"
@@ -187,8 +199,7 @@ async def test_owner_messages_answered_while_sweeper_fails(
         await until(answered)
         assert len(summary_model.requests) >= 3  # still failing in the background
     finally:
-        for task in tasks:
-            task.cancel()
+        await stop(*tasks)
 
 
 async def _has_failed(model: FakeModel, times: int) -> bool:
@@ -282,7 +293,7 @@ async def test_no_summary_while_an_item_is_pending(
         await finish_all(sessions, queue)
         await until(lambda: _summarised(sessions, cid))
     finally:
-        task.cancel()
+        await stop(task)
 
 
 async def test_no_summary_within_the_quiet_period(
@@ -302,7 +313,7 @@ async def test_no_summary_within_the_quiet_period(
         mem.summaries.changed.set()
         await until(lambda: _summarised(sessions, cid))
     finally:
-        task.cancel()
+        await stop(task)
 
 
 async def test_an_arriving_item_cancels_the_summary(
@@ -331,7 +342,7 @@ async def test_an_arriving_item_cancels_the_summary(
         assert model.started == 3
         assert (await row(sessions, cid)).summary_attempts == 0
     finally:
-        task.cancel()
+        await stop(task)
 
 
 async def test_embedding_only_does_not_wait_for_the_queue(
@@ -359,7 +370,7 @@ async def test_embedding_only_does_not_wait_for_the_queue(
         assert model.requests == []
         assert (await row(sessions, needs_summary)).summary is None
     finally:
-        task.cancel()
+        await stop(task)
 
 
 async def _summarised(sessions: async_sessionmaker[AsyncSession], cid: int) -> bool:
@@ -420,7 +431,7 @@ async def test_first_due_job_runs_in_priority_order(
     try:
         await until(_lists_empty(first.due, second.due))
     finally:
-        task.cancel()
+        await stop(task)
     assert [k for k, _ in first.ran] == ["a1", "a2"]
     assert [k for k, _ in second.ran] == ["b1"]
     # The model job got the queue's arrival event as preempt; the other none.
@@ -447,7 +458,7 @@ async def test_model_job_waits_for_a_quiet_queue(
         await finish_all(sessions, queue)
         await until(_lists_empty(model_job.due))
     finally:
-        task.cancel()
+        await stop(task)
 
 
 async def test_sleeps_until_the_soonest_job_and_wakes_on_either(
@@ -473,7 +484,7 @@ async def test_sleeps_until_the_soonest_job_and_wakes_on_either(
         second.changed.set()
         await until(_lists_empty(second.due))
     finally:
-        task.cancel()
+        await stop(task)
 
 
 def _lists_empty(*lists: list[str]):  # type: ignore[no-untyped-def]
@@ -531,7 +542,7 @@ async def test_fact_added_while_ragman_is_down_is_embedded_later(
 
         await until(deduped)
     finally:
-        task.cancel()
+        await stop(task)
     assert (await _fact_row(sessions, new)).replaced_by == old
     assert len(model.requests) == 1
 
@@ -565,4 +576,4 @@ async def test_facts_are_embedded_while_an_item_is_pending(
 
         await until(embedded)
     finally:
-        task.cancel()
+        await stop(task)
