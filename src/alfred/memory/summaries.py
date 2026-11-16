@@ -13,27 +13,25 @@ never cancelled.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import aliased
 
-from alfred.attachments.handles import refs_by_entry
 from alfred.backoff import backoff_s
 from alfred.config import Config
 from alfred.conversations.transcript import (
     SummaryParseError,
     TranscriptEntry,
     cut_middle,
+    load_transcript,
     parse_summary,
     render,
     summary_messages,
 )
-from alfred.db.models import Conversation, Entry
+from alfred.db.models import Conversation
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.embedding import EmbeddingError
 from alfred.llm.protocols import ChatModel, Embedder
@@ -199,27 +197,3 @@ class Summaries:
             log.exception("conversation %s: could not schedule a summary retry", conversation_id)
         finally:
             self.changed.set()
-
-
-async def load_transcript(session: AsyncSession, conversation_id: int) -> list[TranscriptEntry]:
-    recalled = aliased(Conversation)
-    rows = await session.execute(
-        select(
-            Entry.kind,
-            Entry.source,
-            Entry.text,
-            Entry.recalled_conversation_id,
-            recalled.title,
-            Entry.reminder_id,
-            Entry.id,
-        )
-        .outerjoin(recalled, recalled.id == Entry.recalled_conversation_id)
-        .where(Entry.conversation_id == conversation_id)
-        .order_by(Entry.id)
-    )
-    entries = [TranscriptEntry(*row) for row in rows]
-    refs = await refs_by_entry(session, (e.entry_id for e in entries if e.kind == "user"))
-    return [
-        dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
-        for e in entries
-    ]

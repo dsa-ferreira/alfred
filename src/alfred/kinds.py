@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 from alfred import notices
 from alfred.agent.prompts import is_no_reply
 from alfred.agent.turn import TurnFailed
+from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
@@ -88,7 +89,7 @@ class ChatKind:
         # before it is sent, so a retried turn doesn't send it again.
         marker = await self._history.take_idle_marker(user.name)
         if marker is not None:
-            await self._send(item, user, notices.reset_marker(*marker, idle=True))
+            await self._send(item, user, conversations_notices.reset_marker(*marker, idle=True))
         # Recorded when the turn starts (once, even if retried), so it is the
         # newest entry of its own context and after earlier replies.
         await self._history.append(user.name, "user", item.text, queue_item_id=item.id)

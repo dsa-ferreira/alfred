@@ -35,6 +35,7 @@ from pydantic import (
 
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.brains.config import BrainsConfig
+from alfred.conversations.config import HistoryConfig
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.settings import (
@@ -121,13 +122,6 @@ class McpServer:
     use_server_instructions: bool = True
 
 
-class _HistoryConfig(Section):
-    max_entries: PositiveInt = 30
-    # Hours after a user's last own message before their conversation is
-    # closed. None: never.
-    idle_close_after_h: PositiveFloat | None = None
-
-
 class _WebConfig(Section):
     """Web search through SearXNG and page fetch."""
 
@@ -191,7 +185,7 @@ class Config:
 
     users: Users
     ai: _AIConfig
-    history: _HistoryConfig
+    history: HistoryConfig
     queue: QueueConfig
     mcp: _MCPConfig
     server: _ServerConfig
@@ -383,7 +377,7 @@ class _FileConfig(Section):
     users: Annotated[list[_UserEntry], Field(min_length=1)]
     telegram: _TelegramConfig = _TelegramConfig()
     ai: _AIConfig = _AIConfig()
-    history: _HistoryConfig = _HistoryConfig()
+    history: HistoryConfig = HistoryConfig()
     queue: QueueConfig = QueueConfig()
     memory: MemoryConfig = MemoryConfig()
     web: _WebConfig = _WebConfig()

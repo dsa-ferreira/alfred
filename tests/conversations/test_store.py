@@ -816,7 +816,6 @@ async def test_recent_up_to_an_entry(sessions: async_sessionmaker[AsyncSession])
         conversation_id=conversation_id,
         upto_entry_id=upto,
         entry_ids=None,
-        turn_item_id=None,
     )
     assert [e.text for e in entries] == ["add Dune", "Shall I?"]
     assert {e.conversation_id for e in entries} == {conversation_id}
@@ -839,7 +838,6 @@ async def test_recent_reads_an_archived_conversation_by_id(
         "conversation_id": conversation_id,
         "upto_entry_id": upto,
         "entry_ids": None,
-        "turn_item_id": None,
     }
     entries = await history.parked_window("ana", 30, **window)
     assert [e.text for e in entries] == ["anything to add?"]
@@ -871,19 +869,24 @@ async def test_other_parked_turns_are_left_out(
     def texts(entries: list[HistoryEntry]) -> list[str]:
         return [e.text for e in entries]
 
+    async def seen_by(item: int, limit: int = 30) -> list[HistoryEntry]:
+        """What the turn of ``item`` reads, as the worker has it read."""
+        hidden = await requests.parked_items("ana") - {item}
+        return await history.recent("ana", limit, hidden_items=hidden)
+
     # Another turn doesn't see it, and it doesn't count toward the window.
-    assert texts(await history.recent("ana", 2, turn_item_id=ask)) == ["hello", "Good evening."]
+    assert texts(await seen_by(ask, 2)) == ["hello", "Good evening."]
     # The parked turn itself does.
-    assert texts(await history.recent("ana", 30, turn_item_id=parked))[-1] == "add Alien"
+    assert texts(await seen_by(parked))[-1] == "add Alien"
     # Answered and running: still going on, still hidden.
     await requests.answer(request, 0, "ana")
-    assert "add Alien" not in texts(await history.recent("ana", 30, turn_item_id=ask))
+    assert "add Alien" not in texts(await seen_by(ask))
     await requests.take_answered(parked, "ana")
-    assert "add Alien" not in texts(await history.recent("ana", 30, turn_item_id=ask))
+    assert "add Alien" not in texts(await seen_by(ask))
     # Once it has ended, everyone sees it with its reply.
     await history.append("ana", "assistant", "Added Alien.", queue_item_id=parked)
     await requests.finish(request, "ana")
-    assert texts(await history.recent("ana", 30, turn_item_id=ask))[-2:] == [
+    assert texts(await seen_by(ask))[-2:] == [
         "add Alien",
         "Added Alien.",
     ]
@@ -895,7 +898,7 @@ async def test_recent_by_entry_ids(sessions: async_sessionmaker[AsyncSession]) -
     await history.append("ana", "user", "two")
     third = await history.append("ana", "user", "three")
     conversation_id = await history.current_conversation_id("ana")
-    window = {"conversation_id": conversation_id, "upto_entry_id": third, "turn_item_id": None}
+    window = {"conversation_id": conversation_id, "upto_entry_id": third}
     entries = await history.parked_window("ana", 30, entry_ids=[first, third], **window)
     assert [e.text for e in entries] == ["one", "three"]
     assert await history.parked_window("ana", 30, entry_ids=[], **window) == []

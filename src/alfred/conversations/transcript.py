@@ -11,12 +11,18 @@ conversation's files can be opened again; never image data or PDF text.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from alfred.attachments.handles import AttachmentRef, handle, with_handles
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
+from alfred.db.models import Conversation, Entry
 
 _SUMMARY_PROMPT = """\
 You title and summarise a finished chat between a user and alfred, their \
@@ -125,6 +131,30 @@ def date_span(started: datetime, ended: datetime | None, zone: ZoneInfo) -> str:
     start = _local_date(started, zone)
     end = _local_date(ended, zone) if ended is not None else "now"
     return f"{start} to {end}"
+
+
+async def load_transcript(session: AsyncSession, conversation_id: int) -> list[TranscriptEntry]:
+    recalled = aliased(Conversation)
+    rows = await session.execute(
+        select(
+            Entry.kind,
+            Entry.source,
+            Entry.text,
+            Entry.recalled_conversation_id,
+            recalled.title,
+            Entry.reminder_id,
+            Entry.id,
+        )
+        .outerjoin(recalled, recalled.id == Entry.recalled_conversation_id)
+        .where(Entry.conversation_id == conversation_id)
+        .order_by(Entry.id)
+    )
+    entries = [TranscriptEntry(*row) for row in rows]
+    refs = await refs_by_entry(session, (e.entry_id for e in entries if e.kind == "user"))
+    return [
+        dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
+        for e in entries
+    ]
 
 
 def _line(e: TranscriptEntry) -> str:

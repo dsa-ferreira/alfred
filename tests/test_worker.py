@@ -20,6 +20,7 @@ from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.brains.registry import Brains
 from alfred.config import QueueConfig
+from alfred.conversations.notices import reset_marker
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.db.models import Attachment, Entry, QueueItem
@@ -28,7 +29,6 @@ from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelUnreachable
 from alfred.memory.summaries import Summaries
-from alfred.notices import reset_marker
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
@@ -161,7 +161,7 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
     peak = 0
 
     class SlowAgent:
-        async def run(self, turn):  # type: ignore[no-untyped-def]
+        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
             nonlocal running, peak
             running += 1
             peak = max(peak, running)
@@ -533,7 +533,7 @@ async def test_typing_while_owner_turn_runs(sessions: async_sessionmaker[AsyncSe
     events: list[str] = []
 
     class Agent_:
-        async def run(self, turn):  # type: ignore[no-untyped-def]
+        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
             events.append("turn")
             from alfred.agent.turn import TurnResult
 
@@ -780,7 +780,7 @@ async def test_repeating_reminder_turn_uses_the_items_due_time(
 
 async def test_reminder_unexpected_error(sessions: async_sessionmaker[AsyncSession]) -> None:
     class Broken:
-        async def run(self, turn):  # type: ignore[no-untyped-def]
+        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
             raise RuntimeError("boom")
 
     s = Setup(sessions, FakeModel())

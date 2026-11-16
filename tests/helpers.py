@@ -25,12 +25,12 @@ from alfred.config import (
     QueueConfig,
     Service,
     _AIConfig,
-    _HistoryConfig,
     _MCPConfig,
     _RemindersConfig,
     _ServerConfig,
     _WebConfig,
 )
+from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.kernel.access import AllowList
@@ -73,7 +73,7 @@ def make_config(
     return Config(
         users=Users(tuple(users)),
         ai=_AIConfig(**(ai or {})),
-        history=_HistoryConfig(**(history or {})),
+        history=HistoryConfig(**(history or {})),
         queue=QueueConfig(**(queue or {})),
         mcp=_MCPConfig(list_timeout_s=5, call_timeout_s=5),
         server=_ServerConfig(),

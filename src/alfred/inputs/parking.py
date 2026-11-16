@@ -65,6 +65,15 @@ class Parking:
         await self._requests.finish(stuck.id, user)
         return True
 
+    async def others_parked(self, turn: TurnInput) -> set[int]:
+        """The queue items of the turn user's other parked turns.
+
+        Their entries are hidden from this turn's history: they have no reply
+        yet, and this turn must not act on them.
+        """
+        parked = await self._requests.parked_items(turn.user.name)
+        return parked - {turn.queue_item_id}
+
     async def take_answer(self, item_id: int, user: str) -> RequestRow | None:
         """The item's answered request, now ``running``; ``None`` if it has none."""
         return await self._requests.take_answered(item_id, user)
@@ -113,6 +122,8 @@ class Parking:
 
 class _Requests(Protocol):
     """Parked turns' input requests (:class:`alfred.inputs.store.InputRequests`)."""
+
+    async def parked_items(self, user: str) -> set[int]: ...
 
     async def running_for(self, item_id: int, user: str) -> RequestRow | None: ...
 

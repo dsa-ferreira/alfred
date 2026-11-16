@@ -50,7 +50,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -226,7 +226,9 @@ class Agent:
         self._zone = ZoneInfo(config.ai.timezone)
         self._times = _Times(self._zone)
 
-    async def run(self, turn: TurnInput) -> TurnResult:
+    async def run(self, turn: TurnInput, *, hidden_items: Collection[int] = ()) -> TurnResult:
+        """Run ``turn``; the entries of the queue items ``hidden_items`` (other
+        parked turns) are left out of its history."""
         opened: list[OpenToolset] = []
         for toolset in self._toolsets:
             open_toolset = await toolset.open(turn)
@@ -242,6 +244,7 @@ class Agent:
             frozenset(d["function"]["name"] for d in definitions),
             self._attachments.new_cache() if self._attachments is not None else None,
             await self._facts_block(turn),
+            frozenset(hidden_items),
         )
 
         fallback: Fallback | None = None
@@ -314,7 +317,7 @@ class Agent:
         """
         turn = this.input
         now = self._now()
-        entries = await self._entries(turn, checkpoint)
+        entries = await self._entries(turn, checkpoint, this.hidden_items)
         state = _State(
             brain,
             can_fall_back and brain != self._brains.default,
@@ -360,13 +363,12 @@ class Agent:
             side_effects_possible=state.side_effects,
         )
 
-    async def _entries(self, turn: TurnInput, checkpoint: _Checkpoint | None) -> list[HistoryEntry]:
+    async def _entries(
+        self, turn: TurnInput, checkpoint: _Checkpoint | None, hidden_items: frozenset[int]
+    ) -> list[HistoryEntry]:
         limit = self._config.history.max_entries
         if checkpoint is None:
-            # Without other parked turns' entries: they have no reply yet.
-            return await self._history.recent(
-                turn.user.name, limit, turn_item_id=turn.queue_item_id
-            )
+            return await self._history.recent(turn.user.name, limit, hidden_items=hidden_items)
         # The entries the turn parked with, whatever was recorded since and
         # whichever other parked turns ended meanwhile.
         return await self._history.parked_window(
@@ -375,7 +377,7 @@ class Agent:
             conversation_id=checkpoint.conversation_id,
             upto_entry_id=checkpoint.upto_entry_id,
             entry_ids=checkpoint.entry_ids,
-            turn_item_id=turn.queue_item_id,
+            hidden_items=hidden_items,
         )
 
     def _system_message(self, this: _Turn, brain: Brain, now: datetime) -> dict[str, Any]:
@@ -623,6 +625,8 @@ class _Turn:
     images: ImageCache | None = None
     # The user's facts, when they are in the context.
     facts: FactsBlock | None = None
+    # Other parked turns' queue items, whose entries the history leaves out.
+    hidden_items: frozenset[int] = frozenset()
 
 
 class _Facts(Protocol):

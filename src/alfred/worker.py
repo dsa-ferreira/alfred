@@ -37,6 +37,7 @@ from alfred import notices
 from alfred.agent.turn import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
+from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.inputs.parking import Parking
@@ -169,7 +170,8 @@ class Worker:
         again can open a new request.
         """
         try:
-            return await self._agent.run(turn)
+            hidden = await self._parking.others_parked(turn)
+            return await self._agent.run(turn, hidden_items=hidden)
         finally:
             if request is not None:
                 await self._parking.finish(request)
@@ -228,7 +230,9 @@ class Worker:
         )
         if reset.archived_id is not None:
             self._nudge()
-        await self._send(item, user, notices.reset_marker(reset.archived_id, reset.new_id))
+        await self._send(
+            item, user, conversations_notices.reset_marker(reset.archived_id, reset.new_id)
+        )
 
     async def _send(self, item: QueueItem, user: User, text: str) -> None:
         try:

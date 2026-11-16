@@ -27,6 +27,9 @@ from alfred.reminders.store import ReminderRow
 class NoInputRequests:
     """No turn is waiting for its user's answer, and none may start waiting."""
 
+    async def parked_items(self, user: str) -> set[int]:
+        return set()
+
     async def running_for(self, item_id: int, user: str) -> RequestRow | None:
         return None
 

@@ -38,6 +38,8 @@ from alfred.queue import turn_kind
 
 log = logging.getLogger(__name__)
 
+# A request in these statuses keeps its turn parked.
+_LIVE_STATUSES = ("open", "answered", "running")
 _Answered = Literal["answered", "not_open", "not_yours"]
 # Why a request ended unanswered (``notices.NOT_DONE_REASONS``).
 EndReason = Literal["new_message", "expired", "not_delivered"]
@@ -191,6 +193,16 @@ class InputRequests:
                 .returning(InputRequest)
             )
             return RequestRow.of(row) if row is not None else None
+
+    async def parked_items(self, user: str) -> set[int]:
+        """The queue items of ``user``'s turns that are parked: their request is live."""
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(InputRequest.queue_item_id).where(
+                    InputRequest.user_name == user, InputRequest.status.in_(_LIVE_STATUSES)
+                )
+            )
+            return set(rows)
 
     async def running_for(self, item_id: int, user: str) -> RequestRow | None:
         """The item's request left ``running`` (alfred stopped mid-resume), if any."""

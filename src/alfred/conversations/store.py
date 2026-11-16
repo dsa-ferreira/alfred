@@ -15,7 +15,7 @@ new conversation, with no marker.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
@@ -31,7 +31,6 @@ from alfred.db.models import (
     Attachment,
     Conversation,
     Entry,
-    InputRequest,
     QueueItem,
     Reminder,
 )
@@ -43,7 +42,6 @@ _EntryKind = Literal[
 # close a conversation that has no user message. Never a reply.
 _ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
 # An input request whose turn is still waiting or going on (a parked turn).
-_LIVE_STATUSES = ("open", "answered", "running")
 
 
 @dataclass(frozen=True)
@@ -184,19 +182,16 @@ class History:
         return entry_id
 
     async def recent(
-        self, user: str, limit: int, *, turn_item_id: int | None = None
+        self, user: str, limit: int, *, hidden_items: Collection[int] = ()
     ) -> list[HistoryEntry]:
         """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
 
-        A recall counts as one entry, however long its transcript. With
-        ``turn_item_id`` (the queue item of the turn reading it), the entries
-        of other turns still waiting for their user's answer are left out,
-        before the limit: they have no reply yet, and this turn must not act
-        on them.
+        A recall counts as one entry, however long its transcript. The entries
+        of the queue items ``hidden_items`` are left out, before the limit.
         """
         where = [Conversation.ended_at.is_(None)]
-        if turn_item_id is not None:
-            where.append(_not_parked(turn_item_id))
+        if hidden_items:
+            where.append(_not_from(hidden_items))
         return await self._read(user, limit, where)
 
     async def parked_window(
@@ -207,7 +202,7 @@ class History:
         conversation_id: int | None,
         upto_entry_id: int | None,
         entry_ids: Sequence[int] | None,
-        turn_item_id: int | None,
+        hidden_items: Collection[int] = (),
     ) -> list[HistoryEntry]:
         """The context a turn parked with, read again to resume it.
 
@@ -215,8 +210,8 @@ class History:
         entries added after ``upto_entry_id`` are left out (``None``: the turn
         had no entries). ``entry_ids`` are exactly the entries it had, whatever
         other parked turns did meanwhile; turns parked by 0.16.0 saved none
-        (``None``), and read their window up to ``upto_entry_id``. Other
-        parked turns' entries are left out, as in :meth:`recent`.
+        (``None``), and read their window up to ``upto_entry_id``.
+        ``hidden_items`` are left out, as in :meth:`recent`.
         """
         where = [
             Conversation.ended_at.is_(None)
@@ -224,8 +219,8 @@ class History:
             else Conversation.id == conversation_id,
             Entry.id <= (upto_entry_id or 0),
         ]
-        if turn_item_id is not None:
-            where.append(_not_parked(turn_item_id))
+        if hidden_items:
+            where.append(_not_from(hidden_items))
         if entry_ids is not None:
             where.append(Entry.id.in_(entry_ids))
         return await self._read(user, limit, where)
@@ -403,18 +398,9 @@ class _LastMessage:
     at: datetime
 
 
-def _not_parked(turn_item_id: int) -> ColumnElement[bool]:
-    """Not an entry of another queue item with a live input request (a parked turn)."""
-    live = (
-        select(InputRequest.id)
-        .where(
-            InputRequest.queue_item_id == Entry.queue_item_id,
-            InputRequest.queue_item_id != turn_item_id,
-            InputRequest.status.in_(_LIVE_STATUSES),
-        )
-        .exists()
-    )
-    return ~live
+def _not_from(items: Collection[int]) -> ColumnElement[bool]:
+    """Not an entry of one of the queue items ``items``. Entries of no item pass."""
+    return or_(Entry.queue_item_id.is_(None), Entry.queue_item_id.not_in(list(items)))
 
 
 async def _unattended(session: AsyncSession, conversation_id: int, idle_after: timedelta) -> bool:

@@ -32,7 +32,7 @@ from sqlalchemy.orm import aliased
 
 from alfred.backoff import backoff_s
 from alfred.config import Config
-from alfred.conversations.transcript import cut_middle, render
+from alfred.conversations.transcript import cut_middle, load_transcript, render
 from alfred.db.models import Conversation
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.protocols import ChatModel
@@ -46,7 +46,6 @@ from alfred.memory.extraction import (
     quote_matches,
 )
 from alfred.memory.facts import FactStore, insert_fact, lock_user
-from alfred.memory.summaries import load_transcript
 
 log = logging.getLogger(__name__)
 
