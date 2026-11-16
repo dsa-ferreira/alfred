@@ -119,7 +119,7 @@ module must be added there.
 ```
  rank  name       packages / modules
  ----  ---------  ---------------------------------------------------------
-  6    entry      app : cli : config : startup
+  6    entry      app : cli : config : schema : startup
   5    adapters   telegram | http
   4    runtime    turns
                   agent
@@ -138,11 +138,13 @@ renders attachment handles, and `attachments` asks whether the current
 brain has vision. A feature may use the features below it, never above.
 When a lower package needs something from a higher one, it declares a
 protocol and `app` wires in the implementation (the attachment tools'
-conversation scope, the input requests' question editor).
+conversation scope, the input requests' question editor, the recalled
+conversations' titles).
 
 A feature package holds everything about its feature, one job per module:
 
 - **domain** types and rules (`reminders/when.py`);
+- its **tables** (`tables.py`; see "Adding a table");
 - the **store**, its persistence (`facts/store.py`, `conversations/store.py`);
 - the **tools** the model calls (`tools.py`, a `LocalToolset`);
 - background **jobs** run by `turns/background.py` (`archive/summary_job.py`);
@@ -155,6 +157,38 @@ A feature package holds everything about its feature, one job per module:
 
 Tests mirror the packages: the tests of `alfred/facts/store.py` are in
 `tests/facts/test_store.py`.
+
+## Adding a table
+
+A table belongs to one feature (or to `turns`) and is defined in that
+package's `tables.py`, on `alfred.db.base.Base`; a status vocabulary is a
+check constraint built with `in_values`, next to the table. Import the
+module in `alfred/schema.py`, which gathers every table for Alembic (and
+add a column that names a user to `USER_NAME_COLUMNS`). Then add a
+migration under `migrations/versions/` (autogenerate from
+`schema.metadata`, then edit by hand); `test_models_match_migrations`
+fails until the two agree. Constraint tests go in
+`tests/<package>/test_tables.py`.
+
+Three rules keep the data shaped like the code:
+
+1. **Writes.** A package inserts, updates and deletes only its own tables.
+2. **Reads.** A package may read, and join, the tables of packages ranked
+   below it (`archive/search.py` joins `conversations`), never above. A
+   read from above goes through a protocol `app` wires in
+   (`conversations/transcript.py`'s `RecalledLookup`).
+3. **Foreign keys** point within the package or down the order. A link
+   that would point up is a plain column with no foreign key
+   (`entries.turn_id`) or a table owned by the higher package
+   (`entry_attachments`, `conversation_summaries`).
+
+A write that spans packages runs in one transaction opened by the package
+ranked above all of them, which calls each package's session-taking
+operation: `turns/intake.py` queues a message with `attachments/rows.py`'s
+`add` and `Queue.add`; `turns/due_reminders.py` queues what
+`Reminders.claim_due` claims. Such an operation takes the caller's
+`AsyncSession` and never commits; the caller notifies anyone waiting
+(`Queue.notify`) after its transaction commits.
 
 ## Notices
 

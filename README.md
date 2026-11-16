@@ -62,7 +62,8 @@ allow-list (see [Users](#users)).
                        └───────────────┬─────────────────┘
                                        │
                                    Postgres
-   (conversations, entries, queue, tool calls, reminders, facts, questions)
+     (each feature its own tables: conversations and entries, summaries,
+      facts, reminders, attachments, the queue, tool calls and questions)
 ```
 
 One process, one event loop: the bot, the API, the queue worker, the memory
@@ -417,9 +418,8 @@ sees them.
   "lives in Lisbon"), quoting the old fact's text; if the quote doesn't
   match the fact with that id, nothing is replaced, the new fact is simply
   added, and the refusal is logged. A user's
-  conversations are read in order, oldest first; conversations archived
-  before the upgrade are read the same way. Each one logs a line without the
-  facts' text:
+  conversations are read in order, oldest first. Each one logs a line
+  without the facts' text:
 
   ```
   conversation 41 facts: 2 added, 1 replaced, 0 replacements refused; 812 prompt tokens, 24 completion tokens
@@ -841,6 +841,12 @@ server for page fetch) and serves the API on port `8080`.
 
    The container runs `alfred migrate` on every start, before `alfred serve`.
    It stops with a message saying so if the extension is missing.
+
+   alfred 0.17.0 starts its schema afresh. A database created by alfred 0.16
+   or older is refused: `alfred migrate` stops before changing anything and
+   says to drop and recreate the database. Its conversations, facts,
+   reminders and attachments are not carried over; take a `pg_dump` first if
+   you may want to go back to 0.16.2.
 
 2. **Telegram bot.** In Telegram, talk to [@BotFather](https://t.me/BotFather),
    send `/newbot`, and keep the token it gives you
