@@ -20,6 +20,9 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
+from alfred.kernel.access import AllowList
+from alfred.kernel.toolset import AttemptContext, PromptNote, ToolOutcome
+from alfred.kernel.turn import TurnInput
 from alfred.mcp.client import Connector
 from alfred.mcp.registry import (
     ServerInstructions,
@@ -28,10 +31,10 @@ from alfred.mcp.registry import (
     call_tool,
     resume_tool,
 )
-from alfred.tools.base import AllowList, AttemptContext, PromptNote, ToolOutcome, TurnInput
 
 if TYPE_CHECKING:
-    from alfred.config import Config, McpServer, User
+    from alfred.config import Config, McpServer
+    from alfred.kernel.users import User
 
 log = logging.getLogger(__name__)
 
@@ -130,7 +133,7 @@ def _prompt_notes(tools: TurnTools) -> list[PromptNote]:
 def _keep_allowed(tools: TurnTools, allow: AllowList, user: str) -> None:
     """Drop instructions of servers with no allowed tool; warn about unknown exact names.
 
-    The tools themselves are left for the gate (``alfred.tools.base.Gated``).
+    The tools themselves are left for the gate (``alfred.kernel.access.Gated``).
     """
     allowed = {route.server.name for name, route in tools.routes.items() if allow.matches(name)}
     tools.instructions = [i for i in tools.instructions if i.server in allowed]

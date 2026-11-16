@@ -11,8 +11,8 @@ from alfred.attachments.tools import _TEXT_ONLY_NOTE, _VISION_NOTE, READ_DOCUMEN
 from alfred.brains import Brains
 from alfred.config import BrainEntry
 from alfred.history import History
+from alfred.kernel.turn import ChatTurn
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.base import ChatTurn
 from alfred.tools.brains import SET_MODEL
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION

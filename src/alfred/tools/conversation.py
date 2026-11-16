@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, TurnInput, chat_only
+from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, chat_only
+from alfred.kernel.turn import TurnInput
 
 END_CONVERSATION = "alfred_end_conversation"
 

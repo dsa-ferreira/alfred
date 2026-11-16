@@ -7,13 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.prompts import _NO_REPLY
-from alfred.config import QueueConfig, User, Users
+from alfred.config import QueueConfig
 from alfred.db.models import InputRequest
 from alfred.inputs.loop import cancel_on_new_message
 from alfred.inputs.parking import Parking
 from alfred.inputs.store import InputRequests
-from alfred.model import ModelFailed
-from alfred.tools.base import AllowList, Question
+from alfred.kernel.access import AllowList
+from alfred.kernel.questions import Question
+from alfred.kernel.users import User, Users
+from alfred.llm.chat import ModelFailed
 from alfred.worker import Worker
 from tests.agent.turn_helpers import tool_rows
 from tests.fakes import ignore, no_typing

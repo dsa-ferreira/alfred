@@ -26,7 +26,7 @@ from typing import Any
 
 import pint
 
-from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, parse_arguments
+from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, parse_arguments
 
 CALCULATE = "alfred_calculate"
 

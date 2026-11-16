@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Fact
-from alfred.memory.embedding import _EmbeddingUnreachable
+from alfred.llm.embedding import _EmbeddingUnreachable
 from alfred.memory.facts import _DUPLICATE_CANDIDATES, FactStore, _DuplicateCheck, _FactsNotFound
 from tests.helpers import FakeEmbedder, make_config
 

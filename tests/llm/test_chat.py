@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from alfred.model import ModelClient, ModelFailed, ModelUnreachable, _Usage
+from alfred.llm.chat import ModelClient, ModelFailed, ModelUnreachable, _Usage
 
 URL = "http://ai.lan/v1/chat/completions"
 

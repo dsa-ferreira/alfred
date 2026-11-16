@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from alfred.config import User
+from alfred.kernel.users import User
 
 
 class Outbox(Protocol):

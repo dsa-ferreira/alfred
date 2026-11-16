@@ -16,9 +16,9 @@ from zoneinfo import ZoneInfo
 
 from alfred.attachments.handles import handle, with_handles
 from alfred.history import HistoryEntry
+from alfred.kernel.content import ModelImage
 from alfred.memory.transcript import recall_label
-from alfred.reminders.when import format_when
-from alfred.tools.base import ModelImage
+from alfred.times import format_when
 
 _UTC_ZONE = ZoneInfo("UTC")
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

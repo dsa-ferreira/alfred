@@ -20,18 +20,14 @@ import os
 import re
 import tomllib
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
     BeforeValidator,
-    ConfigDict,
     Field,
     SecretStr,
     ValidationError,
@@ -40,7 +36,21 @@ from pydantic import (
     model_validator,
 )
 
-from alfred.tools.base import AllowList
+from alfred.kernel.access import AllowList
+from alfred.kernel.users import User, Users
+from alfred.settings import (
+    TOKEN_ENV,
+    ConfigError,
+    HttpUrlStr,
+    Name,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveFloat,
+    PositiveInt,
+    Section,
+    TimeZoneName,
+    TokenEnv,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,72 +64,11 @@ _S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
 _TELEGRAM_MAX_BYTES = 20_000_000
 
 _RESERVED_SERVER_NAME = "alfred"
-_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
-_TOKEN_ENV = re.compile(r"ALFRED_[A-Z0-9_]+")
-
-
-def _check_name(value: str) -> str:
-    if not _NAME.fullmatch(value):
-        raise ValueError("must be lowercase letters, digits and hyphens")
-    return value
-
-
-_Name = Annotated[str, AfterValidator(_check_name)]
-
-
-def _check_http_url(value: str) -> str:
-    parts = urlsplit(value)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError("must be an http:// or https:// URL with a host")
-    return value.rstrip("/")
-
-
-_HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
-
-
-def _check_token_env(value: str) -> str:
-    if not _TOKEN_ENV.fullmatch(value):
-        raise ValueError("must name an ALFRED_* environment variable (A-Z, 0-9, _)")
-    return value
-
-
-_TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
-
-
-def _check_timezone(value: str) -> str:
-    try:
-        ZoneInfo(value)
-    except (ZoneInfoNotFoundError, ValueError):
-        raise ValueError("unknown timezone; use an IANA name such as Europe/Lisbon") from None
-    return value
-
-
-_TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
-_PositiveInt = Annotated[int, Field(gt=0)]
-_PositiveFloat = Annotated[float, Field(gt=0)]
-_NonNegativeFloat = Annotated[float, Field(ge=0)]
-_NonNegativeInt = Annotated[int, Field(ge=0)]
-
-
 _CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
-
-
 _ALL_TOOLS = "*"
 
 
-class ConfigError(Exception):
-    """Invalid configuration. ``problems`` are safe to print and log."""
-
-    def __init__(self, problems: list[str]) -> None:
-        self.problems = problems
-        super().__init__("invalid configuration:\n" + "\n".join(f"  - {p}" for p in problems))
-
-
-class _Section(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class BrainEntry(_Section):
+class BrainEntry(Section):
     """An ``[ai.models]`` entry written as a table."""
 
     model: Annotated[str, Field(min_length=1)]
@@ -133,20 +82,20 @@ def _brain_entries(value: Any) -> Any:
     return {k: {"model": v} if isinstance(v, str) else v for k, v in value.items()}
 
 
-class AIConfig(_Section):
-    base_url: _HttpUrlStr = "http://ai.lan"
+class AIConfig(Section):
+    base_url: HttpUrlStr = "http://ai.lan"
     model: Annotated[str, Field(min_length=1)] = "gemma4:26b-a4b-it-qat"
     # Whether the [ai] model can see images, when no alias names it.
     vision: bool = False
-    request_timeout_s: _PositiveFloat = 300
-    max_requests_per_turn: _PositiveInt = 12
-    tool_result_max_chars: _PositiveInt = 4000
+    request_timeout_s: PositiveFloat = 300
+    max_requests_per_turn: PositiveInt = 12
+    tool_result_max_chars: PositiveInt = 4000
     persona: Annotated[str, Field(min_length=1)] | None = None
     # alfred's timezone: today's date in the prompt, reminders and search dates.
-    timezone: _TimeZoneName = "Europe/Lisbon"
+    timezone: TimeZoneName = "Europe/Lisbon"
     # The brains the admin can switch between: alias -> model tag, or
     # alias -> { model = tag, vision = true }. Both are read as a BrainEntry.
-    models: Annotated[dict[_Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
+    models: Annotated[dict[Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
 
     @field_validator("models")
     @classmethod
@@ -170,9 +119,9 @@ class AIConfig(_Section):
         return models
 
 
-class QueueConfig(_Section):
-    retry_initial_s: _PositiveFloat = 30
-    retry_max_s: _PositiveFloat = 900
+class QueueConfig(Section):
+    retry_initial_s: PositiveFloat = 30
+    retry_max_s: PositiveFloat = 900
 
     @model_validator(mode="after")
     def _max_not_below_initial(self) -> QueueConfig:
@@ -181,53 +130,53 @@ class QueueConfig(_Section):
         return self
 
 
-class MemoryConfig(_Section):
+class MemoryConfig(Section):
     """Summaries, search and recall of archived conversations."""
 
     # None: the ``[ai]`` model (see :attr:`Config.summary_model`).
     summary_model: Annotated[str, Field(min_length=1)] | None = None
-    embedding_base_url: _HttpUrlStr = "http://ragman.lan"
+    embedding_base_url: HttpUrlStr = "http://ragman.lan"
     embedding_model: Annotated[str, Field(min_length=1)] = "nomic-embed-text:v1.5"
-    embedding_timeout_s: _PositiveFloat = 30
+    embedding_timeout_s: PositiveFloat = 30
     document_prefix: str = "search_document: "
     query_prefix: str = "search_query: "
-    recall_max_chars: _PositiveInt = 32000
-    summary_input_max_chars: _PositiveInt = 60000
-    search_results: _PositiveInt = 5
+    recall_max_chars: PositiveInt = 32000
+    summary_input_max_chars: PositiveInt = 60000
+    search_results: PositiveInt = 5
     # Seconds the queue must have been quiet before a summary request
     # starts. 0: only an empty queue.
-    summary_quiet_s: _NonNegativeFloat = 60
+    summary_quiet_s: NonNegativeFloat = 60
     # User facts. Off: facts are learned, remembered and listed by
     # /memory, but sent in no prompt.
     facts_in_context: bool = False
     # Most characters of facts in one system prompt.
-    facts_context_max_chars: _PositiveInt = 3000
+    facts_context_max_chars: PositiveInt = 3000
     # Longest fact; longer learned facts are cut, longer remembered ones refused.
-    fact_max_chars: _PositiveInt = 300
+    fact_max_chars: PositiveInt = 300
     # Failed extractions of one conversation before giving up. 0: never.
-    facts_extraction_max_attempts: _NonNegativeInt = 0
+    facts_extraction_max_attempts: NonNegativeInt = 0
     # Cosine distance within which a user's facts are checked for duplicates by
     # the model. Distance alone decides nothing.
     facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
-class AttachmentsConfig(_Section):
+class AttachmentsConfig(Section):
     """Images and PDFs from users.
 
     The section's presence turns attachments on; the object store key comes
     from ``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``.
     """
 
-    endpoint_url: _HttpUrlStr
+    endpoint_url: HttpUrlStr
     bucket: Annotated[str, Field(min_length=1)]
     region: Annotated[str, Field(min_length=1)] = "garage"
     max_bytes: Annotated[int, Field(gt=0)] = _TELEGRAM_MAX_BYTES
     # How many of the newest user messages carry their attachments inline.
     inline_turns: Annotated[int, Field(ge=0)] = 1
-    first_page_chars: _PositiveInt = 4000
-    read_chars: _PositiveInt = 8000
-    image_max_px: _PositiveInt = 1536
-    album_wait_s: _PositiveFloat = 2
+    first_page_chars: PositiveInt = 4000
+    read_chars: PositiveInt = 8000
+    image_max_px: PositiveInt = 1536
+    album_wait_s: PositiveFloat = 2
 
     @field_validator("max_bytes")
     @classmethod
@@ -256,68 +205,26 @@ class McpServer:
 
 
 @dataclass(frozen=True)
-class User:
-    """Someone alfred serves."""
-
-    name: str
-    telegram_user_id: int
-    address: str = "sir"
-    admin: bool = False
-    tools: AllowList = AllowList()
-    # MCP server name -> this user's token, where it isn't the server's own.
-    mcp_tokens: Mapping[str, SecretStr] = field(default_factory=dict)
-    # The tools whose calls wait for this user's confirmation.
-    confirm: AllowList = AllowList()
-
-
-@dataclass(frozen=True)
-class Users:
-    """The configured users, in file order. Exactly one is the admin."""
-
-    all: tuple[User, ...]
-
-    def __iter__(self) -> Iterator[User]:
-        return iter(self.all)
-
-    def __len__(self) -> int:
-        return len(self.all)
-
-    @property
-    def names(self) -> list[str]:
-        return [u.name for u in self.all]
-
-    @property
-    def admin(self) -> User:
-        return next(u for u in self.all if u.admin)
-
-    def get(self, name: str) -> User | None:
-        return next((u for u in self.all if u.name == name), None)
-
-    def by_telegram_id(self, telegram_user_id: int) -> User | None:
-        return next((u for u in self.all if u.telegram_user_id == telegram_user_id), None)
-
-
-@dataclass(frozen=True)
 class S3Key:
     access_key_id: SecretStr
     secret_access_key: SecretStr
 
 
-class _HistoryConfig(_Section):
-    max_entries: _PositiveInt = 30
+class _HistoryConfig(Section):
+    max_entries: PositiveInt = 30
     # Hours after a user's last own message before their conversation is
     # closed. None: never.
-    idle_close_after_h: _PositiveFloat | None = None
+    idle_close_after_h: PositiveFloat | None = None
 
 
-class _WebConfig(_Section):
+class _WebConfig(Section):
     """Web search through SearXNG and page fetch."""
 
-    searxng_url: _HttpUrlStr = "http://oracle.lan"
-    search_results: _PositiveInt = 5
-    fetch_page_chars: _PositiveInt = 8000
-    fetch_timeout_s: _PositiveFloat = 20
-    fetch_max_bytes: _PositiveInt = 5_000_000
+    searxng_url: HttpUrlStr = "http://oracle.lan"
+    search_results: PositiveInt = 5
+    fetch_page_chars: PositiveInt = 8000
+    fetch_timeout_s: PositiveFloat = 20
+    fetch_max_bytes: PositiveInt = 5_000_000
 
 
 def _check_clock(value: str) -> str:
@@ -326,7 +233,7 @@ def _check_clock(value: str) -> str:
     return value
 
 
-class _RemindersConfig(_Section):
+class _RemindersConfig(Section):
     """Timed reminders."""
 
     # The time of a reminder on a date with no clock time ("on Friday").
@@ -336,20 +243,20 @@ class _RemindersConfig(_Section):
     check_interval_s: Annotated[float, Field(gt=0, le=60)] = 30
 
 
-class _InputRequestsConfig(_Section):
+class _InputRequestsConfig(Section):
     """Turns waiting for their user's answer."""
 
     # Counted from when the question was sent.
-    expire_after_min: _PositiveFloat = 60
+    expire_after_min: PositiveFloat = 60
 
 
-class _MCPConfig(_Section):
-    list_timeout_s: _PositiveFloat = 10
-    call_timeout_s: _PositiveFloat = 60
-    instructions_max_chars: _PositiveInt = 2000
+class _MCPConfig(Section):
+    list_timeout_s: PositiveFloat = 10
+    call_timeout_s: PositiveFloat = 60
+    instructions_max_chars: PositiveInt = 2000
 
 
-class _ServerConfig(_Section):
+class _ServerConfig(Section):
     host: Annotated[str, Field(min_length=1)] = "0.0.0.0"
     port: Annotated[int, Field(ge=1, le=65535)] = 8080
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -510,31 +417,31 @@ def load_database_url(
     return result
 
 
-class _TelegramConfig(_Section):
+class _TelegramConfig(Section):
     """No settings of its own: who may chat is set by ``[[users]]``.
 
     Kept so the removed ``owner_user_id`` is reported as an unknown key.
     """
 
 
-class _ServiceEntry(_Section):
-    name: _Name
-    token_env: _TokenEnv
+class _ServiceEntry(Section):
+    name: Name
+    token_env: TokenEnv
 
 
-class _McpServerEntry(_Section):
-    name: _Name
-    url: _HttpUrlStr
-    token_env: _TokenEnv
+class _McpServerEntry(Section):
+    name: Name
+    url: HttpUrlStr
+    token_env: TokenEnv
     exclude_tools: list[Annotated[str, Field(min_length=1)]] = []
     use_server_instructions: bool = True
 
 
-class _UserEntry(_Section):
+class _UserEntry(Section):
     """A ``[[users]]`` entry."""
 
-    name: _Name
-    telegram_user_id: _PositiveInt
+    name: Name
+    telegram_user_id: PositiveInt
     # How alfred addresses this user, in replies and fixed notices.
     address: Annotated[str, Field(min_length=1)] = "sir"
     admin: bool = False
@@ -544,10 +451,10 @@ class _UserEntry(_Section):
     # the same syntax.
     confirm: list[Annotated[str, Field(min_length=1)]] = []
     # MCP server name -> the variable holding this user's token for it.
-    mcp_tokens: dict[_Name, _TokenEnv] = {}
+    mcp_tokens: dict[Name, TokenEnv] = {}
 
 
-class _FileConfig(_Section):
+class _FileConfig(Section):
     """The shape of ``alfred.toml``."""
 
     users: Annotated[list[_UserEntry], Field(min_length=1)]
@@ -619,7 +526,7 @@ def _resolve_tokens(
     tokens: dict[str, str] = {}
     for i, entry in enumerate(entries):
         var = entry.get("token_env")
-        if not isinstance(var, str) or not _TOKEN_ENV.fullmatch(var):
+        if not isinstance(var, str) or not TOKEN_ENV.fullmatch(var):
             continue  # reported by the model validation
         value = source.get(var, "").strip()
         if not value:
@@ -722,7 +629,7 @@ def _resolve_user_tokens(
         if not isinstance(refs, Mapping):
             continue
         for server, var in refs.items():
-            if not isinstance(var, str) or not _TOKEN_ENV.fullmatch(var):
+            if not isinstance(var, str) or not TOKEN_ENV.fullmatch(var):
                 continue  # reported by the model validation
             value = source.get(var, "").strip()
             if not value:

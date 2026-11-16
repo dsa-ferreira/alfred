@@ -19,11 +19,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from alfred.llm.chat import ModelError, token_counts
+from alfred.llm.protocols import ChatModel
+from alfred.llm.streaming import complete_unless_preempted
 from alfred.memory.extraction import DuplicateParseError, duplicate_messages, parse_duplicates
 from alfred.memory.facts import FactStore
-from alfred.memory.streaming import complete_unless_preempted
-from alfred.memory.summaries import Model
-from alfred.model import ModelError, token_counts
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 class FactDuplicateJob:
     uses_model = True
 
-    def __init__(self, facts: FactStore, model: Model) -> None:
+    def __init__(self, facts: FactStore, model: ChatModel) -> None:
         self._facts = facts
         self._model = model
 

@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from alfred.memory.embedding import EmbeddingClient, _EmbeddingFailed, _EmbeddingUnreachable
+from alfred.llm.embedding import EmbeddingClient, _EmbeddingFailed, _EmbeddingUnreachable
 
 URL = "http://ragman.lan/v1/embeddings"
 

@@ -18,15 +18,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alfred.config import Config
-from alfred.tools.base import (
+from alfred.kernel.toolset import (
     LOCAL_GROUP,
-    AskTurn,
     AttemptContext,
     PromptNote,
     ToolOutcome,
-    TurnInput,
     parse_arguments,
 )
+from alfred.kernel.turn import AskTurn, TurnInput
 from alfred.web.allowlist import Allowlist, normalise
 from alfred.web.extract import NoReadableContent, extract, supported
 from alfred.web.fetch import Fetcher, FetchError, make_http_client

@@ -15,7 +15,7 @@ fail "stopped after too many steps"
 ```
 
 **Tools.** The agent names no tool: what is offered on which turn, and what
-a call does, is up to the toolsets (``alfred.tools.base``) that ``app.py``
+a call does, is up to the toolsets (``alfred.kernel.toolset``) that ``app.py``
 passes in, seen through the turn user's allow-list and confirm list
 (``Gated`` inside ``Confirmed``). The names left are what the system prompt
 describes.
@@ -64,26 +64,24 @@ from alfred.agent.inline import ImageCache, InlineAttachments
 from alfred.agent.messages import stamped, strip_stamp, to_messages
 from alfred.agent.prompts import FactsBlock, KnownFact, brain_line, facts_block, system_prompt
 from alfred.brains import Brain, Brains
-from alfred.config import Config, User
+from alfred.config import Config
 from alfred.db.models import TurnToolCall
 from alfred.history import History, HistoryEntry
-from alfred.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
-from alfred.reminders.when import format_now, format_when
-from alfred.tools.base import (
+from alfred.kernel.access import Confirmed, Gated
+from alfred.kernel.questions import InputNeed
+from alfred.kernel.toolset import (
     AttemptContext,
-    ChatTurn,
-    Confirmed,
-    Gated,
-    InputNeed,
     OpenToolset,
-    Resume,
     ToolOutcome,
     Toolset,
-    TurnInput,
     dispatch,
     dispatch_resume,
     parse_arguments,
 )
+from alfred.kernel.turn import ChatTurn, Resume, TurnInput
+from alfred.kernel.users import User
+from alfred.llm.chat import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
+from alfred.times import format_now, format_when
 
 log = logging.getLogger(__name__)
 

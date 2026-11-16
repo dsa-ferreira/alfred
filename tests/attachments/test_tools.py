@@ -20,18 +20,13 @@ from alfred.attachments.tools import (
     AttachmentTools,
 )
 from alfred.brains import Brains
-from alfred.config import AttachmentsConfig, BrainEntry, User
+from alfred.config import AttachmentsConfig, BrainEntry
 from alfred.history import History
+from alfred.kernel.access import AllowList
+from alfred.kernel.toolset import AttemptContext, ToolOutcome
+from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
+from alfred.kernel.users import User
 from alfred.memory.search import ConversationSearch
-from alfred.tools.base import (
-    AllowList,
-    AskTurn,
-    AttemptContext,
-    ChatTurn,
-    ReminderTurn,
-    ToolOutcome,
-    TurnInput,
-)
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.fakes import NoFacts

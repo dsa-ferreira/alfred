@@ -8,14 +8,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from alfred.tools.base import (
-    AskTurn,
-    AttemptContext,
-    ChatTurn,
-    ReminderTurn,
-    ToolOutcome,
-    TurnInput,
-)
+from alfred.kernel.toolset import AttemptContext, ToolOutcome
+from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.tools.dates import _DATE_TOOL, DATE, DateTools
 from tests.helpers import DIOGO
 

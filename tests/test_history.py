@@ -14,8 +14,8 @@ from alfred.attachments.handles import AttachmentRef, handle
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.models import Conversation, Entry, QueueItem, Reminder
 from alfred.history import History, HistoryEntry
+from alfred.kernel.content import ModelImage
 from alfred.reminders.store import Reminders
-from alfred.tools.base import ModelImage
 from tests.fakes import ignore
 from tests.helpers import add_queue_item, image_file, owner_with_files, pdf_file
 
@@ -851,9 +851,9 @@ async def test_other_parked_turns_are_left_out(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     """An entry of a turn waiting for its user's answer has no reply yet (0.16.1)."""
-    from alfred.config import Users
     from alfred.inputs.store import InputRequests
-    from alfred.tools.base import Option, Question
+    from alfred.kernel.questions import Option, Question
+    from alfred.kernel.users import Users
     from tests.helpers import ANA, DIOGO
 
     history = History(sessions)

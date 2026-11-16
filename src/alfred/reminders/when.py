@@ -1,4 +1,4 @@
-"""When a reminder is due, and how times are shown.
+"""When a reminder is due.
 
 The model passes the time as the user said it: ``in_minutes``, or ``at`` as
 ``HH:MM``, ``YYYY-MM-DD HH:MM`` or ``YYYY-MM-DD``. alfred resolves it in
@@ -21,7 +21,6 @@ adding 24 hours, so 08:00 stays 08:00 across DST changes.
 
 from __future__ import annotations
 
-import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -29,16 +28,14 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from alfred.times import DATE, WhenError, calendar_date, format_when
+
 _MAX_MINUTES = 366 * 24 * 60  # about one year
 _MAX_TEXT_CHARS = 500
 _AT_FORMS = '"HH:MM" (24-hour), "YYYY-MM-DD HH:MM" or "YYYY-MM-DD"'
 
 _CLOCK = re.compile(r"(\d{1,2}):(\d{2})")
-_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _DATE_CLOCK = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})")
-
-
-_DATE_FORMS = '"YYYY-MM-DD" or "today"'
 
 
 REPEATS = ("daily", "weekdays", "weekends", "weekly")
@@ -47,10 +44,6 @@ DAY_NAMES = tuple(d[:3] for d in _WEEKDAYS)  # "mon" ... "sun", as the tool offe
 _ALL_DAYS = 0b1111111
 _MASKS = {"daily": _ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
 _REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
-
-
-class WhenError(ValueError):
-    """The time can't be used; the message is written for the model."""
 
 
 def parse_text(value: Any) -> str:
@@ -97,10 +90,10 @@ def resolve(
         return due
 
     if match := _DATE_CLOCK.fullmatch(value):
-        day = _date(*match.group(1, 2, 3))
+        day = calendar_date(*match.group(1, 2, 3))
         due = _local(day, _clock(match.group(4), match.group(5)), zone)
-    elif match := _DATE.fullmatch(value):
-        day = _date(*match.group(1, 2, 3))
+    elif match := DATE.fullmatch(value):
+        day = calendar_date(*match.group(1, 2, 3))
         hour, minute = default_time.split(":")
         due = _local(day, _clock(hour, minute), zone)
     else:
@@ -114,22 +107,6 @@ def resolve(
     if due - now > timedelta(minutes=_MAX_MINUTES):
         raise WhenError("Error: a reminder can be at most one year ahead.")
     return due
-
-
-def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
-    """A date as ``YYYY-MM-DD``, or ``today`` in ``zone`` at ``now``.
-
-    Shared with ``alfred_date``. Raises :class:`WhenError` with a
-    message for the model.
-    """
-    if not isinstance(value, str):
-        raise WhenError(f"Error: a date must be text: {_DATE_FORMS}.")
-    text = value.strip()
-    if text.lower() == "today":
-        return now.astimezone(zone).date()
-    if match := _DATE.fullmatch(text):
-        return _date(*match.group(1, 2, 3))
-    raise WhenError(f"Error: can't read the date {value!r}. Use {_DATE_FORMS}.")
 
 
 @dataclass(frozen=True)
@@ -215,57 +192,6 @@ def latest_occurrence(
     return latest
 
 
-def format_when(moment: datetime, zone: ZoneInfo) -> str:
-    """``Monday 9 November 2026, 17:00`` in alfred's timezone."""
-    local = moment.astimezone(zone)
-    return f"{local:%A} {local.day} {local:%B %Y}, {local:%H:%M}"
-
-
-def format_day_time(moment: datetime, now: datetime, zone: ZoneInfo) -> str:
-    """The time as a person says it, from ``now``: ``today at 13:57``,
-    ``tomorrow at 05:00``, ``on Friday at 09:30`` within the week, else
-    ``on Friday 20 November at 09:30`` (with the year when it isn't this one)."""
-    local = moment.astimezone(zone)
-    days = (local.date() - now.astimezone(zone).date()).days
-    clock = f"{local:%H:%M}"
-    if days == 0:
-        return f"today at {clock}"
-    if days == 1:
-        return f"tomorrow at {clock}"
-    if 1 < days < 7:
-        return f"on {local:%A} at {clock}"
-    year = f" {local.year}" if local.year != now.astimezone(zone).year else ""
-    return f"on {local:%A} {local.day} {local:%B}{year} at {clock}"
-
-
-def format_now(now: datetime, due: datetime, zone: ZoneInfo) -> str:
-    """The current time for a reminder input: ``17:12`` on the due day, else in full."""
-    if now.astimezone(zone).date() == due.astimezone(zone).date():
-        return _format_clock(now, zone)
-    return format_when(now, zone)
-
-
-def format_in(delta: timedelta) -> str:
-    """``in 2 h 13 min``: days, hours and minutes, zero parts dropped.
-
-    Rounded up, so it matches the clock times the user sees: from 14:47:20
-    to 17:00 is "in 2 h 13 min", as from 14:47 to 17:00.
-    """
-    minutes = math.ceil(delta.total_seconds() / 60)
-    if minutes < 1:
-        return "in less than a minute"
-    days, rest = divmod(minutes, 24 * 60)
-    hours, minutes = divmod(rest, 60)
-    parts: list[str] = []
-    if days:
-        parts.append(f"{days} day" if days == 1 else f"{days} days")
-    if hours:
-        parts.append(f"{hours} h")
-    if minutes:
-        parts.append(f"{minutes} min")
-    return "in " + " ".join(parts)
-
-
 def _whole_minutes(value: Any) -> int:
     minutes: int | None = None
     if isinstance(value, bool):
@@ -288,13 +214,6 @@ def _clock(hour: str, minute: str) -> time:
     if h > 23 or m > 59:
         raise WhenError(f"Error: {hour}:{minute} is not a valid 24-hour time.")
     return time(h, m)
-
-
-def _date(year: str, month: str, day: str) -> date:
-    try:
-        return date(int(year), int(month), int(day))
-    except ValueError:
-        raise WhenError(f"Error: {year}-{month}-{day} is not a valid date.") from None
 
 
 def _local(day: date, clock: time, zone: ZoneInfo) -> datetime:
@@ -337,8 +256,3 @@ def _format_rule(repeat: str, days: int, clock: time) -> str:
 
 def _and(items: Sequence[str]) -> str:
     return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
-
-
-def _format_clock(moment: datetime, zone: ZoneInfo) -> str:
-    """``17:00`` in alfred's timezone."""
-    return f"{moment.astimezone(zone):%H:%M}"

@@ -33,6 +33,9 @@ from sqlalchemy.orm import aliased
 from alfred.backoff import backoff_s
 from alfred.config import Config
 from alfred.db.models import Conversation
+from alfred.llm.chat import ModelError, token_counts
+from alfred.llm.protocols import ChatModel
+from alfred.llm.streaming import complete_unless_preempted
 from alfred.memory.extraction import (
     ExtractionParseError,
     NewFact,
@@ -42,10 +45,8 @@ from alfred.memory.extraction import (
     quote_matches,
 )
 from alfred.memory.facts import FactStore, insert_fact, lock_user
-from alfred.memory.streaming import complete_unless_preempted
-from alfred.memory.summaries import Model, load_transcript
+from alfred.memory.summaries import load_transcript
 from alfred.memory.transcript import cut_middle, render
-from alfred.model import ModelError, token_counts
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class FactExtractionJob:
         self,
         config: Config,
         sessions: async_sessionmaker[AsyncSession],
-        model: Model,
+        model: ChatModel,
         facts: FactStore,
         *,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -242,7 +243,9 @@ class FactExtractionJob:
                         attempts,
                     )
                     return
-                delay = backoff_s(attempts, self._config.queue)
+                delay = backoff_s(
+                    attempts, self._config.queue.retry_initial_s, self._config.queue.retry_max_s
+                )
                 await session.execute(
                     update(Conversation)
                     .where(Conversation.id == conversation_id)

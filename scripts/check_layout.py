@@ -49,10 +49,6 @@ ALWAYS_INTERNAL = {"log"}
 
 SOURCE_DIRS = ("src/alfred", "migrations")
 
-# The toolset contract every tool group and the agent build on; it imports
-# nothing else from alfred at runtime, so it is not part of the package graph.
-SHARED_CONTRACT = "alfred.tools.base"
-
 
 @dataclass
 class Module:
@@ -140,7 +136,7 @@ def _package_cycles(modules: dict[str, Module], root: Path) -> list[str]:
 
 def _package(module: str) -> str | None:
     """The package graph's node for ``module``; ``None`` outside the graph."""
-    if not module.startswith("alfred.") or module == SHARED_CONTRACT:
+    if not module.startswith("alfred."):
         return None
     return ".".join(module.split(".")[:2])
 

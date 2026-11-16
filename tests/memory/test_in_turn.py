@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.prompts import _NO_REPLY
 from alfred.db.models import Entry
 from alfred.history import History
+from alfred.kernel.turn import AskTurn
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
-from alfred.tools.base import AskTurn
 from tests.agent.turn_helpers import agent, contents, memory, owner_turn, tool_rows
 from tests.helpers import DIOGO, FakeEmbedder, FakeModel, add_queue_item, calls, text
 from tests.memory.test_search import CHICKEN, at, seed

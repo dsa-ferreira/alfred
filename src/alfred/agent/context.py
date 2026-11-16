@@ -6,7 +6,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from alfred.tools.base import LOCAL_GROUP, OpenToolset
+from alfred.kernel.toolset import LOCAL_GROUP, OpenToolset
 
 _LARGEST_TOOLS = 5
 

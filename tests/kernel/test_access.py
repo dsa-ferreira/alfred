@@ -4,92 +4,10 @@ from typing import Any
 
 import pytest
 
-from alfred.tools.base import (
-    _CONFIRM,
-    _DECLINED,
-    AllowList,
-    AskTurn,
-    AttemptContext,
-    ChatTurn,
-    Confirmed,
-    Gated,
-    LocalToolset,
-    PromptNote,
-    Question,
-    ToolOutcome,
-    TurnInput,
-    _safe_call,
-    chat_only,
-    dispatch,
-    dispatch_resume,
-)
-from tests.helpers import DIOGO
-
-
-def definition(name: str) -> dict[str, Any]:
-    return {"type": "function", "function": {"name": name, "parameters": {}}}
-
-
-class Echo(LocalToolset):
-    def __init__(self, label: str, *names: str) -> None:
-        self.label = label
-        self.definitions = [definition(n) for n in names]
-
-    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        return ToolOutcome(True, f"{self.label}:{name}")
-
-
-class Broken(LocalToolset):
-    definitions = [definition("x")]
-
-    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        raise ValueError("boom")
-
-
-CHAT = ChatTurn("hi", 1, user=DIOGO)
-ASK = AskTurn("hi", 2, "disk-check", user=DIOGO)
-
-
-async def test_first_toolset_that_handles_the_name_wins() -> None:
-    opened = [Echo("a", "one"), Echo("b", "one", "two")]
-    ctx = AttemptContext(CHAT)
-    assert await dispatch(opened, "one", None, ctx) == ToolOutcome(True, "a:one")
-    assert await dispatch(opened, "two", None, ctx) == ToolOutcome(True, "b:two")
-
-
-async def test_unknown_tool() -> None:
-    outcome = await dispatch([Echo("a", "one")], "nope", None, AttemptContext(CHAT))
-    assert outcome == ToolOutcome(False, "Error: unknown tool 'nope'.")
-
-
-async def test_exception_becomes_an_error_result(caplog: pytest.LogCaptureFixture) -> None:
-    outcome = await _safe_call(Broken(), "x", None, AttemptContext(CHAT))
-    assert outcome == ToolOutcome(False, "Error: tool 'x' failed: ValueError")
-    assert "tool x failed" in caplog.text
-
-
-async def test_local_toolset_is_offered_on_every_turn_by_default() -> None:
-    echo = Echo("a", "one")
-    assert await echo.open(CHAT) is echo
-    assert await echo.open(ASK) is echo
-
-
-async def test_chat_only() -> None:
-    class OwnerEcho(Echo):
-        def offered(self, turn: TurnInput) -> bool:
-            return chat_only(turn)
-
-    echo = OwnerEcho("a", "one")
-    assert await echo.open(CHAT) is echo
-    assert await echo.open(ASK) is None
-
-
-def test_request_reset() -> None:
-    ctx = AttemptContext(CHAT)
-    assert not ctx.reset
-    ctx.request_reset()
-    assert ctx.reset
-
+from alfred.kernel.access import _CONFIRM, _DECLINED, AllowList, Confirmed, Gated
+from alfred.kernel.questions import Question
+from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, dispatch
+from tests.kernel.toolsets import ARGS, CHAT, Asking, Counting, Echo, Noted
 
 # --- Allow-list gate (change add-multiple-users) ---------------------------------
 
@@ -133,10 +51,6 @@ def test_allow_list_exact_entries() -> None:
     assert allow.exact() == ["mcparr_find_media", "cookbook_get"]
 
 
-class Noted(Echo):
-    prompt_notes = (PromptNote("about one"),)
-
-
 def test_gate_hides_definitions() -> None:
     gated = Gated(Noted("a", "alfred_one", "alfred_two", "other_three"), AllowList.of("alfred_*"))
     assert [d["function"]["name"] for d in gated.definitions] == ["alfred_one", "alfred_two"]
@@ -177,48 +91,7 @@ def test_gate_passes_attempts_through() -> None:
     assert seen == [ctx]
 
 
-# --- input requests (change add-user-input-requests) -------------------------------
-
-
-class Counting(LocalToolset):
-    """Records each call; can ask its own question through ``need``."""
-
-    def __init__(self, *names: str) -> None:
-        self.definitions = [definition(n) for n in names]
-        self.calls: list[tuple[str, Any]] = []
-        self.resumed: list[tuple[str, Any, Any]] = []
-
-    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        self.calls.append((name, raw_arguments))
-        return ToolOutcome(True, f"ran {name}")
-
-
-class Asking(Counting):
-    async def resume(
-        self,
-        name: str,
-        raw_arguments: Any,
-        state: dict[str, Any],
-        answer: Any,
-        attempt: AttemptContext,
-    ) -> ToolOutcome:
-        self.resumed.append((name, state, answer))
-        return ToolOutcome(True, f"resumed {name} with {answer}")
-
-
-ARGS = '{"title": "Dune", "year": 2021}'
-
-
-async def test_resume_on_a_local_toolset_is_an_error_result() -> None:
-    outcome = await dispatch_resume(
-        [Counting("x")], "x", None, {"via": "mine"}, True, AttemptContext(CHAT)
-    )
-    assert outcome == ToolOutcome(False, "Error: tool 'x' failed: NotImplementedError")
-
-
-async def test_resume_of_an_unknown_tool() -> None:
-    outcome = await dispatch_resume([Counting("x")], "y", None, {}, True, AttemptContext(CHAT))
-    assert outcome == ToolOutcome(False, "Error: unknown tool 'y'.")
+# --- Confirmations and resumes -----------------------------------------------------
 
 
 async def test_gated_resume_refuses_a_name_the_list_no_longer_matches() -> None:

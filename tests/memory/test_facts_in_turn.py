@@ -6,8 +6,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.kernel.turn import AskTurn, TurnInput
 from alfred.memory.facts import _FORGET, _REMEMBER, FactStore, FactTools
-from alfred.tools.base import AskTurn, TurnInput
 from tests.agent.turn_helpers import agent, owner_turn, reminder_turn
 from tests.helpers import (
     ANA,

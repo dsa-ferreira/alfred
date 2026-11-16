@@ -7,7 +7,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.config import Users
+from alfred.kernel.toolset import AttemptContext
+from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
+from alfred.kernel.users import Users
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import (
     _REMIND_SET,
@@ -16,7 +18,6 @@ from alfred.reminders.tools import (
     NAMES,
     ReminderTools,
 )
-from alfred.tools.base import AskTurn, AttemptContext, ChatTurn, ReminderTurn
 from tests.helpers import ANA, DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -205,7 +206,7 @@ async def test_reminder_turn_lists_the_recipients_reminders(tools: ReminderTools
 
 
 async def test_reminder_turn_respects_the_allow_list(tools: ReminderTools) -> None:
-    from alfred.tools.base import AllowList, Gated
+    from alfred.kernel.access import AllowList, Gated
 
     reminder_turn = await tools.open(ReminderTurn("brief me", 3, user=DIOGO))
     assert reminder_turn is not None

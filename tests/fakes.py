@@ -18,10 +18,10 @@ from typing import Any
 from aiogram.types import CallbackQuery
 
 from alfred.agent.prompts import KnownFact
-from alfred.config import User
 from alfred.inputs.store import RequestRow
+from alfred.kernel.questions import Question
+from alfred.kernel.users import User
 from alfred.reminders.store import ReminderRow
-from alfred.tools.base import Question
 
 
 class NoInputRequests:

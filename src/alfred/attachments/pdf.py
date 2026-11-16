@@ -22,7 +22,7 @@ import pypdfium2.raw as pdfium_c
 
 from alfred.attachments import Unreadable
 from alfred.attachments.images import encode
-from alfred.tools.base import ModelImage
+from alfred.kernel.content import ModelImage
 
 MIME = "application/pdf"
 

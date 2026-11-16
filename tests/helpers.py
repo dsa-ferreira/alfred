@@ -26,8 +26,6 @@ from alfred.config import (
     QueueConfig,
     S3Key,
     Service,
-    User,
-    Users,
     _HistoryConfig,
     _MCPConfig,
     _RemindersConfig,
@@ -36,13 +34,14 @@ from alfred.config import (
 )
 from alfred.db.models import QueueItem
 from alfred.history import History
+from alfred.kernel.access import AllowList
+from alfred.kernel.users import User, Users
+from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
 from alfred.memory.facts import FactTools
 from alfred.memory.search import Searcher
-from alfred.model import ModelReply, ToolCall
 from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.base import AllowList
 from alfred.web.tools import WebTools
 from tests.fakes import NoFacts
 

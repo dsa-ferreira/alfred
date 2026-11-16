@@ -21,8 +21,8 @@ from mcp.types import (
 )
 
 from alfred.config import McpServer
+from alfred.kernel.toolset import ToolOutcome
 from alfred.mcp.registry import _classify, _tool_name, build_turn_tools, call_tool
-from alfred.tools.base import ToolOutcome
 from tests.mcp.servers import (
     COOKBOOK_INSTRUCTIONS,
     config,

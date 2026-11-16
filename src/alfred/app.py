@@ -43,16 +43,17 @@ from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
 from alfred.inputs.parking import Parking
 from alfred.inputs.store import InputRequests
+from alfred.kernel.toolset import Toolset
+from alfred.llm.chat import ModelClient
+from alfred.llm.embedding import EmbeddingClient
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
 from alfred.memory.duplicates import FactDuplicateJob
-from alfred.memory.embedding import EmbeddingClient
 from alfred.memory.extract import FactExtractionJob
 from alfred.memory.facts import FactEmbeddingJob, FactStore, FactTools
 from alfred.memory.search import ConversationSearch, MemoryTools, Searcher
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
-from alfred.model import ModelClient
 from alfred.queue import Queue
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
@@ -64,7 +65,6 @@ from alfred.telegram.bot import (
     make_dispatcher,
     register_commands,
 )
-from alfred.tools.base import Toolset
 from alfred.tools.brains import BrainTools
 from alfred.tools.calculator import CalculatorTools
 from alfred.tools.conversation import ConversationTools

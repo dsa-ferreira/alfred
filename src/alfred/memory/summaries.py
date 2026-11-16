@@ -17,7 +17,6 @@ import dataclasses
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,7 +26,10 @@ from alfred.attachments.handles import refs_by_entry
 from alfred.backoff import backoff_s
 from alfred.config import Config
 from alfred.db.models import Conversation, Entry
-from alfred.memory.embedding import EmbeddingError
+from alfred.llm.chat import ModelError, token_counts
+from alfred.llm.embedding import EmbeddingError
+from alfred.llm.protocols import ChatModel, Embedder
+from alfred.llm.streaming import complete_unless_preempted
 from alfred.memory.transcript import (
     SummaryParseError,
     TranscriptEntry,
@@ -36,7 +38,6 @@ from alfred.memory.transcript import (
     render,
     summary_messages,
 )
-from alfred.model import ModelError, ModelReply, token_counts
 
 log = logging.getLogger(__name__)
 
@@ -51,24 +52,12 @@ class _Preempted:
 _PREEMPTED = _Preempted()
 
 
-class Model(Protocol):
-    async def complete_streamed(self, messages: list[dict[str, Any]]) -> ModelReply: ...
-
-
-class Embedder(Protocol):
-    model: str
-
-    async def embed_document(self, text: str) -> list[float]: ...
-
-    async def embed_query(self, text: str) -> list[float]: ...
-
-
 class Summaries:
     def __init__(
         self,
         config: Config,
         sessions: async_sessionmaker[AsyncSession],
-        model: Model,
+        model: ChatModel,
         embedder: Embedder,
         *,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -161,32 +150,19 @@ class Summaries:
         if not entries:
             return _EMPTY_TITLE, _EMPTY_SUMMARY
         transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
-        request = asyncio.ensure_future(self._model.complete_streamed(summary_messages(transcript)))
         try:
-            if preempt is not None:
-                waiter = asyncio.ensure_future(preempt.wait())
-                try:
-                    await asyncio.wait({request, waiter}, return_when=asyncio.FIRST_COMPLETED)
-                finally:
-                    waiter.cancel()
-                if not request.done():
-                    log.info(
-                        "conversation %s: summary request gave way to the queue", conversation_id
-                    )
-                    return _PREEMPTED
-            reply = await request
+            reply = await complete_unless_preempted(
+                self._model, summary_messages(transcript), preempt
+            )
+            if reply is None:
+                log.info("conversation %s: summary request gave way to the queue", conversation_id)
+                return _PREEMPTED
             log.info("conversation %s summary: %s", conversation_id, token_counts(reply.usage))
             parsed = parse_summary(reply.content or "")
         except (ModelError, SummaryParseError) as exc:
             log.warning("conversation %s: summary failed: %s", conversation_id, exc)
             await self._retry_later(conversation_id, str(exc))
             return None
-        finally:
-            if not request.done():
-                # Preempted, or this task was cancelled: closing the stream
-                # makes the model server stop generating.
-                request.cancel()
-                await asyncio.gather(request, return_exceptions=True)
         return parsed.title, parsed.summary
 
     async def _transcript_entries(self, conversation_id: int) -> list[TranscriptEntry]:
@@ -204,7 +180,9 @@ class Summaries:
                 )
                 if attempts is None:
                     return
-                delay = backoff_s(attempts, self._config.queue)
+                delay = backoff_s(
+                    attempts, self._config.queue.retry_initial_s, self._config.queue.retry_max_s
+                )
                 await session.execute(
                     update(Conversation)
                     .where(Conversation.id == conversation_id)

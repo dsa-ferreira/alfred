@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from alfred.attachments import Unreadable
-from alfred.tools.base import ModelImage
+from alfred.kernel.content import ModelImage
 
 # Larger images are refused, so a small file can't decode into gigabytes.
 # Pillow itself raises at twice this.

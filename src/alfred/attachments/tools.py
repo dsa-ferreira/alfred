@@ -33,15 +33,15 @@ from alfred.brains import Brains
 from alfred.config import AttachmentsConfig
 from alfred.db.conversations import current_id
 from alfred.db.models import Attachment, AttachmentPage, Entry
-from alfred.tools.base import (
+from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,
     PromptNote,
     ToolOutcome,
-    TurnInput,
     chat_only,
     parse_arguments,
 )
+from alfred.kernel.turn import TurnInput
 
 log = logging.getLogger(__name__)
 

@@ -10,7 +10,8 @@ import httpx
 import pytest
 import respx
 
-from alfred.tools.base import AskTurn, AttemptContext, ChatTurn
+from alfred.kernel.toolset import AttemptContext
+from alfred.kernel.turn import AskTurn, ChatTurn
 from alfred.web.fetch import Fetcher, make_http_client
 from alfred.web.search import SearxngClient
 from alfred.web.tools import (

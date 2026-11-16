@@ -13,19 +13,14 @@ from mcp import Client
 from mcp.server.request_state import RequestStateSecurity
 from pydantic import SecretStr
 
-from alfred.config import McpServer, User
+from alfred.config import McpServer
+from alfred.kernel.access import AllowList, Gated
+from alfred.kernel.toolset import AttemptContext, PromptNote, ToolOutcome, dispatch
+from alfred.kernel.turn import ChatTurn
+from alfred.kernel.users import User
 from alfred.mcp.client import Connector
 from alfred.mcp.registry import ServerInstructions, _late_answer
 from alfred.mcp.toolset import McpTools, _OpenMcpTools, _server_instructions, _unavailable_note
-from alfred.tools.base import (
-    AllowList,
-    AttemptContext,
-    ChatTurn,
-    Gated,
-    PromptNote,
-    ToolOutcome,
-    dispatch,
-)
 from tests.helpers import ANA, DIOGO, make_config
 from tests.mcp.servers import (
     COOKBOOK_INSTRUCTIONS,

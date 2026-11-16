@@ -17,7 +17,7 @@ from html import escape
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from alfred.tools.base import CANCEL, DO_IT, Question
+from alfred.kernel.questions import CANCEL, DO_IT, Question
 
 _TELEGRAM_MAX_CHARS = 4096
 # Room kept for the outcome line an edit adds.

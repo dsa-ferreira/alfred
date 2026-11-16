@@ -1,6 +1,6 @@
 """OpenAI-compatible embeddings client over httpx.
 
-Failures are classified like :mod:`alfred.model`'s:
+Failures are classified like :mod:`alfred.llm.chat`'s:
 
 - :class:`EmbeddingUnreachable`: connection errors, timeouts and 5xx answers.
 - :class:`EmbeddingFailed`: 4xx answers and replies that can't be understood.

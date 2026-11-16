@@ -7,14 +7,8 @@ import time
 
 import pytest
 
-from alfred.tools.base import (
-    AskTurn,
-    AttemptContext,
-    ChatTurn,
-    ReminderTurn,
-    ToolOutcome,
-    TurnInput,
-)
+from alfred.kernel.toolset import AttemptContext, ToolOutcome
+from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.tools.calculator import _CALCULATE_TOOL, CALCULATE, CalculatorTools
 from tests.helpers import DIOGO
 

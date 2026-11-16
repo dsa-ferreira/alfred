@@ -40,8 +40,9 @@ from mcp.types import (
 )
 
 from alfred.config import McpServer
+from alfred.kernel.questions import InputNeed, Option, Question
+from alfred.kernel.toolset import ToolOutcome, parse_arguments
 from alfred.mcp.client import Connector
-from alfred.tools.base import InputNeed, Option, Question, ToolOutcome, parse_arguments
 
 log = logging.getLogger(__name__)
 

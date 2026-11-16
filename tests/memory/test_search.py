@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Conversation, Entry
-from alfred.memory.embedding import _EmbeddingUnreachable
+from alfred.llm.embedding import _EmbeddingUnreachable
 from alfred.memory.search import _NO_MEANING_NOTE, ConversationSearch
 from tests.helpers import FakeEmbedder, make_config
 

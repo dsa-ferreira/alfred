@@ -19,11 +19,11 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 
-from alfred.config import Users
 from alfred.inputs.callbacks import QuestionEditor
 from alfred.inputs.render import ENDED_LINES, outcome_html
 from alfred.inputs.store import InputRequests, RequestRow
-from alfred.reminders.loop import seconds_to_next_check
+from alfred.kernel.users import Users
+from alfred.times import seconds_to_next_check
 
 log = logging.getLogger(__name__)
 

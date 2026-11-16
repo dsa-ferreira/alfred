@@ -6,7 +6,7 @@ from alfred.attachments.handles import AttachmentRef
 from alfred.attachments.images import for_model_async
 from alfred.attachments.pdf import render_page_async
 from alfred.attachments.store import ObjectStore
-from alfred.tools.base import ModelImage
+from alfred.kernel.content import ModelImage
 
 
 async def load_image(store: ObjectStore, ref: AttachmentRef, page: int, max_px: int) -> ModelImage:

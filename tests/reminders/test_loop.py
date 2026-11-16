@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import QueueItem
-from alfred.reminders.loop import run_due_loop, seconds_to_next_check
+from alfred.reminders.loop import run_due_loop
 from alfred.reminders.store import Reminders
 
 DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
@@ -114,21 +114,3 @@ async def test_failure_does_not_stop_the_loop() -> None:
     with pytest.raises(Stop):
         await run_due_loop(broken, asyncio.Event().set, 30, now=clock, sleep=clock.sleep)  # type: ignore[arg-type]
     assert broken.calls == 3
-
-
-@pytest.mark.parametrize(
-    ("second", "interval", "expected"),
-    [
-        (20.0, 30, 10),  # to :30
-        (30.0, 30, 30),  # just checked at :30, to :00
-        (59.9995, 30, 0.0005),  # woke a hair early: check again at :00
-        (0.0, 30, 30),
-        (17.0, 45, 28),  # to :45
-        (50.0, 45, 10),  # to :00, never skipping the minute
-        (5.0, 60, 55),
-        (12.5, 10, 7.5),
-    ],
-)
-def test_seconds_to_next_check(second: float, interval: float, expected: float) -> None:
-    now = DUE + timedelta(seconds=second)
-    assert seconds_to_next_check(now, interval) == pytest.approx(expected)

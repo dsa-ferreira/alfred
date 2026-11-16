@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from alfred.config import ConfigError, load_config
+from alfred.config import load_config
+from alfred.settings import ConfigError
 
 USER = """
 [[users]]

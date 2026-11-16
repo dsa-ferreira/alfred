@@ -11,14 +11,14 @@ import logging
 from typing import Any
 
 from alfred.brains import Brains
-from alfred.tools.base import (
+from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,
     ToolOutcome,
-    TurnInput,
     chat_only,
     parse_arguments,
 )
+from alfred.kernel.turn import TurnInput
 
 log = logging.getLogger(__name__)
 

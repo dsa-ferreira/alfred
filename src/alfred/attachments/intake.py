@@ -27,7 +27,8 @@ from alfred.attachments.images import inspect_image_async
 from alfred.attachments.pdf import MIME as PDF_MIME
 from alfred.attachments.pdf import read_pdf_async
 from alfred.attachments.store import PREFIX, ObjectStore, StoreError
-from alfred.config import AttachmentsConfig, User
+from alfred.config import AttachmentsConfig
+from alfred.kernel.users import User
 
 log = logging.getLogger(__name__)
 

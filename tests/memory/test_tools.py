@@ -4,15 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from alfred.kernel.toolset import AttemptContext, ToolOutcome
+from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS, MemoryTools
-from alfred.tools.base import (
-    AskTurn,
-    AttemptContext,
-    ChatTurn,
-    ReminderTurn,
-    ToolOutcome,
-    TurnInput,
-)
 from tests.helpers import DIOGO
 
 OWNER = ChatTurn("remember the chicken?", 1, user=DIOGO)
@@ -71,9 +65,9 @@ import pytest  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
 
 from alfred.config import load_config  # noqa: E402
-from alfred.memory.embedding import _EmbeddingUnreachable  # noqa: E402
+from alfred.kernel.access import AllowList, Gated  # noqa: E402
+from alfred.llm.embedding import _EmbeddingUnreachable  # noqa: E402
 from alfred.memory.facts import _FORGET, _REMEMBER, FactStore, FactTools  # noqa: E402
-from alfred.tools.base import AllowList, Gated  # noqa: E402
 from tests.helpers import ANA, FakeEmbedder, make_config  # noqa: E402
 
 ANA_CHAT = ChatTurn("hi", 2, user=ANA)

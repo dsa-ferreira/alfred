@@ -20,22 +20,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from alfred.reminders.store import Reminders
+from alfred.times import seconds_to_next_check
 
 log = logging.getLogger(__name__)
-
-
-def seconds_to_next_check(now: datetime, interval_s: float) -> float:
-    """Seconds from ``now`` to the next check: the next multiple of the interval within
-    the minute, or the next whole minute."""
-    into_minute = now.second + now.microsecond / 1_000_000
-    step = min(interval_s, 60)
-    following = min((math.floor(into_minute / step) + 1) * step, 60)
-    return following - into_minute
 
 
 async def run_due_loop(

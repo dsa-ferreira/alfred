@@ -17,17 +17,17 @@ from alfred.agent.messages import strip_stamp
 from alfred.agent.prompts import _CALCULATE, _DATE, _operating_rules
 from alfred.agent.turn import Agent, TurnResult
 from alfred.brains import Brains
-from alfred.config import User, Users
 from alfred.db.models import TurnToolCall
 from alfred.history import History
+from alfred.kernel.turn import ChatTurn, ReminderTurn, Resume, TurnInput
+from alfred.kernel.users import User, Users
+from alfred.llm.chat import ModelFailed, ModelReply
 from alfred.mcp.registry import ServerInstructions
 from alfred.mcp.toolset import _server_instructions
 from alfred.memory.facts import FactTools
 from alfred.memory.search import ConversationSearch
-from alfred.model import ModelFailed, ModelReply
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
-from alfred.tools.base import ChatTurn, ReminderTurn, Resume, TurnInput
 from alfred.tools.brains import SET_MODEL
 from alfred.web.fetch import Fetcher
 from alfred.web.search import SearxngClient

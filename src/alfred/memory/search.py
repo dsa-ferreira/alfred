@@ -25,17 +25,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.config import Config
 from alfred.db.conversations import current_id
 from alfred.db.models import Conversation, Entry
-from alfred.memory.embedding import EmbeddingError
-from alfred.memory.summaries import load_transcript
-from alfred.memory.transcript import TranscriptEntry, date_span, recall_label, render
-from alfred.tools.base import (
+from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,
     ToolOutcome,
-    TurnInput,
     chat_only,
     parse_arguments,
 )
+from alfred.kernel.turn import TurnInput
+from alfred.llm.embedding import EmbeddingError
+from alfred.memory.summaries import load_transcript
+from alfred.memory.transcript import TranscriptEntry, date_span, recall_label, render
 
 log = logging.getLogger(__name__)
 

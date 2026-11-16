@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from alfred.agent.turn import _Checkpoint
-from alfred.model import ToolCall
+from alfred.llm.chat import ToolCall
 
 _TAIL = [
     {

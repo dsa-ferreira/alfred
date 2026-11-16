@@ -6,7 +6,7 @@ import json
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.tools.base import AskTurn
+from alfred.kernel.turn import AskTurn
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.dates import DATE
 from tests.agent.turn_helpers import agent, owner_turn, tool_result, tool_rows

@@ -19,17 +19,18 @@ from alfred.agent.prompts import _NO_REPLY
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.brains import Brains
-from alfred.config import QueueConfig, User, Users
+from alfred.config import QueueConfig
 from alfred.db.models import Attachment, Entry, QueueItem
 from alfred.history import History
 from alfred.inputs.parking import Parking
+from alfred.kernel.access import AllowList
+from alfred.kernel.users import User, Users
+from alfred.llm.chat import ModelFailed, ModelUnreachable
 from alfred.memory.summaries import Summaries
-from alfred.model import ModelFailed, ModelUnreachable
 from alfred.notices import reset_marker
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
-from alfred.tools.base import AllowList
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
@@ -215,7 +216,15 @@ async def test_restart_with_pending_items(sessions: async_sessionmaker[AsyncSess
 
 def test_backoff_doubles_up_to_max() -> None:
     cfg = QueueConfig(retry_initial_s=30, retry_max_s=900)
-    assert [backoff_s(n, cfg) for n in range(1, 8)] == [30, 60, 120, 240, 480, 900, 900]
+    assert [backoff_s(n, cfg.retry_initial_s, cfg.retry_max_s) for n in range(1, 8)] == [
+        30,
+        60,
+        120,
+        240,
+        480,
+        900,
+        900,
+    ]
 
 
 async def test_ai_server_down(sessions: async_sessionmaker[AsyncSession]) -> None:

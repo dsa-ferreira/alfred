@@ -36,18 +36,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.backoff import backoff_s
 from alfred.config import Config, MemoryConfig
 from alfred.db.models import Fact
-from alfred.memory.embedding import EmbeddingError
-from alfred.memory.summaries import Embedder
-from alfred.tools.base import (
+from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,
     OpenToolset,
     PromptNote,
     ToolOutcome,
-    TurnInput,
     chat_only,
     parse_arguments,
 )
+from alfred.kernel.turn import TurnInput
+from alfred.llm.embedding import EmbeddingError
+from alfred.llm.protocols import Embedder
 
 log = logging.getLogger(__name__)
 
@@ -374,7 +374,9 @@ class FactStore:
             )
             if attempts is None:
                 return None
-            delay = backoff_s(attempts, self._config.queue)
+            delay = backoff_s(
+                attempts, self._config.queue.retry_initial_s, self._config.queue.retry_max_s
+            )
             await session.execute(
                 update(Fact)
                 .where(Fact.id == fact_id)
@@ -466,7 +468,9 @@ class FactStore:
                 )
                 if attempts is None:
                     return
-                delay = backoff_s(attempts, self._config.queue)
+                delay = backoff_s(
+                    attempts, self._config.queue.retry_initial_s, self._config.queue.retry_max_s
+                )
                 await session.execute(
                     update(Fact)
                     .where(Fact.id == fact_id)

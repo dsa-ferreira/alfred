@@ -10,14 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMINDER_RULE
 from alfred.agent.turn import TurnFailed
-from alfred.config import Users
 from alfred.history import History
 from alfred.inputs.parking import Parking
-from alfred.model import ModelUnreachable
+from alfred.kernel.turn import AskTurn
+from alfred.kernel.users import Users
+from alfred.llm.chat import ModelUnreachable
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS
-from alfred.tools.base import AskTurn
 from alfred.tools.calculator import CALCULATE
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.tools.dates import DATE

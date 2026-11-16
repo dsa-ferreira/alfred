@@ -36,15 +36,16 @@ from zoneinfo import ZoneInfo
 from alfred import notices
 from alfred.agent.turn import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
-from alfred.config import QueueConfig, User, Users
+from alfred.config import QueueConfig
 from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.inputs.store import RequestRow
+from alfred.kernel.outbox import Outbox
+from alfred.kernel.turn import TurnInput
+from alfred.kernel.users import User, Users
 from alfred.kinds import AskKind, ChatKind, Kind, ReminderKind, ReminderLookup
-from alfred.outbox import Outbox
 from alfred.queue import Queue, TurnKind, turn_kind
-from alfred.tools.base import TurnInput
 
 log = logging.getLogger(__name__)
 
@@ -189,7 +190,7 @@ class Worker:
         await self._tell_fallback(item, turn.user, failure.fallback)
         if failure.retryable:
             attempts = item.attempts + 1
-            delay = backoff_s(attempts, self._config)
+            delay = backoff_s(attempts, self._config.retry_initial_s, self._config.retry_max_s)
             log.warning(
                 "queue item %s: %s; retry %d in %gs", item.id, failure.reason, attempts, delay
             )

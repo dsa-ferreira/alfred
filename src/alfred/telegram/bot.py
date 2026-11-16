@@ -41,11 +41,11 @@ from aiogram.types import BotCommand, CallbackQuery, Message
 
 from alfred import notices
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
-from alfred.config import User, Users
 from alfred.inputs.render import keyboard, question_html
+from alfred.kernel.questions import Question
+from alfred.kernel.users import User, Users
 from alfred.queue import Queue
 from alfred.telegram.formatting import split_for_telegram, split_markdown
-from alfred.tools.base import Question
 
 log = logging.getLogger(__name__)
 

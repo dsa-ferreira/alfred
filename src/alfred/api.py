@@ -16,9 +16,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from alfred.config import Service, User, Users
+from alfred.config import Service
 from alfred.history import History
-from alfred.outbox import Outbox
+from alfred.kernel.outbox import Outbox
+from alfred.kernel.users import User, Users
 from alfred.queue import Queue
 
 log = logging.getLogger(__name__)

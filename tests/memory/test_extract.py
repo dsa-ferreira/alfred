@@ -12,11 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Conversation, Fact
 from alfred.history import History
+from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.memory.extract import FactExtractionJob
 from alfred.memory.facts import FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
-from alfred.model import ModelReply, ModelUnreachable, _Usage
 from tests.fakes import QuietQueue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 

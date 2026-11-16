@@ -10,12 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.history import History
 from alfred.inputs.parking import Parking
+from alfred.llm.chat import ModelReply, ModelUnreachable
+from alfred.llm.embedding import _EmbeddingUnreachable
 from alfred.memory.duplicates import FactDuplicateJob
-from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
-from alfred.model import ModelReply, ModelUnreachable
 from alfred.queue import Queue
 from alfred.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing

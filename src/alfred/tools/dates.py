@@ -23,8 +23,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from alfred.reminders.when import WhenError, parse_date
-from alfred.tools.base import AttemptContext, LocalToolset, ToolOutcome, parse_arguments
+from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome, parse_arguments
+from alfred.times import WhenError, parse_date
 
 DATE = "alfred_date"
 
