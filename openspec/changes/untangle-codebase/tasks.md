@@ -53,7 +53,7 @@ commit(s). No task changes what a test asserts.
 - [x] 7.2 Change the toolsets' kind checks (`chat_only` and others) to `isinstance`; verify `grep -rn 'kind == "' src/alfred` finds only the mapping in `queue.py`
 - [x] 7.3 Add per-kind handlers next to the worker (delivery and recording, failure notice, typing indicator) and make `Worker._complete` and `_turn_failed` dispatch to them; verify the worker tests pass with only construction changed
 - [x] 7.4 Map the stored queue kind `"user"` to chat in one place in `queue.py`, and use "chat" everywhere else in the code; verify no migration is added and `make test` is green
-- [ ] 7.5 Update `AGENTS.md` where it names `TurnInput` or `turn.kind`; verify it matches the code
+- [x] 7.5 Update `AGENTS.md` where it names `TurnInput` or `turn.kind`; verify it matches the code
 
 ## 8. Startup
 

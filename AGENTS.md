@@ -38,8 +38,10 @@ Everything the model can call is a toolset. The contract lives in
   if it belongs to no feature (like `conversation.py` and `brains.py`). Set
   `definitions`, implement `call(name, raw_arguments, attempt)`, and
   override `offered` if it is not for every turn (`chat_only` for turns
-  started by a user's chat message). Override `open` / `new_attempt` only
-  for per-turn or per-attempt state (see `web/tools.py`).
+  started by a user's chat message). A turn is a `ChatTurn`, `AskTurn` or
+  `ReminderTurn` (`TurnInput` is their union); tell them apart with
+  `isinstance`, never by a kind string. Override `open` / `new_attempt`
+  only for per-turn or per-attempt state (see `web/tools.py`).
 - Don't check the user's tool allow-list or confirm list yourself: `turn.py`
   wraps every opened toolset in `Confirmed(Gated(...))` (`alfred.tools.base`).
   `Gated` hides and refuses the names the turn user's `AllowList` doesn't

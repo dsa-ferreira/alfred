@@ -33,6 +33,11 @@ the call had just finished.
 The order of the toolsets is the order their definitions are offered in, and
 the first one that handles a name wins a clash.
 
+A turn is a :class:`ChatTurn`, an :class:`AskTurn` or a :class:`ReminderTurn`
+(``TurnInput`` is their union). Toolsets tell them apart with ``isinstance``
+(:func:`chat_only`). Each carries what the agent needs from its kind: the
+system prompt's turn rules and the input line it adds after the history.
+
 At runtime this module imports nothing else from alfred; ``User`` is only a
 type here.
 """
