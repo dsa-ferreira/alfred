@@ -108,8 +108,6 @@ class _Turn:
 class ChatTurn(_Turn):
     """A user's chat message, already in the history when its turn runs."""
 
-    kind = "chat"
-
     def prompt_flags(self) -> _PromptFlags:
         return _PromptFlags()
 
@@ -126,7 +124,6 @@ class AskTurn(_Turn):
     """
 
     source: str
-    kind = "ask"
 
     def prompt_flags(self) -> _PromptFlags:
         return _PromptFlags(ask=True)
@@ -150,7 +147,6 @@ class ReminderTurn(_Turn):
     set_by: str | None = None
     repeat_label: str | None = None
     quiet_ok: bool = False
-    kind = "reminder"
 
     def prompt_flags(self) -> _PromptFlags:
         return _PromptFlags(reminder=True, reminder_quiet=self.quiet_ok)
@@ -391,7 +387,7 @@ class LocalToolset:
 
 
 def chat_only(turn: TurnInput) -> bool:
-    return turn.kind == "chat"
+    return isinstance(turn, ChatTurn)
 
 
 class Gated:

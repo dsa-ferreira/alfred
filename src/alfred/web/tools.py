@@ -20,6 +20,7 @@ from typing import Any
 from alfred.config import Config
 from alfred.tools.base import (
     LOCAL_GROUP,
+    AskTurn,
     AttemptContext,
     PromptNote,
     ToolOutcome,
@@ -247,7 +248,7 @@ class _OpenWebTools:
         # Only text the user (or the asking service) wrote can open a page
         # without a search; replies, notices and recalls can't.
         seeds = list(attempt.user_texts)
-        if attempt.turn.kind == "ask":
+        if isinstance(attempt.turn, AskTurn):
             seeds.append(attempt.turn.text)
         self._turn = self._tools.new_turn(seeds)
 

@@ -35,7 +35,7 @@ ENDED_LINES = {
 
 
 def title(kind: str, *, source: str | None = None, reminder: str | None = None) -> str:
-    """What asked, by the queue item's kind: ``user``, ``ask`` or ``reminder``.
+    """What asked, by the turn's kind: ``chat``, ``ask`` or ``reminder``.
 
     ``reminder`` is ``#12 (call mum)``.
     """

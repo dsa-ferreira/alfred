@@ -56,7 +56,7 @@ async def test_facts_last_in_every_kind_of_turn(
         await reminder_turn(sessions),
     ):
         prompt = system(await run(sessions, facts, turn, facts_in_context=True))
-        assert prompt.endswith(SHELLFISH), turn.kind
+        assert prompt.endswith(SHELLFISH), type(turn).__name__
         assert "What you know about diogo (all 1 fact)." in prompt
 
 

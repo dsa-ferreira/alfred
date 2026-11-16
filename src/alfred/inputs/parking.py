@@ -28,7 +28,15 @@ from alfred.db.models import QueueItem
 from alfred.inputs.render import reminder_label, title
 from alfred.inputs.store import EndReason, RequestRow
 from alfred.model import ToolCall
-from alfred.tools.base import InputNeed, Question, Resume, TurnInput, parse_arguments
+from alfred.tools.base import (
+    AskTurn,
+    InputNeed,
+    Question,
+    ReminderTurn,
+    Resume,
+    TurnInput,
+    parse_arguments,
+)
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +88,7 @@ class Parking:
         """The turn waits for its user: store the request, then send the question."""
         user = turn.user
         call = waiting.checkpoint.call
-        question = dataclasses.replace(waiting.need.question, title=_title(item, turn))
+        question = dataclasses.replace(waiting.need.question, title=_title(turn))
         arguments = parse_arguments(call.arguments)
         request_id = await self._requests.park(
             item.id,
@@ -161,7 +169,9 @@ class _Parked(Protocol):
     def checkpoint(self) -> _Checkpoint: ...
 
 
-def _title(item: QueueItem, turn: TurnInput) -> str:
-    if item.kind == "reminder":
+def _title(turn: TurnInput) -> str:
+    if isinstance(turn, ReminderTurn):
         return title("reminder", reminder=reminder_label(turn.reminder_id, turn.text))
-    return title(item.kind, source=item.source)
+    if isinstance(turn, AskTurn):
+        return title("ask", source=turn.source)
+    return title("chat")

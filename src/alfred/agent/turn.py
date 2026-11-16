@@ -71,6 +71,7 @@ from alfred.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, to
 from alfred.reminders.when import format_now, format_when
 from alfred.tools.base import (
     AttemptContext,
+    ChatTurn,
     Confirmed,
     Gated,
     InputNeed,
@@ -323,7 +324,7 @@ class Agent:
         )
         state.messages.append(self._system_message(this, brain, now))
         inline = {}
-        if self._attachments is not None and this.images is not None and turn.kind == "chat":
+        if self._attachments is not None and this.images is not None and isinstance(turn, ChatTurn):
             inline = await self._attachments.build(entries, vision=brain.vision, cache=this.images)
         state.messages += to_messages(entries, self._zone, inline)
         line = turn.input_line(now, self._times)

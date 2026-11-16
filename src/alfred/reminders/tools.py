@@ -42,8 +42,10 @@ from alfred.reminders.when import (
 )
 from alfred.tools.base import (
     AttemptContext,
+    ChatTurn,
     LocalToolset,
     OpenToolset,
+    ReminderTurn,
     ToolOutcome,
     TurnInput,
     parse_arguments,
@@ -125,9 +127,9 @@ class ReminderTools(LocalToolset):
         )
 
     async def open(self, turn: TurnInput) -> OpenToolset | None:
-        if turn.kind == "chat":
+        if isinstance(turn, ChatTurn):
             return self
-        if turn.kind == "reminder":
+        if isinstance(turn, ReminderTurn):
             return self._list_only
         return None
 
