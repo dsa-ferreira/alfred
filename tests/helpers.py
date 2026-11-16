@@ -31,10 +31,10 @@ from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
 from alfred.mcp.config import McpConfig, McpServer
-from alfred.queue import Queue
 from alfred.reminders.config import RemindersConfig
 from alfred.reminders.tools import ReminderTools
 from alfred.turns.background import Sweeper
+from alfred.turns.queue import Queue
 from alfred.web.config import WebConfig
 from alfred.web.tools import WebTools
 from tests.fakes import NoFacts

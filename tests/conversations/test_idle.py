@@ -226,9 +226,9 @@ async def test_a_waiting_turn_holds_idle_close_until_it_expires(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     """A turn waiting for its user's answer is busy (change add-user-input-requests)."""
-    from alfred.inputs.store import InputRequests
     from alfred.kernel.questions import Option, Question
     from alfred.kernel.users import Users
+    from alfred.turns.inputs.store import InputRequests
     from tests.helpers import ANA, DIOGO
 
     clock = Clock()

@@ -849,9 +849,9 @@ async def test_other_parked_turns_are_left_out(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     """An entry of a turn waiting for its user's answer has no reply yet (0.16.1)."""
-    from alfred.inputs.store import InputRequests
     from alfred.kernel.questions import Option, Question
     from alfred.kernel.users import Users
+    from alfred.turns.inputs.store import InputRequests
     from tests.helpers import ANA, DIOGO
 
     history = History(sessions)

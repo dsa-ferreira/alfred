@@ -12,15 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
 from alfred.agent.turn import TurnResult
-from alfred.api import create_app
 from alfred.config import Service
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
-from alfred.inputs.parking import Parking
+from alfred.http.api import create_app
 from alfred.kernel.users import Users
-from alfred.queue import Queue
 from alfred.telegram.bot import TelegramOutbox
-from alfred.worker import Worker
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.queue import Queue
+from alfred.turns.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeModel, make_agent, make_config, text
 from tests.mcp.servers import in_process

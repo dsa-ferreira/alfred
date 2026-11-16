@@ -16,7 +16,7 @@ from alfred.facts.duplicate_job import FactDuplicateJob
 from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.store import FactStore
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
-from alfred.queue import Queue
+from alfred.turns.queue import Queue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, make_sweeper, text
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)

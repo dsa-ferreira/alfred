@@ -34,7 +34,7 @@ from alfred.conversations.store import History
 from alfred.db.models import InputRequest, QueueItem
 from alfred.kernel.questions import Question
 from alfred.kernel.users import Users
-from alfred.queue import turn_kind
+from alfred.turns.queue import turn_kind
 
 log = logging.getLogger(__name__)
 

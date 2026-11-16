@@ -13,12 +13,12 @@ from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.facts.duplicate_job import FactDuplicateJob
 from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.store import FactStore
-from alfred.inputs.parking import Parking
 from alfred.llm.chat import ModelReply, ModelUnreachable
 from alfred.llm.embedding import _EmbeddingUnreachable
-from alfred.queue import Queue
 from alfred.turns.background import Sweeper
-from alfred.worker import Worker
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.queue import Queue
+from alfred.turns.worker import Worker
 from tests.archive.test_summaries import REPLY, archived, row
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, make_sweeper, text

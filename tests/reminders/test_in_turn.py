@@ -12,7 +12,6 @@ from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMIND
 from alfred.agent.turn import TurnFailed
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
-from alfred.inputs.parking import Parking
 from alfred.kernel.turn import AskTurn
 from alfred.kernel.users import Users
 from alfred.llm.chat import ModelUnreachable
@@ -20,6 +19,7 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.toolbox.calculator import _CALCULATE
 from alfred.toolbox.dates import _DATE
+from alfred.turns.inputs.parking import Parking
 from tests.agent.turn_helpers import (
     DUE,
     LISBON,
@@ -224,10 +224,10 @@ def make_weather() -> MCPServer:
 async def test_morning_briefing_uses_the_tools(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    from alfred.queue import Queue
     from alfred.reminders.when import parse_rule
-    from alfred.worker import Worker
-    from tests.test_worker import FakeOutbox
+    from alfred.turns.queue import Queue
+    from alfred.turns.worker import Worker
+    from tests.turns.test_worker import FakeOutbox
 
     monday = datetime(2026, 11, 16, 8, 0, tzinfo=LISBON)
     cfg = make_config(

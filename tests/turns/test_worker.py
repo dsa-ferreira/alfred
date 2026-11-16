@@ -25,15 +25,15 @@ from alfred.conversations.notices import reset_marker
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.db.models import Attachment, Entry, QueueItem
-from alfred.inputs.parking import Parking
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelUnreachable
-from alfred.queue import Queue
 from alfred.reminders import notices as reminders_notices
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
-from alfred.worker import Worker
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.queue import Queue
+from alfred.turns.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import (
     ANA,
@@ -47,7 +47,7 @@ from tests.helpers import (
 )
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_mcparr
-from tests.test_queue import Ticks
+from tests.turns.test_queue import Ticks
 
 FAST = {"retry_initial_s": 0.01, "retry_max_s": 0.04}
 LISBON = ZoneInfo("Europe/Lisbon")

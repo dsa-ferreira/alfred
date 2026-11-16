@@ -9,7 +9,7 @@ from alfred.attachments import notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
 from alfred.db.models import Attachment, AttachmentPage, QueueItem
-from alfred.queue import Queue
+from alfred.turns.queue import Queue
 from tests.attachments.files import image_bytes, text_pdf
 from tests.helpers import DIOGO, FakeStore
 

@@ -20,7 +20,7 @@ from alfred.config import Service
 from alfred.conversations.store import History
 from alfred.kernel.outbox import Outbox
 from alfred.kernel.users import User, Users
-from alfred.queue import Queue
+from alfred.turns.queue import Queue
 
 log = logging.getLogger(__name__)
 

@@ -9,18 +9,18 @@ from alfred import notices
 from alfred.agent.prompts import _NO_REPLY
 from alfred.config import QueueConfig
 from alfred.db.models import InputRequest
-from alfred.inputs.loop import cancel_on_new_message
-from alfred.inputs.parking import Parking
-from alfred.inputs.store import InputRequests
 from alfred.kernel.access import AllowList
 from alfred.kernel.questions import Question
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed
-from alfred.worker import Worker
+from alfred.turns.inputs.loop import cancel_on_new_message
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.inputs.store import InputRequests
+from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import tool_rows
 from tests.fakes import ignore, no_typing
 from tests.helpers import ANA, DIOGO, FakeModel, calls, text
-from tests.test_worker import (
+from tests.turns.test_worker import (
     FAST,
     LISBON,
     EventOutbox,

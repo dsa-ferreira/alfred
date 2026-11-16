@@ -18,12 +18,12 @@ from alfred.archive.search import ConversationSearch
 from alfred.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
-from alfred.inputs.parking import Parking
 from alfred.kernel.users import User
-from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
-from alfred.worker import Worker
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.queue import Queue
+from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
 from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
 from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeModel, calls, make_agent, make_config, text

@@ -24,13 +24,13 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from alfred.db.models import QueueItem
-from alfred.inputs.render import reminder_label, title
-from alfred.inputs.store import EndReason, RequestRow
 from alfred.kernel.questions import InputNeed, Question
 from alfred.kernel.toolset import parse_arguments
 from alfred.kernel.turn import AskTurn, ReminderTurn, Resume, TurnInput
 from alfred.kernel.users import User
 from alfred.llm.chat import ToolCall
+from alfred.telegram.questions import reminder_label, title
+from alfred.turns.inputs.store import EndReason, RequestRow
 
 log = logging.getLogger(__name__)
 

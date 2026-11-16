@@ -19,9 +19,9 @@ from typing import Protocol
 from aiogram.enums import ChatType
 from aiogram.types import CallbackQuery
 
-from alfred.inputs.render import ENDED_LINES, answered_line, outcome_html, parse_callback
-from alfred.inputs.store import InputRequests
 from alfred.kernel.users import User, Users
+from alfred.telegram.questions import ENDED_LINES, answered_line, outcome_html, parse_callback
+from alfred.turns.inputs.store import InputRequests
 
 log = logging.getLogger(__name__)
 

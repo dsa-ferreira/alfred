@@ -28,7 +28,6 @@ from aiogram import Bot, Dispatcher
 
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent
-from alfred.api import create_app
 from alfred.archive.search import ConversationSearch
 from alfred.archive.summaries import Summaries
 from alfred.archive.summary_job import SummaryJob
@@ -49,16 +48,12 @@ from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.extraction_job import FactExtractionJob
 from alfred.facts.store import FactStore
 from alfred.facts.tools import FactTools
-from alfred.inputs.callbacks import Taps
-from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
-from alfred.inputs.parking import Parking
-from alfred.inputs.store import InputRequests
+from alfred.http.api import create_app
 from alfred.kernel.toolset import Toolset
 from alfred.llm.chat import ModelClient
 from alfred.llm.embedding import EmbeddingClient
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
-from alfred.queue import Queue
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
 from alfred.startup import check_tool_names, warn_unknown_users
@@ -70,11 +65,16 @@ from alfred.telegram.bot import (
     make_dispatcher,
     register_commands,
 )
+from alfred.telegram.taps import Taps
 from alfred.toolbox.calculator import CalculatorTools
 from alfred.toolbox.dates import DateTools
 from alfred.turns.background import Sweeper
+from alfred.turns.inputs.loop import cancel_on_new_message, run_expiry_loop
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.inputs.store import InputRequests
+from alfred.turns.queue import Queue
+from alfred.turns.worker import Worker
 from alfred.web.tools import WebTools
-from alfred.worker import Worker
 
 log = logging.getLogger(__name__)
 

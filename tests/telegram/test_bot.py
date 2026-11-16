@@ -24,17 +24,17 @@ from alfred.conversations.store import History
 from alfred.db.models import Attachment, QueueItem
 from alfred.facts import notices as facts_notices
 from alfred.facts.store import FactStore
-from alfred.inputs import render
-from alfred.inputs.callbacks import Taps
-from alfred.inputs.loop import cancel_on_new_message
-from alfred.inputs.parking import Parking
-from alfred.inputs.store import InputRequests
 from alfred.kernel.access import _confirm_question
 from alfred.kernel.questions import Option, Question
 from alfred.kernel.users import Users
-from alfred.queue import Queue
 from alfred.telegram import bot as bot_module
+from alfred.telegram import questions as render
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
+from alfred.telegram.taps import Taps
+from alfred.turns.inputs.loop import cancel_on_new_message
+from alfred.turns.inputs.parking import Parking
+from alfred.turns.inputs.store import InputRequests
+from alfred.turns.queue import Queue
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
 from tests.fakes import (
@@ -402,7 +402,7 @@ async def test_long_replies_are_split() -> None:
 async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSession]) -> None:
     from alfred.conversations.store import History
     from alfred.llm.chat import ModelFailed
-    from alfred.worker import Worker
+    from alfred.turns.worker import Worker
     from tests.helpers import FakeModel, make_agent, make_config, text
     from tests.mcp.servers import in_process
 

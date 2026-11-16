@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from alfred.backoff import RetryDelays
 
 if TYPE_CHECKING:
-    from alfred.queue import QueueActivity
+    from alfred.turns.queue import QueueActivity
 
 log = logging.getLogger(__name__)
 

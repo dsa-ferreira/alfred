@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments.sweeper import OrphanSweeper
-from alfred.queue import Queue
+from alfred.turns.queue import Queue
 from tests.agent.turn_helpers import Clock
 from tests.helpers import FakeStore, image_file
 
