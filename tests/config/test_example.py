@@ -14,6 +14,7 @@ from alfred.archive.config import ArchiveConfig
 from alfred.config import _FileConfig, _McpServerEntry, _ServiceEntry, _UserEntry, load_config
 from alfred.facts.config import FactsConfig
 from alfred.llm.config import EmbeddingConfig
+from alfred.mcp.config import servers_for
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "alfred.toml.example"
@@ -39,7 +40,7 @@ def test_example_loads() -> None:
     assert not ana.tools.matches("mcparr_search_missing")
     assert ana.confirm.matches("mcparr_add_media") and not config.users.admin.confirm.entries
     assert config.input_requests.expire_after_min == 60
-    assert [s.token.get_secret_value() for s in config.servers_for(ana)] == ["d", "c"]
+    assert [s.token.get_secret_value() for s in servers_for(config.mcp_servers, ana)] == ["d", "c"]
 
 
 def test_example_brain_tables_load(tmp_path: Path) -> None:

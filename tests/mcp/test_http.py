@@ -14,8 +14,8 @@ from mcp.types import HEADER_MISMATCH
 from pydantic import BaseModel, Field, SecretStr
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from alfred.config import McpServer
 from alfred.mcp.client import http_connector
+from alfred.mcp.config import McpServer
 from alfred.mcp.registry import build_turn_tools, call_tool, resume_tool
 from tests.mcp.servers import make_asking, make_cookbook, make_mcparr
 

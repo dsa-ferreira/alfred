@@ -30,6 +30,7 @@ from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelUnreachable
 from alfred.queue import Queue
+from alfred.reminders import notices as reminders_notices
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.worker import Worker
@@ -675,7 +676,7 @@ async def due_reminder(s: Setup, text_: str = "call mum", late: timedelta = time
 
 def reminder_notice(due: datetime, text_: str = "call mum") -> str:
     today = datetime.now(UTC).astimezone(LISBON).date()
-    return notices.reminder("sir", text_, due.astimezone(LISBON), today)
+    return reminders_notices.reminder("sir", text_, due.astimezone(LISBON), today)
 
 
 async def recorded(s: Setup) -> list[tuple[str, str, int | None]]:
@@ -1022,7 +1023,9 @@ async def test_shared_reminder_one_recipient_fails(
     await s.reminders.claim_due(now)
     await s.drain()
     today = now.astimezone(LISBON).date()
-    plain = notices.reminder("madam", "dinner with my parents", now.astimezone(LISBON), today)
+    plain = reminders_notices.reminder(
+        "madam", "dinner with my parents", now.astimezone(LISBON), today
+    )
     assert s.outbox.sent_to == [("ana", plain), ("diogo", "Dinner with your parents, sir.")]
     assert [i.status for i in await s.items()] == ["failed", "done"]
     assert [(e.kind, e.reminder_set_by) for e in await s.history.recent("diogo", 30)] == [

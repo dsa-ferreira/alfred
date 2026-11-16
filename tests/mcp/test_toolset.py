@@ -13,12 +13,12 @@ from mcp import Client
 from mcp.server.request_state import RequestStateSecurity
 from pydantic import SecretStr
 
-from alfred.config import McpServer
 from alfred.kernel.access import AllowList, Gated
 from alfred.kernel.toolset import AttemptContext, PromptNote, ToolOutcome, dispatch
 from alfred.kernel.turn import ChatTurn
 from alfred.kernel.users import User
 from alfred.mcp.client import Connector
+from alfred.mcp.config import McpServer
 from alfred.mcp.registry import ServerInstructions, _late_answer
 from alfred.mcp.toolset import McpTools, _OpenMcpTools, _server_instructions, _unavailable_note
 from tests.helpers import ANA, DIOGO, make_config
@@ -104,7 +104,7 @@ def recording(servers: dict[str, object], seen: list[tuple[str, str]]) -> Connec
 
 def per_user(connect: Connector, *users: User) -> McpTools:
     cfg = make_config(mcp_servers=[MCPARR, COOKBOOK], users=users or (DIOGO, ANA_WITH_TOKEN))
-    return McpTools.from_config(cfg, connect)
+    return McpTools.from_config(cfg.mcp, cfg.mcp_servers, connect, max_chars=4000)
 
 
 async def test_per_user_token() -> None:

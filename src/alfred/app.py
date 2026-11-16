@@ -170,7 +170,11 @@ def _build_toolsets(
     # Arithmetic and dates, on every turn.
     toolsets.append(CalculatorTools())
     toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
-    toolsets.append(McpTools.from_config(config, connect))
+    toolsets.append(
+        McpTools.from_config(
+            config.mcp, config.mcp_servers, connect, max_chars=config.ai.tool_result_max_chars
+        )
+    )
     return toolsets
 
 
@@ -266,9 +270,11 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     # they stay on the summary model.
     brains = Brains.from_config(config.ai)
     # Web search and fetch share one HTTP client.
-    web = WebTools.from_config(config)
+    web = WebTools.from_config(config.web, max_chars=config.ai.tool_result_max_chars)
     stack.push_async_callback(web.aclose)
-    reminders = ReminderTools.from_config(config, sessions)
+    reminders = ReminderTools.from_config(
+        config.reminders, ZoneInfo(config.ai.timezone), config.users, sessions
+    )
     # Photos, image files and PDFs, only with [attachments].
     store: S3Store | None = None
     intake: Intake | None = None

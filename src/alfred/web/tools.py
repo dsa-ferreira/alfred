@@ -17,7 +17,6 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from alfred.config import Config
 from alfred.kernel.toolset import (
     LOCAL_GROUP,
     AttemptContext,
@@ -27,6 +26,7 @@ from alfred.kernel.toolset import (
 )
 from alfred.kernel.turn import AskTurn, TurnInput
 from alfred.web.allowlist import Allowlist, normalise
+from alfred.web.config import WebConfig
 from alfred.web.extract import NoReadableContent, extract, supported
 from alfred.web.fetch import Fetcher, FetchError, make_http_client
 from alfred.web.search import CATEGORIES, TIME_RANGES, SearchUnavailable, SearxngClient
@@ -124,16 +124,18 @@ class WebTools:
         self.definitions = _DEFINITIONS
 
     @classmethod
-    def from_config(cls, config: Config) -> WebTools:
-        """Search and fetch sharing one HTTP client, closed by :meth:`aclose`."""
-        web = config.web
+    def from_config(cls, web: WebConfig, *, max_chars: int) -> WebTools:
+        """Search and fetch sharing one HTTP client, closed by :meth:`aclose`.
+
+        ``max_chars`` cuts search results (``[ai] tool_result_max_chars``).
+        """
         http = make_http_client()
         search = SearxngClient(
             http,
             web.searxng_url,
             results=web.search_results,
             timeout_s=web.fetch_timeout_s,
-            max_chars=config.ai.tool_result_max_chars,
+            max_chars=max_chars,
         )
         fetcher = Fetcher(http, timeout_s=web.fetch_timeout_s, max_bytes=web.fetch_max_bytes)
         return cls(search, fetcher, page_chars=web.fetch_page_chars, close=http.aclose)

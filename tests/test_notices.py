@@ -6,6 +6,7 @@ import pytest
 
 from alfred import notices
 from alfred.attachments import notices as attachments_notices
+from alfred.reminders import notices as reminders_notices
 
 LISBON = ZoneInfo("Europe/Lisbon")
 DUE = datetime(2026, 11, 9, 17, 0, tzinfo=LISBON)
@@ -25,7 +26,7 @@ NOTICES: dict[str, Callable[[str], str]] = {
     "too_many_steps": notices.too_many_steps,
     "too_many_steps_partial": lambda a: notices.too_many_steps(a, partial=True),
     "fell_back": lambda a: notices.fell_back(a, "bonsai", "gemma"),
-    "reminder": lambda a: notices.reminder(a, "call mum", DUE, TODAY),
+    "reminder": lambda a: reminders_notices.reminder(a, "call mum", DUE, TODAY),
     "input_new_message": lambda a: notices.input_not_done(a, "mcparr_add_media", "new_message"),
     "input_expired": lambda a: notices.input_not_done(a, "mcparr_add_media", "expired"),
     "input_not_delivered": lambda a: notices.input_not_done(a, "x", "not_delivered"),
@@ -66,14 +67,14 @@ def test_fallback_names_both_brains() -> None:
 
 @pytest.mark.parametrize("address", ["sir", "Mr. Ferreira", "madam"])
 def test_reminder_notice(address: str) -> None:
-    text = notices.reminder(address, "call mum", DUE, TODAY)
+    text = reminders_notices.reminder(address, "call mum", DUE, TODAY)
     assert text == (
         f'Your reminder, due at 17:00: "call mum". My apologies for the plain delivery, {address}.'
     )
 
 
 def test_reminder_notice_on_another_day() -> None:
-    text = notices.reminder("sir", "call mum", DUE, date(2026, 11, 12))
+    text = reminders_notices.reminder("sir", "call mum", DUE, date(2026, 11, 12))
     assert 'due at 17:00 on Monday 9 November: "call mum"' in text
 
 

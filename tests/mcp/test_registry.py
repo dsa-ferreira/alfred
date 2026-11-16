@@ -20,8 +20,8 @@ from mcp.types import (
     TextContent,
 )
 
-from alfred.config import McpServer
 from alfred.kernel.toolset import ToolOutcome
+from alfred.mcp.config import McpServer
 from alfred.mcp.registry import _classify, _tool_name, build_turn_tools, call_tool
 from tests.mcp.servers import (
     COOKBOOK_INSTRUCTIONS,

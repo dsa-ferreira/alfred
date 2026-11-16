@@ -16,6 +16,7 @@ are those of that turn's listing.
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,7 @@ from alfred.kernel.access import AllowList
 from alfred.kernel.toolset import AttemptContext, PromptNote, ToolOutcome
 from alfred.kernel.turn import TurnInput
 from alfred.mcp.client import Connector
+from alfred.mcp.config import McpConfig, McpServer, servers_for
 from alfred.mcp.registry import (
     ServerInstructions,
     TurnTools,
@@ -33,7 +35,6 @@ from alfred.mcp.registry import (
 )
 
 if TYPE_CHECKING:
-    from alfred.config import Config, McpServer
     from alfred.kernel.users import User
 
 log = logging.getLogger(__name__)
@@ -58,14 +59,20 @@ class McpTools:
         self._max_chars = max_chars
 
     @classmethod
-    def from_config(cls, config: Config, connect: Connector) -> McpTools:
+    def from_config(
+        cls, mcp: McpConfig, servers: Sequence[McpServer], connect: Connector, *, max_chars: int
+    ) -> McpTools:
+        """The configured servers, each with the token of the turn's user.
+
+        ``max_chars`` cuts tool results (``[ai] tool_result_max_chars``).
+        """
         return cls(
-            config.servers_for,
+            functools.partial(servers_for, servers),
             connect,
-            list_timeout_s=config.mcp.list_timeout_s,
-            call_timeout_s=config.mcp.call_timeout_s,
-            instructions_max_chars=config.mcp.instructions_max_chars,
-            max_chars=config.ai.tool_result_max_chars,
+            list_timeout_s=mcp.list_timeout_s,
+            call_timeout_s=mcp.call_timeout_s,
+            instructions_max_chars=mcp.instructions_max_chars,
+            max_chars=max_chars,
         )
 
     async def open(self, turn: TurnInput) -> _OpenMcpTools:

@@ -21,18 +21,7 @@ from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.store import StoreError, _StoredObject
 from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
-from alfred.config import (
-    Config,
-    McpServer,
-    QueueConfig,
-    Service,
-    _AIConfig,
-    _MCPConfig,
-    _MemoryConfig,
-    _RemindersConfig,
-    _ServerConfig,
-    _WebConfig,
-)
+from alfred.config import Config, QueueConfig, Service, _AIConfig, _MemoryConfig, _ServerConfig
 from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
@@ -41,9 +30,12 @@ from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
+from alfred.mcp.config import McpConfig, McpServer
 from alfred.queue import Queue
+from alfred.reminders.config import RemindersConfig
 from alfred.reminders.tools import ReminderTools
 from alfred.turns.background import Sweeper
+from alfred.web.config import WebConfig
 from alfred.web.tools import WebTools
 from tests.fakes import NoFacts
 
@@ -78,15 +70,15 @@ def make_config(
         ai=_AIConfig(**(ai or {})),
         history=HistoryConfig(**(history or {})),
         queue=QueueConfig(**(queue or {})),
-        mcp=_MCPConfig(list_timeout_s=5, call_timeout_s=5),
+        mcp=McpConfig(list_timeout_s=5, call_timeout_s=5),
         server=_ServerConfig(),
         services=tuple(services),
         mcp_servers=tuple(mcp_servers),
         telegram_bot_token=SecretStr("123:test"),
         database_url=SecretStr("postgresql+psycopg://unused"),
         memory=_MemoryConfig(**(memory or {})),
-        web=_WebConfig(**(web or {})),
-        reminders=_RemindersConfig(**(reminders or {})),
+        web=WebConfig(**(web or {})),
+        reminders=RemindersConfig(**(reminders or {})),
         attachments=AttachmentsConfig(**attachments) if attachments is not None else None,
         s3_key=S3Key(SecretStr("key-id"), SecretStr("secret")) if attachments is not None else None,
     )

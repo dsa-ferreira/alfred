@@ -27,7 +27,6 @@ from datetime import datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
-from alfred import notices
 from alfred.agent.prompts import is_no_reply
 from alfred.agent.turn import TurnFailed
 from alfred.conversations import notices as conversations_notices
@@ -35,6 +34,7 @@ from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.kernel.users import User
+from alfred.reminders import notices as reminders_notices
 from alfred.reminders.store import ReminderRow
 
 log = logging.getLogger(__name__)
@@ -229,7 +229,7 @@ class ReminderKind:
     def _notice(self, turn: ReminderTurn) -> str:
         due = (turn.due_at or self._now()).astimezone(self._zone)
         today = self._now().astimezone(self._zone).date()
-        return notices.reminder(turn.user.address, turn.text, due, today)
+        return reminders_notices.reminder(turn.user.address, turn.text, due, today)
 
     async def _record_and_send(self, item: QueueItem, turn: ReminderTurn, message: str) -> None:
         """Record the reminder and what the recipient was told, then send it."""

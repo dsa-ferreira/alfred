@@ -10,7 +10,6 @@ from alfred.reminders.when import (
     latest_occurrence,
     next_occurrence,
     parse_rule,
-    parse_text,
     resolve,
 )
 from alfred.times import WhenError, format_in, format_when
@@ -73,18 +72,6 @@ def test_clock_time_countdown_matches_the_clocks() -> None:
 def test_lenient_minutes(value: object) -> None:
     now = at_lisbon(2026, 11, 9, 16, 47)
     assert due(now, in_minutes=value) == now + timedelta(minutes=15)  # whole minute already
-
-
-@pytest.mark.parametrize("value", ["", "   ", None, 12])
-def test_empty_text(value: object) -> None:
-    with pytest.raises(WhenError, match="text"):
-        parse_text(value)
-
-
-def test_text_is_stripped_and_capped() -> None:
-    assert parse_text("  call mum ") == "call mum"
-    with pytest.raises(WhenError, match="too long"):
-        parse_text("x" * 501)
 
 
 # --- Clock time without a date -----------------------------------------------------

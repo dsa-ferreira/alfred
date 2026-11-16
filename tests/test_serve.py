@@ -218,8 +218,8 @@ async def test_web_wiring_and_client_closed(
     real_from_config = WebTools.from_config.__func__  # type: ignore[attr-defined]
     real_aclose = WebTools.aclose
 
-    def from_config(cls: type[WebTools], config: Any) -> WebTools:
-        tools = real_from_config(cls, config)
+    def from_config(cls: type[WebTools], web: Any, **kwargs: Any) -> WebTools:
+        tools = real_from_config(cls, web, **kwargs)
         built.append(tools)
         return tools
 

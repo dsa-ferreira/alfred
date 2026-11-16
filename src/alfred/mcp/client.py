@@ -21,7 +21,7 @@ from mcp.client.context import ClientRequestContext
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import INVALID_REQUEST, ElicitRequestParams, ElicitResult, ErrorData
 
-from alfred.config import McpServer
+from alfred.mcp.config import McpServer
 
 log = logging.getLogger(__name__)
 

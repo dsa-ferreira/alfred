@@ -84,14 +84,16 @@ async def test_every_offered_name_is_declared() -> None:
         config,
         lambda server: None,  # type: ignore[arg-type,return-value]
         brains=brains,
-        web=WebTools.from_config(config),
+        web=WebTools.from_config(config.web, max_chars=4000),
         memory=ConversationSearch(
             config.memory, ZoneInfo(config.ai.timezone), sessions, FakeEmbedder()
         ),
         facts=FactTools(
             FactStore(config.memory, config.queue, sessions, FakeEmbedder()), config.memory
         ),
-        reminders=ReminderTools.from_config(config, sessions),
+        reminders=ReminderTools.from_config(
+            config.reminders, ZoneInfo(config.ai.timezone), config.users, sessions
+        ),
         attachments=AttachmentTools(
             FakeStore(), sessions, brains, config.attachments, History(sessions)
         ),

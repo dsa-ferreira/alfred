@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from alfred.config import load_config
+from alfred.mcp.config import servers_for
 from alfred.settings import ConfigError
 
 USER = """
@@ -753,8 +754,8 @@ def test_user_token_reference(tmp_path: Path) -> None:
     )
     ana, diogo = config.users.get("ana"), config.users.admin
     assert ana is not None
-    (for_ana,) = config.servers_for(ana)
-    (for_diogo,) = config.servers_for(diogo)
+    (for_ana,) = servers_for(config.mcp_servers, ana)
+    (for_diogo,) = servers_for(config.mcp_servers, diogo)
     assert for_ana.token.get_secret_value() == "mcp-secret-mcparr-ana"
     assert for_diogo.token.get_secret_value() == "mcp-secret-mcparr"
     assert (for_ana.name, for_ana.url) == (for_diogo.name, for_diogo.url)

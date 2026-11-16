@@ -31,7 +31,6 @@ from zoneinfo import ZoneInfo
 from alfred.times import DATE, WhenError, calendar_date, format_when
 
 _MAX_MINUTES = 366 * 24 * 60  # about one year
-_MAX_TEXT_CHARS = 500
 _AT_FORMS = '"HH:MM" (24-hour), "YYYY-MM-DD HH:MM" or "YYYY-MM-DD"'
 
 _CLOCK = re.compile(r"(\d{1,2}):(\d{2})")
@@ -44,16 +43,6 @@ DAY_NAMES = tuple(d[:3] for d in _WEEKDAYS)  # "mon" ... "sun", as the tool offe
 _ALL_DAYS = 0b1111111
 _MASKS = {"daily": _ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
 _REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
-
-
-def parse_text(value: Any) -> str:
-    """The reminder text, stripped. Raises :class:`WhenError` if blank or too long."""
-    if not isinstance(value, str) or not value.strip():
-        raise WhenError("Error: text is required: what to remind them of.")
-    text = value.strip()
-    if len(text) > _MAX_TEXT_CHARS:
-        raise WhenError(f"Error: text is too long (at most {_MAX_TEXT_CHARS} characters).")
-    return text
 
 
 def resolve(

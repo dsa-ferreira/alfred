@@ -15,8 +15,8 @@ from mcp.server.request_state import RequestStateSecurity
 from mcp.types import CreateMessageResult, SamplingMessage, TextContent
 from pydantic import BaseModel, SecretStr
 
-from alfred.config import McpServer
 from alfred.mcp.client import Connector, _new_client
+from alfred.mcp.config import McpServer
 
 
 class Download(BaseModel):

@@ -16,7 +16,9 @@ from alfred.reminders.tools import (
     _REMINDER_CANCEL,
     _REMINDERS_LIST,
     ReminderTools,
+    _parse_text,
 )
+from alfred.times import WhenError
 from tests.helpers import ANA, DIOGO
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -426,3 +428,18 @@ async def test_cancel_a_series(tools: ReminderTools, clock: Clock) -> None:
     assert outcome.ok
     assert "every weekday at 08:00, next Monday 16 November 2026, 08:00" in outcome.text
     assert await tools.store.pending("diogo") == []
+
+
+# --- Reminder text ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["", "   ", None, 12])
+def test_parse_empty_text(value: object) -> None:
+    with pytest.raises(WhenError, match="text"):
+        _parse_text(value)
+
+
+def test_text_is_stripped_and_capped() -> None:
+    assert _parse_text("  call mum ") == "call mum"
+    with pytest.raises(WhenError, match="too long"):
+        _parse_text("x" * 501)

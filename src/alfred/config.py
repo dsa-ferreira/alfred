@@ -14,19 +14,16 @@ a secret value.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import os
-import re
 import tomllib
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import (
-    AfterValidator,
     Field,
     SecretStr,
     ValidationError,
@@ -41,6 +38,8 @@ from alfred.facts.config import FactsConfig
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.config import EmbeddingConfig
+from alfred.mcp.config import McpConfig, McpServer
+from alfred.reminders.config import RemindersConfig
 from alfred.settings import (
     TOKEN_ENV,
     ConfigError,
@@ -52,6 +51,7 @@ from alfred.settings import (
     TimeZoneName,
     TokenEnv,
 )
+from alfred.web.config import WebConfig
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +63,6 @@ _S3_ACCESS_KEY_ID_ENV = "ALFRED_S3_ACCESS_KEY_ID"
 _S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
 
 _RESERVED_SERVER_NAME = "alfred"
-_CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 _ALL_TOOLS = "*"
 
 
@@ -84,52 +83,11 @@ class Service:
     token: SecretStr
 
 
-@dataclass(frozen=True)
-class McpServer:
-    name: str
-    url: str
-    token: SecretStr
-    exclude_tools: frozenset[str] = field(default_factory=frozenset)
-    use_server_instructions: bool = True
-
-
-class _WebConfig(Section):
-    """Web search through SearXNG and page fetch."""
-
-    searxng_url: HttpUrlStr = "http://oracle.lan"
-    search_results: PositiveInt = 5
-    fetch_page_chars: PositiveInt = 8000
-    fetch_timeout_s: PositiveFloat = 20
-    fetch_max_bytes: PositiveInt = 5_000_000
-
-
-def _check_clock(value: str) -> str:
-    if not _CLOCK.fullmatch(value):
-        raise ValueError("must be a 24-hour time HH:MM, such as 09:00")
-    return value
-
-
-class _RemindersConfig(Section):
-    """Timed reminders."""
-
-    # The time of a reminder on a date with no clock time ("on Friday").
-    default_time: Annotated[str, AfterValidator(_check_clock)] = "09:00"
-    # Checks run on the clock: at every whole minute and every
-    # check_interval_s within it, so at most 60.
-    check_interval_s: Annotated[float, Field(gt=0, le=60)] = 30
-
-
 class _InputRequestsConfig(Section):
     """Turns waiting for their user's answer."""
 
     # Counted from when the question was sent.
     expire_after_min: PositiveFloat = 60
-
-
-class _MCPConfig(Section):
-    list_timeout_s: PositiveFloat = 10
-    call_timeout_s: PositiveFloat = 60
-    instructions_max_chars: PositiveInt = 2000
 
 
 class _ServerConfig(Section):
@@ -162,28 +120,19 @@ class Config:
     ai: _AIConfig
     history: HistoryConfig
     queue: QueueConfig
-    mcp: _MCPConfig
+    mcp: McpConfig
     server: _ServerConfig
     services: tuple[Service, ...]
     mcp_servers: tuple[McpServer, ...]
     telegram_bot_token: SecretStr
     database_url: SecretStr
     memory: _MemoryConfig = _MemoryConfig()
-    web: _WebConfig = _WebConfig()
-    reminders: _RemindersConfig = _RemindersConfig()
+    web: WebConfig = WebConfig()
+    reminders: RemindersConfig = RemindersConfig()
     input_requests: _InputRequestsConfig = _InputRequestsConfig()
     attachments: AttachmentsConfig | None = None
     # Set exactly when ``attachments`` is.
     s3_key: S3Key | None = None
-
-    def servers_for(self, user: User) -> tuple[McpServer, ...]:
-        """The MCP servers with the token to use on ``user``'s turns."""
-        return tuple(
-            dataclasses.replace(s, token=user.mcp_tokens[s.name])
-            if s.name in user.mcp_tokens
-            else s
-            for s in self.mcp_servers
-        )
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -350,12 +299,12 @@ class _FileConfig(Section):
     history: HistoryConfig = HistoryConfig()
     queue: QueueConfig = QueueConfig()
     memory: _MemoryConfig = _MemoryConfig()
-    web: _WebConfig = _WebConfig()
-    reminders: _RemindersConfig = _RemindersConfig()
+    web: WebConfig = WebConfig()
+    reminders: RemindersConfig = RemindersConfig()
     input_requests: _InputRequestsConfig = _InputRequestsConfig()
     # None: attachments are off and alfred reads text only.
     attachments: AttachmentsConfig | None = None
-    mcp: _MCPConfig = _MCPConfig()
+    mcp: McpConfig = McpConfig()
     server: _ServerConfig = _ServerConfig()
     services: list[_ServiceEntry] = []
     mcp_servers: list[_McpServerEntry] = []
