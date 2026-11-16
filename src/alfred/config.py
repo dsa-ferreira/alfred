@@ -27,15 +27,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
-    BeforeValidator,
     Field,
     SecretStr,
     ValidationError,
-    ValidationInfo,
-    field_validator,
     model_validator,
 )
 
+from alfred.attachments.config import AttachmentsConfig, S3Key
+from alfred.brains.config import BrainsConfig
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.settings import (
@@ -60,63 +59,10 @@ _BOT_TOKEN_ENV = "ALFRED_TELEGRAM_BOT_TOKEN"
 _DATABASE_URL_ENV = "ALFRED_DATABASE_URL"
 _S3_ACCESS_KEY_ID_ENV = "ALFRED_S3_ACCESS_KEY_ID"
 _S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
-# Telegram bots can't download files larger than this.
-_TELEGRAM_MAX_BYTES = 20_000_000
 
 _RESERVED_SERVER_NAME = "alfred"
 _CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 _ALL_TOOLS = "*"
-
-
-class BrainEntry(Section):
-    """An ``[ai.models]`` entry written as a table."""
-
-    model: Annotated[str, Field(min_length=1)]
-    vision: bool = False
-
-
-def _brain_entries(value: Any) -> Any:
-    """``alias = "tag"`` is short for ``alias = { model = "tag" }``."""
-    if not isinstance(value, Mapping):
-        return value
-    return {k: {"model": v} if isinstance(v, str) else v for k, v in value.items()}
-
-
-class AIConfig(Section):
-    base_url: HttpUrlStr = "http://ai.lan"
-    model: Annotated[str, Field(min_length=1)] = "gemma4:26b-a4b-it-qat"
-    # Whether the [ai] model can see images, when no alias names it.
-    vision: bool = False
-    request_timeout_s: PositiveFloat = 300
-    max_requests_per_turn: PositiveInt = 12
-    tool_result_max_chars: PositiveInt = 4000
-    persona: Annotated[str, Field(min_length=1)] | None = None
-    # alfred's timezone: today's date in the prompt, reminders and search dates.
-    timezone: TimeZoneName = "Europe/Lisbon"
-    # The brains the admin can switch between: alias -> model tag, or
-    # alias -> { model = tag, vision = true }. Both are read as a BrainEntry.
-    models: Annotated[dict[Name, BrainEntry], BeforeValidator(_brain_entries)] = {}
-
-    @field_validator("models")
-    @classmethod
-    def _check_models(
-        cls, models: dict[str, BrainEntry], info: ValidationInfo
-    ) -> dict[str, BrainEntry]:
-        by_tag: dict[str, list[str]] = {}
-        for alias, entry in models.items():
-            by_tag.setdefault(entry.model, []).append(alias)
-        problems = [
-            "aliases " + ", ".join(repr(a) for a in aliases) + f" all name {tag!r}"
-            for tag, aliases in by_tag.items()
-            if len(aliases) > 1
-        ]
-        # The startup model is a brain under its own tag when no alias names it.
-        model = info.data.get("model")
-        if isinstance(model, str) and model not in by_tag and model in models:
-            problems.append(f"alias {model!r} is also the name of the [ai] model's brain")
-        if problems:
-            raise ValueError("; ".join(problems))
-        return models
 
 
 class QueueConfig(Section):
@@ -160,35 +106,6 @@ class MemoryConfig(Section):
     facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
-class AttachmentsConfig(Section):
-    """Images and PDFs from users.
-
-    The section's presence turns attachments on; the object store key comes
-    from ``ALFRED_S3_ACCESS_KEY_ID`` / ``ALFRED_S3_SECRET_ACCESS_KEY``.
-    """
-
-    endpoint_url: HttpUrlStr
-    bucket: Annotated[str, Field(min_length=1)]
-    region: Annotated[str, Field(min_length=1)] = "garage"
-    max_bytes: Annotated[int, Field(gt=0)] = _TELEGRAM_MAX_BYTES
-    # How many of the newest user messages carry their attachments inline.
-    inline_turns: Annotated[int, Field(ge=0)] = 1
-    first_page_chars: PositiveInt = 4000
-    read_chars: PositiveInt = 8000
-    image_max_px: PositiveInt = 1536
-    album_wait_s: PositiveFloat = 2
-
-    @field_validator("max_bytes")
-    @classmethod
-    def _within_telegram_limit(cls, value: int) -> int:
-        if value > _TELEGRAM_MAX_BYTES:
-            raise ValueError(
-                f"must be at most {_TELEGRAM_MAX_BYTES} "
-                "(20 MB, the largest file a bot can download)"
-            )
-        return value
-
-
 @dataclass(frozen=True)
 class Service:
     name: str
@@ -202,12 +119,6 @@ class McpServer:
     token: SecretStr
     exclude_tools: frozenset[str] = field(default_factory=frozenset)
     use_server_instructions: bool = True
-
-
-@dataclass(frozen=True)
-class S3Key:
-    access_key_id: SecretStr
-    secret_access_key: SecretStr
 
 
 class _HistoryConfig(Section):
@@ -262,12 +173,24 @@ class _ServerConfig(Section):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
+class _AIConfig(BrainsConfig):
+    """``[ai]``: the brains' part comes from :class:`BrainsConfig`."""
+
+    base_url: HttpUrlStr = "http://ai.lan"
+    request_timeout_s: PositiveFloat = 300
+    max_requests_per_turn: PositiveInt = 12
+    tool_result_max_chars: PositiveInt = 4000
+    persona: Annotated[str, Field(min_length=1)] | None = None
+    # alfred's timezone: today's date in the prompt, reminders and search dates.
+    timezone: TimeZoneName = "Europe/Lisbon"
+
+
 @dataclass(frozen=True)
 class Config:
     """The validated configuration with its secrets resolved."""
 
     users: Users
-    ai: AIConfig
+    ai: _AIConfig
     history: _HistoryConfig
     queue: QueueConfig
     mcp: _MCPConfig
@@ -459,7 +382,7 @@ class _FileConfig(Section):
 
     users: Annotated[list[_UserEntry], Field(min_length=1)]
     telegram: _TelegramConfig = _TelegramConfig()
-    ai: AIConfig = AIConfig()
+    ai: _AIConfig = _AIConfig()
     history: _HistoryConfig = _HistoryConfig()
     queue: QueueConfig = QueueConfig()
     memory: MemoryConfig = MemoryConfig()

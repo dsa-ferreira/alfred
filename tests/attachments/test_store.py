@@ -11,8 +11,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import SecretStr
 
+from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.store import PREFIX, S3Store, StoreError
-from alfred.config import AttachmentsConfig, S3Key
 
 SECRET = "LEAK-s3-secret-key"
 KEY = S3Key(SecretStr("test-key-id"), SecretStr(SECRET))

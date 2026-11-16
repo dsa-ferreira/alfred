@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.messages import strip_stamp
 from alfred.agent.turn import Agent
+from alfred.attachments.config import AttachmentsConfig
+from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
-from alfred.config import AttachmentsConfig, BrainEntry
 from alfred.history import History
 from alfred.kernel.turn import AskTurn, ChatTurn
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA

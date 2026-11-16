@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import ColumnElement, func, select, update
+from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -82,6 +82,27 @@ class History:
         # Called after a conversation is archived as unattended (the sweeper nudge);
         # by default nobody is told.
         self._on_archive = on_archive
+
+    async def reaches(self, user: str, entry_id: int) -> bool:
+        """Whether the entry is in ``user``'s current conversation or in one recalled into it.
+
+        The attachment tools' conversation scope.
+        """
+        async with self._sessions.begin() as session:
+            current = await current_id(session, user, lock=False)
+            recalled = select(Entry.recalled_conversation_id).where(
+                Entry.conversation_id == current, Entry.kind == "recall"
+            )
+            found = await session.scalar(
+                select(Entry.id).where(
+                    Entry.id == entry_id,
+                    or_(
+                        Entry.conversation_id == current,
+                        Entry.conversation_id.in_(recalled.scalar_subquery()),
+                    ),
+                )
+            )
+        return found is not None
 
     async def current_conversation_id(self, user: str) -> int:
         async with self._sessions.begin() as session:

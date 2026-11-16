@@ -10,6 +10,7 @@ from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.turn import Agent
+from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.tools import (
     _READ_DOCUMENT,
     _READ_ONLY_NOTE,
@@ -19,8 +20,8 @@ from alfred.attachments.tools import (
     _VISION_NOTE,
     AttachmentTools,
 )
+from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
-from alfred.config import AttachmentsConfig, BrainEntry
 from alfred.history import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
@@ -59,7 +60,11 @@ def tools(
     **settings: object,
 ) -> AttachmentTools:
     return AttachmentTools(
-        store, sessions, the_brains or brains(), SETTINGS.model_copy(update=settings)
+        store,
+        sessions,
+        the_brains or brains(),
+        SETTINGS.model_copy(update=settings),
+        History(sessions),
     )
 
 
@@ -112,6 +117,51 @@ async def test_not_offered_on_ask_and_reminder_turns(
     toolset = tools(sessions, FakeStore())
     assert await toolset.open(AskTurn("x", 1, "disk-check", user=DIOGO)) is None
     assert await toolset.open(ReminderTurn("x", 1, user=DIOGO)) is None
+
+
+class FixedScope:
+    """A conversation scope that reaches only the given entries."""
+
+    def __init__(self, *entry_ids: int) -> None:
+        self.entry_ids = set(entry_ids)
+        self.asked: list[tuple[str, int]] = []
+
+    async def reaches(self, user: str, entry_id: int) -> bool:
+        self.asked.append((user, entry_id))
+        return entry_id in self.entry_ids
+
+
+# --- conversation scope -------------------------------------------------------------
+
+
+async def test_the_scope_decides_what_is_reachable(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    store = FakeStore()
+    _, entry = await owner_with_files(
+        sessions, "total?", [image_file(name="receipt.jpg")], store, [image_bytes(400, 300)]
+    )
+    shut = FixedScope()
+    toolset = AttachmentTools(store, sessions, brains(), SETTINGS, shut)
+    outcome = await call(toolset, _VIEW_ATTACHMENT, id=1)
+    assert outcome == ToolOutcome(False, "Error: there is no attachment #1 in this conversation.")
+    assert shut.asked == [("diogo", entry)]
+    toolset = AttachmentTools(store, sessions, brains(), SETTINGS, FixedScope(entry))
+    assert (await call(toolset, _VIEW_ATTACHMENT, id=1)).ok
+
+
+async def test_the_scope_is_not_asked_about_another_users_attachment(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    store = FakeStore()
+    _, entry = await owner_with_files(
+        sessions, "hi", [image_file(name="x.jpg")], store, [image_bytes(400, 300)], user="ana"
+    )
+    scope = FixedScope(entry)
+    outcome = await call(
+        AttachmentTools(store, sessions, brains(), SETTINGS, scope), _VIEW_ATTACHMENT, id=1
+    )
+    assert not outcome.ok and scope.asked == []
 
 
 # --- view -------------------------------------------------------------------------
@@ -310,7 +360,9 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     await owner_with_files(sessions, "", [pdf_file(pages)], store)
     config = make_config(ai={"tool_result_max_chars": 4000}, mcp_servers=[])
     the_brains = brains()
-    toolset = AttachmentTools(store, sessions, the_brains, SETTINGS)  # read_chars 8000
+    toolset = AttachmentTools(
+        store, sessions, the_brains, SETTINGS, History(sessions)
+    )  # read_chars 8000
     model = FakeModel([calls((_READ_DOCUMENT, '{"id": 1}')), text("Read.")])
     item = (await owner_with_files(sessions, "read it", []))[0]
     agent = Agent(
@@ -340,7 +392,7 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
         {"gemma": GEMMA, "bonsai": BrainEntry(model="bonsai-2:27b", vision=True)},
     )
     the_brains.set("bonsai")
-    toolset = AttachmentTools(store, sessions, the_brains, SETTINGS)
+    toolset = AttachmentTools(store, sessions, the_brains, SETTINGS, History(sessions))
     model = FakeModel([BAD_MODEL, calls((_VIEW_ATTACHMENT, '{"id": 1}')), text("Sorry, sir.")])
     item = (await owner_with_files(sessions, "what's on it?", []))[0]
     agent = Agent(

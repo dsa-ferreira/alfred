@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from alfred.config import AIConfig, BrainEntry
+from alfred.brains.config import BrainEntry, BrainsConfig
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class Brains:
         self.current = self.default
 
     @classmethod
-    def from_config(cls, ai: AIConfig) -> Brains:
+    def from_config(cls, ai: BrainsConfig) -> Brains:
         return cls(ai.model, ai.models, default_vision=ai.vision)
 
     @property

@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from alfred import notices
+from alfred.attachments import notices as attachments_notices
 
 LISBON = ZoneInfo("Europe/Lisbon")
 DUE = datetime(2026, 11, 9, 17, 0, tzinfo=LISBON)
@@ -13,10 +14,10 @@ TODAY = date(2026, 11, 9)
 NOTICES: dict[str, Callable[[str], str]] = {
     "text_only": notices.text_only,
     "unsupported": notices.unsupported,
-    "too_large": lambda a: notices.too_large(a, 20_000_000),
-    "unreadable": notices.unreadable,
-    "unreadable_pdf": lambda a: notices.unreadable(a, "PDF"),
-    "not_kept": notices.not_kept,
+    "too_large": lambda a: attachments_notices.too_large(a, 20_000_000),
+    "unreadable": attachments_notices.unreadable,
+    "unreadable_pdf": lambda a: attachments_notices.unreadable(a, "PDF"),
+    "not_kept": attachments_notices.not_kept,
     "failed": notices.failed,
     "failed_partial": lambda a: notices.failed(a, partial=True),
     "unreachable": notices.unreachable,
@@ -81,10 +82,10 @@ def test_reminder_notice_on_another_day() -> None:
 
 def test_attachment_notices_say_why() -> None:
     assert notices.unsupported("sir") == "I can read text, images and PDFs, sir."
-    assert "20 MB" in notices.too_large("sir", 20_000_000)
-    assert "2.5 MB" in notices.too_large("sir", 2_500_000)
-    assert "can't open that PDF" in notices.unreadable("Mr. Ferreira", "PDF")
-    assert "send it again" in notices.not_kept("sir")
+    assert "20 MB" in attachments_notices.too_large("sir", 20_000_000)
+    assert "2.5 MB" in attachments_notices.too_large("sir", 2_500_000)
+    assert "can't open that PDF" in attachments_notices.unreadable("Mr. Ferreira", "PDF")
+    assert "send it again" in attachments_notices.not_kept("sir")
 
 
 # --- input requests (change add-user-input-requests) -------------------------------

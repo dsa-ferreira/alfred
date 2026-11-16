@@ -267,7 +267,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         store = await S3Store.open(config.attachments, config.s3_key)
         stack.push_async_callback(store.aclose)
         intake = Intake(config.attachments, store, queue, TelegramDownloader(bot))
-        attachment_tools = AttachmentTools(store, sessions, brains, config.attachments)
+        attachment_tools = AttachmentTools(store, sessions, brains, config.attachments, history)
         inline = InlineAttachments(store, config.attachments)
         orphans = OrphanSweeper(store, sessions)
     agent = Agent(

@@ -17,11 +17,13 @@ from pydantic import SecretStr
 
 import alfred.app
 from alfred.agent.inline import InlineAttachments
+from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
+from alfred.brains.config import BrainEntry
 from alfred.brains.tools import BrainTools
-from alfred.config import AttachmentsConfig, BrainEntry, S3Key, _ServerConfig
+from alfred.config import _ServerConfig
 from alfred.idle import IdleCloser
 from alfred.mcp.toolset import McpTools
 from alfred.memory.facts import FactTools

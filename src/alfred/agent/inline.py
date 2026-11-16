@@ -18,10 +18,10 @@ from collections.abc import Sequence
 
 from alfred.agent.messages import Inline
 from alfred.attachments import Unreadable
+from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.attachments.loading import load_image
 from alfred.attachments.store import ObjectStore, StoreError
-from alfred.config import AttachmentsConfig
 from alfred.history import HistoryEntry
 from alfred.kernel.content import ModelImage
 

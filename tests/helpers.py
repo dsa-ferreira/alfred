@@ -14,18 +14,17 @@ from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent, _Model
 from alfred.app import _build_toolsets
 from alfred.attachments import NewAttachment
+from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.store import StoreError, _StoredObject
 from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
 from alfred.config import (
-    AIConfig,
-    AttachmentsConfig,
     Config,
     McpServer,
     MemoryConfig,
     QueueConfig,
-    S3Key,
     Service,
+    _AIConfig,
     _HistoryConfig,
     _MCPConfig,
     _RemindersConfig,
@@ -73,7 +72,7 @@ def make_config(
 ) -> Config:
     return Config(
         users=Users(tuple(users)),
-        ai=AIConfig(**(ai or {})),
+        ai=_AIConfig(**(ai or {})),
         history=_HistoryConfig(**(history or {})),
         queue=QueueConfig(**(queue or {})),
         mcp=_MCPConfig(list_timeout_s=5, call_timeout_s=5),
@@ -210,7 +209,7 @@ def make_agent(
     brains = brains or Brains.from_config(config.ai)
     attachments = inline = None
     if store is not None and config.attachments is not None:
-        attachments = AttachmentTools(store, sessions, brains, config.attachments)
+        attachments = AttachmentTools(store, sessions, brains, config.attachments, history)
         inline = InlineAttachments(store, config.attachments)
     toolsets = _build_toolsets(
         config,

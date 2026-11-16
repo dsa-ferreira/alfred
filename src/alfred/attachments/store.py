@@ -19,7 +19,7 @@ from aiobotocore.config import AioConfig
 from aiobotocore.session import get_session
 from botocore.exceptions import BotoCoreError, ClientError
 
-from alfred.config import AttachmentsConfig, S3Key
+from alfred.attachments.config import AttachmentsConfig, S3Key
 
 log = logging.getLogger(__name__)
 

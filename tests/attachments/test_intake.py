@@ -5,9 +5,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
+from alfred.attachments import notices
+from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
-from alfred.config import AttachmentsConfig
 from alfred.db.models import Attachment, AttachmentPage, QueueItem
 from alfred.queue import Queue
 from tests.attachments.files import image_bytes, text_pdf

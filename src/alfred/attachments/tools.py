@@ -6,11 +6,9 @@ only when the brain current at the turn's start has vision, and a call
 checks the current brain again, which covers a fallback within the turn. The
 prompt note describes only the tools the allow-list leaves.
 
-Both reach only the turn user's attachments sent in their current
-conversation or in a conversation recalled into it (recall only brings back
-the user's own). A recall only brings back the handles in its transcript, so
-a conversation recalled inside a recalled one is reachable only when it is
-itself recalled.
+Both reach only the turn user's attachments whose message the
+scope (``_ConversationScope``) says they can see: one in their current
+conversation or in a conversation recalled into it.
 
 ``alfred_read_document`` is not cut to ``[ai] tool_result_max_chars``: it
 sizes its own result with ``[attachments] read_chars``.
@@ -20,19 +18,18 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Protocol
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments import Unreadable
+from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.handles import AttachmentRef, handle, has_text, ref_query
 from alfred.attachments.loading import load_image
 from alfred.attachments.store import ObjectStore, StoreError
 from alfred.brains.registry import Brains
-from alfred.config import AttachmentsConfig
-from alfred.db.conversations import current_id
-from alfred.db.models import Attachment, AttachmentPage, Entry
+from alfred.db.models import Attachment, AttachmentPage
 from alfred.kernel.toolset import (
     AttemptContext,
     LocalToolset,
@@ -150,11 +147,13 @@ class AttachmentTools(LocalToolset):
         sessions: async_sessionmaker[AsyncSession],
         brains: Brains,
         config: AttachmentsConfig,
+        scope: _ConversationScope,
     ) -> None:
         self._store = store
         self._sessions = sessions
         self._brains = brains
         self._config = config
+        self._scope = scope
 
     def offered(self, turn: TurnInput) -> bool:
         return chat_only(turn)
@@ -211,28 +210,21 @@ class AttachmentTools(LocalToolset):
         return ToolOutcome(True, self._render(ref, first, last, texts))
 
     async def find(self, user: str, attachment_id: int) -> AttachmentRef | None:
-        """The attachment, if ``user``'s current conversation may reach it."""
+        """The attachment, if ``user`` sent it and their current conversation may reach it."""
         async with self._sessions() as session:
-            current = await current_id(session, user, lock=False)
-            recalled = select(Entry.recalled_conversation_id).where(
-                Entry.conversation_id == current, Entry.kind == "recall"
-            )
             row = (
                 await session.execute(
                     ref_query()
-                    .join(Entry, Entry.id == Attachment.entry_id)
-                    .where(
-                        Attachment.id == attachment_id,
-                        Attachment.user_name == user,
-                        or_(
-                            Entry.conversation_id == current,
-                            Entry.conversation_id.in_(recalled.scalar_subquery()),
-                        ),
-                    )
+                    .add_columns(Attachment.entry_id)
+                    .where(Attachment.id == attachment_id, Attachment.user_name == user)
                 )
             ).first()
-            await session.commit()  # current_id may have created the conversation
-        return AttachmentRef(*row) if row is not None else None
+        if row is None:
+            return None
+        *ref, entry_id = row
+        if entry_id is None or not await self._scope.reaches(user, entry_id):
+            return None
+        return AttachmentRef(*ref)
 
     async def _view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
         if not self._brains.current.vision:
@@ -371,3 +363,14 @@ def _parse_pages(value: Any, count: int) -> tuple[int, int] | None:
     if first < 1 or last < first:
         return None
     return first, last
+
+
+class _ConversationScope(Protocol):
+    """Which messages a user's turn can reach."""
+
+    async def reaches(self, user: str, entry_id: int) -> bool:
+        """Whether the entry is in ``user``'s current conversation or in one
+        recalled into it. Recall only brings back the handles in its transcript,
+        so a conversation recalled inside a recalled one is reachable only when
+        it is itself recalled."""
+        ...

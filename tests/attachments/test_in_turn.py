@@ -8,9 +8,9 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments.tools import _READ_DOCUMENT, _TEXT_ONLY_NOTE, _VIEW_ATTACHMENT, _VISION_NOTE
+from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
-from alfred.config import BrainEntry
 from alfred.history import History
 from alfred.kernel.turn import ChatTurn
 from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS

@@ -16,8 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
+from alfred.attachments import notices as attachments_notices
+from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, Intake
-from alfred.config import AttachmentsConfig
 from alfred.db.models import Attachment, QueueItem
 from alfred.history import History
 from alfred.inputs import render
@@ -264,7 +265,7 @@ async def test_refusal_notice_is_sent(sessions: async_sessionmaker[AsyncSession]
     dispatcher = files_dispatcher(sessions, {"d1": locked}, FakeStore())
     await dispatcher.feed_update(bot, message_update(**document("d1", "payslip.pdf", PDF)))
     assert await queued(sessions) == []
-    assert [m.text for m in session.sent()] == [notices.unreadable("sir", "PDF")]
+    assert [m.text for m in session.sent()] == [attachments_notices.unreadable("sir", "PDF")]
 
 
 async def test_three_photos_in_one_album(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -307,7 +308,7 @@ async def test_album_with_a_refused_part(sessions: async_sessionmaker[AsyncSessi
     (item,) = await queued(sessions)
     assert item.text == "compare"
     assert [a.width for a in await attachments_of(sessions)] == [100, 300]
-    assert [m.text for m in session.sent()] == [notices.unreadable("sir", "image")]
+    assert [m.text for m in session.sent()] == [attachments_notices.unreadable("sir", "image")]
 
 
 async def test_separate_albums_are_separate_messages(

@@ -121,9 +121,9 @@ async def test_failed(response: httpx.Response) -> None:
 
 
 def test_default_timeout_allows_a_slow_cold_start() -> None:
-    from alfred.config import AIConfig
+    from alfred.config import _AIConfig
 
-    client = ModelClient("http://ai.lan", "m", AIConfig().request_timeout_s)
+    client = ModelClient("http://ai.lan", "m", _AIConfig().request_timeout_s)
     # A 90-second wake-up must fit in every phase of the request.
     assert client._http.timeout.read >= 90  # noqa: SLF001
     assert client._http.timeout.connect >= 90  # noqa: SLF001

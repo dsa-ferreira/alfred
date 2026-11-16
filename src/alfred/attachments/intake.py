@@ -21,13 +21,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from alfred import notices
-from alfred.attachments import AttachmentKind, NewAttachment, Unreadable
+from alfred.attachments import AttachmentKind, NewAttachment, Unreadable, notices
+from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.images import inspect_image_async
 from alfred.attachments.pdf import MIME as PDF_MIME
 from alfred.attachments.pdf import read_pdf_async
 from alfred.attachments.store import PREFIX, ObjectStore, StoreError
-from alfred.config import AttachmentsConfig
 from alfred.kernel.users import User
 
 log = logging.getLogger(__name__)

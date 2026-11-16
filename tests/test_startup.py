@@ -13,6 +13,7 @@ from alfred.app import _TOOLSET_TYPES, _build_toolsets, serve
 from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
 from alfred.db.models import Conversation, QueueItem, Reminder, ReminderRecipient
+from alfred.history import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
 from alfred.kernel.users import Users
@@ -85,7 +86,9 @@ async def test_every_offered_name_is_declared() -> None:
         memory=ConversationSearch(config, sessions, FakeEmbedder()),
         facts=FactTools(FactStore(config, sessions, FakeEmbedder()), config.memory),
         reminders=ReminderTools.from_config(config, sessions),
-        attachments=AttachmentTools(FakeStore(), sessions, brains, config.attachments),
+        attachments=AttachmentTools(
+            FakeStore(), sessions, brains, config.attachments, History(sessions)
+        ),
     )
     local = [t for t in toolsets if not isinstance(t, McpTools)]
     assert [type(t) for t in local] == list(_TOOLSET_TYPES)
