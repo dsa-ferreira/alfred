@@ -45,7 +45,7 @@ commit(s). No task changes what a test asserts.
 
 ## 6. The turn attempt
 
-- [ ] 6.1 Split `Agent._attempt` into `_build_context()` and `_loop()` (design D8); verify neither is over about 50 lines and `make test` is green
+- [x] 6.1 Split `Agent._attempt` into `_build_context()` and `_loop()` (design D8); verify neither is over about 50 lines and `make test` is green
 
 ## 7. Turn kinds
 

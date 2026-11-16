@@ -64,9 +64,9 @@ from alfred.agent.inline import ImageCache, InlineAttachments
 from alfred.agent.messages import stamped, strip_stamp, to_messages
 from alfred.agent.prompts import FactsBlock, KnownFact, brain_line, facts_block, system_prompt
 from alfred.brains import Brain, Brains
-from alfred.config import Config
+from alfred.config import Config, User
 from alfred.db.models import TurnToolCall
-from alfred.history import History
+from alfred.history import History, HistoryEntry
 from alfred.model import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.reminders.when import format_now, format_when
 from alfred.tools.base import (
@@ -294,53 +294,33 @@ class Agent:
         return block
 
     async def _attempt(self, this: _Turn, brain: Brain, *, can_fall_back: bool) -> TurnResult:
-        cfg = self._config
-        turn = this.input
-        user = turn.user
-        others = [b.name for b in self._brains.brains if b != brain]
-        now = self._now()
-        resume = turn.resume
+        resume = this.input.resume
         checkpoint = _Checkpoint.from_json(resume.turn) if resume is not None else None
-        if checkpoint is None:
-            # Without other parked turns' entries: they have no reply yet.
-            entries = await self._history.recent(
-                user.name, cfg.history.max_entries, turn_item_id=turn.queue_item_id
-            )
-        else:
-            # The entries the turn parked with, whatever was recorded since and
-            # whichever other parked turns ended meanwhile.
-            entries = await self._history.parked_window(
-                user.name,
-                cfg.history.max_entries,
-                conversation_id=checkpoint.conversation_id,
-                upto_entry_id=checkpoint.upto_entry_id,
-                entry_ids=checkpoint.entry_ids,
-                turn_item_id=turn.queue_item_id,
-            )
+        state = await self._build_context(this, brain, checkpoint, can_fall_back=can_fall_back)
+        if resume is not None and checkpoint is not None:
+            parked = await self._go_on(this, state, checkpoint, resume)
+            if parked is not None:
+                return self._parked(state, parked)
+        return await self._loop(this, state)
+
+    async def _build_context(
+        self, this: _Turn, brain: Brain, checkpoint: _Checkpoint | None, *, can_fall_back: bool
+    ) -> _State:
+        """The attempt's starting messages, and where they came from (for parking).
+
+        The system prompt, the history (with the inline window's
+        attachments), then the ask or reminder input. Every open toolset is
+        told the attempt started.
+        """
+        turn = this.input
+        now = self._now()
+        entries = await self._entries(turn, checkpoint)
         state = _State(
             brain,
             can_fall_back and brain != self._brains.default,
             AttemptContext(turn, [e.text for e in entries if e.kind == "user"]),
         )
-        state.messages.append(
-            {
-                "role": "system",
-                "content": system_prompt(
-                    cfg.ai.persona,
-                    name=user.name,
-                    address=user.address,
-                    ask=turn.kind == "ask",
-                    reminder=turn.kind == "reminder",
-                    reminder_quiet=turn.quiet_ok,
-                    today=now.astimezone(self._zone).date(),
-                    tools=this.offered,
-                    others=[u.name for u in cfg.users if u.name != user.name],
-                    notes=this.notes,
-                    brain=brain_line(brain.name, brain.tag, others, this.offered),
-                    facts=this.facts.text if this.facts is not None else None,
-                ),
-            }
-        )
+        state.messages.append(self._system_message(this, brain, now))
         inline = {}
         if self._attachments is not None and this.images is not None and turn.kind == "chat":
             inline = await self._attachments.build(entries, vision=brain.vision, cache=this.images)
@@ -353,39 +333,15 @@ class Agent:
         for open_toolset in this.opened:
             open_toolset.new_attempt(state.context)
         state.context_len = len(state.messages)
-        state.entry_ids = tuple(e.entry_id for e in entries if e.entry_id is not None)
-        if checkpoint is not None:
-            state.conversation_id = checkpoint.conversation_id
-            state.upto_entry_id = checkpoint.upto_entry_id
-        elif entries:
-            state.conversation_id = entries[-1].conversation_id
-            state.upto_entry_id = entries[-1].entry_id
-        else:
-            state.conversation_id = await self._history.current_conversation_id(user.name)
+        await self._note_source(state, turn.user, entries, checkpoint)
+        self._log_context(this, state)
+        return state
 
-        log.info(
-            "turn %s context: %s; brain %s",
-            turn.queue_item_id,
-            context_sizes(
-                state.messages,
-                this.opened,
-                None
-                if this.facts is None
-                else (this.facts.shown, this.facts.total, len(this.facts.text)),
-            ),
-            brain.name,
-        )
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug(
-                "turn %s largest tools: %s", turn.queue_item_id, largest_tools(this.definitions)
-            )
-
-        if resume is not None and checkpoint is not None:
-            parked = await self._go_on(this, state, checkpoint, resume)
-            if parked is not None:
-                return self._parked(state, parked)
-
-        for n in range(state.requests + 1, cfg.ai.max_requests_per_turn + 1):
+    async def _loop(self, this: _Turn, state: _State) -> TurnResult:
+        """Ask the model and run its calls until it answers, a call waits, or steps run out."""
+        turn = this.input
+        last = self._config.ai.max_requests_per_turn
+        for n in range(state.requests + 1, last + 1):
             reply = await self._ask_model(state, this.definitions)
             state.requests = n
             log.info("turn %s request %d: %s", turn.queue_item_id, n, token_counts(reply.usage))
@@ -399,13 +355,83 @@ class Agent:
             parked = await self._run_calls(this, state, reply.tool_calls, 0)
             if parked is not None:
                 return self._parked(state, parked)
-
         raise TurnFailed(
-            f"stopped after {cfg.ai.max_requests_per_turn} model requests",
+            f"stopped after {last} model requests",
             notices.too_many_steps(turn.user.address, state.side_effects),
             retryable=False,
             side_effects_possible=state.side_effects,
         )
+
+    async def _entries(self, turn: TurnInput, checkpoint: _Checkpoint | None) -> list[HistoryEntry]:
+        limit = self._config.history.max_entries
+        if checkpoint is None:
+            # Without other parked turns' entries: they have no reply yet.
+            return await self._history.recent(
+                turn.user.name, limit, turn_item_id=turn.queue_item_id
+            )
+        # The entries the turn parked with, whatever was recorded since and
+        # whichever other parked turns ended meanwhile.
+        return await self._history.parked_window(
+            turn.user.name,
+            limit,
+            conversation_id=checkpoint.conversation_id,
+            upto_entry_id=checkpoint.upto_entry_id,
+            entry_ids=checkpoint.entry_ids,
+            turn_item_id=turn.queue_item_id,
+        )
+
+    def _system_message(self, this: _Turn, brain: Brain, now: datetime) -> dict[str, Any]:
+        cfg = self._config
+        turn = this.input
+        user = turn.user
+        others = [b.name for b in self._brains.brains if b != brain]
+        return {
+            "role": "system",
+            "content": system_prompt(
+                cfg.ai.persona,
+                name=user.name,
+                address=user.address,
+                ask=turn.kind == "ask",
+                reminder=turn.kind == "reminder",
+                reminder_quiet=turn.quiet_ok,
+                today=now.astimezone(self._zone).date(),
+                tools=this.offered,
+                others=[u.name for u in cfg.users if u.name != user.name],
+                notes=this.notes,
+                brain=brain_line(brain.name, brain.tag, others, this.offered),
+                facts=this.facts.text if this.facts is not None else None,
+            ),
+        }
+
+    async def _note_source(
+        self,
+        state: _State,
+        user: User,
+        entries: list[HistoryEntry],
+        checkpoint: _Checkpoint | None,
+    ) -> None:
+        """Remember which conversation and entries the context came from."""
+        state.entry_ids = tuple(e.entry_id for e in entries if e.entry_id is not None)
+        if checkpoint is not None:
+            state.conversation_id = checkpoint.conversation_id
+            state.upto_entry_id = checkpoint.upto_entry_id
+        elif entries:
+            state.conversation_id = entries[-1].conversation_id
+            state.upto_entry_id = entries[-1].entry_id
+        else:
+            state.conversation_id = await self._history.current_conversation_id(user.name)
+
+    def _log_context(self, this: _Turn, state: _State) -> None:
+        turn_id = this.input.queue_item_id
+        facts = this.facts
+        sizes = context_sizes(
+            state.messages,
+            this.opened,
+            None if facts is None else (facts.shown, facts.total, len(facts.text)),
+        )
+        log.info("turn %s context: %s; brain %s", turn_id, sizes, state.brain.name)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("turn %s largest tools: %s", turn_id, largest_tools(this.definitions))
 
     async def _go_on(
         self, this: _Turn, state: _State, saved: _Checkpoint, resume: Resume
