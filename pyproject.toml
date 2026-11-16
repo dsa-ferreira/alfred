@@ -87,8 +87,5 @@ layers = [
 ]
 # Cross-slice table uses the per-feature-schema change is removing.
 ignore_imports = [
-    "alfred.agent.turn -> alfred.turns.tables",
-    "alfred.reminders.store -> alfred.turns.tables",
     "alfred.conversations.store -> alfred.reminders.tables",
-    "alfred.conversations.store -> alfred.turns.tables",
 ]

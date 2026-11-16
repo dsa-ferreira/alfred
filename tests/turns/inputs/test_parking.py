@@ -17,6 +17,7 @@ from alfred.turns.inputs import notices as inputs_notices
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests, RequestRow
+from alfred.turns.intake import ChatIntake
 from alfred.turns.tables import InputRequest
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import tool_rows
@@ -83,8 +84,10 @@ class Waits(Setup):
         self.users = Users(users)
         self.requests = InputRequests(sessions, self.history, self.users)
         self.questions = FakeQuestions(events)
-        self.queue.before_user_message = cancel_on_new_message(
-            self.requests, self.questions, self.users
+        self.chat = ChatIntake(
+            sessions,
+            self.queue,
+            before_message=cancel_on_new_message(self.requests, self.questions, self.users),
         )
         self.worker = self.new_worker(typing=typing, events=events)
 
@@ -121,8 +124,8 @@ async def test_others_go_ahead_while_a_turn_waits(
         FakeModel([calls(ADD), text("Two downloads, sir.")]),
         users=(DIOGO, CONFIRMING_ANA),
     )
-    await s.queue.enqueue_user("ana", "add Dune")
-    await s.queue.enqueue_user("diogo", "what's downloading?")
+    await s.chat.enqueue_user("ana", "add Dune")
+    await s.chat.enqueue_user("diogo", "what's downloading?")
     await s.drain()
     assert await s.statuses() == ["waiting", "done"]
     assert s.outbox.sent_to == [("diogo", "Two downloads, sir.")]
@@ -135,7 +138,7 @@ async def test_waiting_turn_doesnt_block_an_ask(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Waits(sessions, FakeModel([calls(ADD), text("Noted.")]), users=(DIOGO, CONFIRMING_ANA))
-    await s.queue.enqueue_user("ana", "add Dune")
+    await s.chat.enqueue_user("ana", "add Dune")
     await s.drain()
     await s.queue.enqueue_ask("jellyfin", "anything new?", "diogo")
     await s.drain()
@@ -151,9 +154,9 @@ async def test_answered_turn_goes_first(sessions: async_sessionmaker[AsyncSessio
         ),
         users=(DIOGO, CONFIRMING_ANA),
     )
-    await s.queue.enqueue_user("ana", "add Dune")
+    await s.chat.enqueue_user("ana", "add Dune")
     await s.worker._step()  # ana's turn parks
-    await s.queue.enqueue_user("diogo", "hello")
+    await s.chat.enqueue_user("diogo", "hello")
     await due_reminder(s)  # queued behind diogo's message
     await s.worker._step()  # diogo's turn runs; ana taps meanwhile
     await s.tap("ana")
@@ -173,7 +176,7 @@ async def test_reply_after_confirmation(sessions: async_sessionmaker[AsyncSessio
         typing=RecordingTyping(events),
         events=events,
     )
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     await s.drain()
     events.append("waiting")
     await s.tap("diogo")
@@ -207,7 +210,7 @@ async def test_crash_during_the_confirmed_call(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Waits(sessions, FakeModel([calls(ADD)]))
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     await s.drain()
     await s.tap("diogo")
     # alfred marked it running and stopped before the turn ended.
@@ -224,7 +227,7 @@ async def test_crash_during_the_confirmed_call(
 
 async def test_restart_while_waiting(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Waits(sessions, FakeModel([calls(ADD)]))
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     await s.drain()
     # A new process: new queue, agent and worker over the same database.
     restarted = Waits(sessions, FakeModel([text("Added Dune, sir.")]))
@@ -270,7 +273,7 @@ async def test_question_not_delivered_cancels_at_once(
 ) -> None:
     s = Waits(sessions, FakeModel([calls(ADD)]))
     s.questions.failing = True
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     await s.drain()
     assert await s.statuses() == ["cancelled"]
     assert s.outbox.sent == []
@@ -282,9 +285,9 @@ async def test_question_not_delivered_cancels_at_once(
 
 async def test_user_moves_on(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Waits(sessions, FakeModel([calls(ADD), text("Two downloads, sir.")]))
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     await s.drain()
-    await s.queue.enqueue_user("diogo", "never mind, what's downloading?")
+    await s.chat.enqueue_user("diogo", "never mind, what's downloading?")
     await s.drain()
     # Only the new message is answered; the waiting turn got no reply or failure notice.
     assert s.outbox.sent == ["Two downloads, sir."]
@@ -300,9 +303,9 @@ async def test_user_moves_on(sessions: async_sessionmaker[AsyncSession]) -> None
 
 async def test_tap_after_moving_on_is_refused(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Waits(sessions, FakeModel([calls(ADD), text("Hello.")]))
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     await s.drain()
-    await s.queue.enqueue_user("diogo", "hello")
+    await s.chat.enqueue_user("diogo", "hello")
     _, request_id, _ = s.questions.sent[0]
     assert (await s.requests.answer(request_id, 0, "diogo")).outcome == "not_open"
 
@@ -324,7 +327,7 @@ async def test_an_ask_doesnt_act_on_a_waiting_turns_message(
             ]
         ),
     )
-    await s.queue.enqueue_user("diogo", "can you try again pls")
+    await s.chat.enqueue_user("diogo", "can you try again pls")
     await s.drain()
     await s.queue.enqueue_ask("mcparr", "Sonarr needs manual intervention", "diogo")
     await s.drain()
@@ -342,7 +345,7 @@ async def test_an_ask_doesnt_act_on_a_waiting_turns_message(
     # The ask resumed after the chat turn had ended, still without its message.
     assert not any("can you try again" in m for m in user_messages(s.model, 3))
     # A later turn sees the message with its reply.
-    await s.queue.enqueue_user("diogo", "thanks")
+    await s.chat.enqueue_user("diogo", "thanks")
     await s.drain()
     seen = user_messages(s.model, 4)
     at = seen.index("can you try again pls")

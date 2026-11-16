@@ -263,7 +263,7 @@ async def test_reminder_wiring(
     loop_started = asyncio.Event()
     loop_stopped = asyncio.Event()
 
-    async def probe_loop(store: Any, notify: Any, interval_s: float) -> None:
+    async def probe_loop(sessions: Any, store: Any, queue: Any, interval_s: float) -> None:
         loops.append((store, interval_s))
         loop_started.set()
         try:

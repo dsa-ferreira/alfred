@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.attachments import NewAttachment
-from alfred.attachments.tables import Attachment
 from alfred.reminders.store import Reminders
+from alfred.turns.due_reminders import _claim_once
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
-from alfred.turns.tables import QueueItem
 
 
 class Ticks:
@@ -22,30 +20,13 @@ class Ticks:
         return self.now
 
 
-async def test_items_carry_their_user(sessions: async_sessionmaker[AsyncSession]) -> None:
-    queue = Queue(sessions)
-    photo = NewAttachment("image", "image/jpeg", 1000, "attachments/a", width=10, height=10)
-    await queue.enqueue_user("ana", "what's this?", 5, [photo])
-    await queue.enqueue_ask("mcparr", "Dune finished", "ana")
-    async with sessions() as session:
-        items = list(await session.scalars(select(QueueItem).order_by(QueueItem.id)))
-        (attachment,) = await session.scalars(select(Attachment))
-    assert [(i.kind, i.user_name, i.source) for i in items] == [
-        ("user", "ana", None),
-        ("ask", "ana", "mcparr"),
-    ]
-    assert attachment.user_name == "ana"
-
-
 async def test_arrivals_are_reported(sessions: async_sessionmaker[AsyncSession]) -> None:
-    from alfred.reminders.loop import _claim_once
-
     queue = Queue(sessions)
     activity = queue.activity
     assert not activity.arrived.is_set()
     assert not await queue.has_pending()
 
-    await queue.enqueue_user("diogo", "hi")
+    await ChatIntake(sessions, queue).enqueue_user("diogo", "hi")
     assert activity.arrived.is_set() and queue.signal.is_set()
     assert await queue.has_pending()
 
@@ -56,7 +37,7 @@ async def test_arrivals_are_reported(sessions: async_sessionmaker[AsyncSession])
     activity.arrived.clear()
     reminders = Reminders(sessions)
     await reminders.set("call mum", datetime.now(UTC) - timedelta(minutes=1), "diogo", ["diogo"])
-    await _claim_once(reminders, activity.notify, lambda: datetime.now(UTC))
+    await _claim_once(sessions, reminders, queue, datetime.now(UTC))
     assert activity.arrived.is_set()
 
 

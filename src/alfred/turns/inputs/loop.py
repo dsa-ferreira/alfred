@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 def cancel_on_new_message(
     requests: InputRequests, outbox: _QuestionEditor, users: Users
 ) -> Callable[[str], Awaitable[None]]:
-    """The queue's ``before_user_message``: a user's new message cancels their waiting turns."""
+    """``ChatIntake``'s ``before_message``: a user's new message cancels their waiting turns."""
 
     async def cancel(user_name: str) -> None:
         ended = await requests.cancel_for(user_name, "new_message")

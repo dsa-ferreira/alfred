@@ -32,9 +32,13 @@ from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
 from alfred.mcp.config import McpConfig, McpServer
 from alfred.reminders.config import RemindersConfig
+from alfred.reminders.store import Reminders
 from alfred.reminders.tools import ReminderTools
 from alfred.turns.background import Sweeper
+from alfred.turns.call_log import ToolCallLog
 from alfred.turns.config import QueueConfig
+from alfred.turns.due_reminders import _claim_once
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 from alfred.web.config import WebConfig
@@ -222,7 +226,7 @@ def make_agent(
     return Agent(
         model,
         history,
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(config),
         toolsets=toolsets,
         brains=brains,
@@ -293,7 +297,7 @@ async def owner_with_files(
     for file, body in zip(files, data, strict=False):
         assert store is not None
         await store.put(file.object_key, body, file.mime)
-    item = await Queue(sessions).enqueue_user(user, text_, None, files)
+    item = await ChatIntake(sessions, Queue(sessions)).enqueue_user(user, text_, None, files)
     entry = await History(sessions).append(user, "user", text_, queue_item_id=item)
     return item, entry
 
@@ -328,3 +332,9 @@ def assert_addressed(text: str, address: str, *, after: str = "") -> None:
 def agent_settings(cfg: Config) -> dict[str, Any]:
     """The config parts ``serve`` gives the agent."""
     return {"ai": cfg.ai, "window": cfg.history, "memory": cfg.memory, "users": cfg.users}
+
+
+async def claim_due(reminders: Reminders, now: datetime) -> list[int]:
+    """Queue the reminders due by ``now``, as the due loop does; the queue item IDs."""
+    sessions = reminders._sessions
+    return await _claim_once(sessions, reminders, Queue(sessions), now)

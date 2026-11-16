@@ -56,8 +56,6 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from alfred.agent import notices
 from alfred.agent.checkpoint import Checkpoint
 from alfred.agent.config import AgentConfig
@@ -85,7 +83,6 @@ from alfred.kernel.turn import ChatTurn, Resume, TurnInput
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.times import format_now, format_when
-from alfred.turns.tables import TurnToolCall
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +94,7 @@ class Agent:
         self,
         model: _Model,
         history: History,
-        sessions: async_sessionmaker[AsyncSession],
+        calls: _CallLog,
         *,
         ai: AgentConfig,
         window: HistoryConfig,
@@ -118,7 +115,7 @@ class Agent:
         self._brains = brains
         self._model = model
         self._history = history
-        self._sessions = sessions
+        self._calls = calls
         self._toolsets = list(toolsets)
         self._now = now
         self._zone = ZoneInfo(ai.timezone)
@@ -452,17 +449,15 @@ class Agent:
             "ok" if outcome.ok else "error",
             excerpt[:200],
         )
-        async with self._sessions.begin() as session:
-            session.add(
-                TurnToolCall(
-                    queue_item_id=turn.queue_item_id,
-                    seq=seq,
-                    tool=call.name,
-                    arguments=stored,
-                    ok=outcome.ok,
-                    result_excerpt=excerpt,
-                )
-            )
+        await self._calls.record(turn.queue_item_id, seq, call.name, stored, outcome.ok, excerpt)
+
+
+class _CallLog(Protocol):
+    """Where tool calls are recorded for auditing (``turns.call_log.ToolCallLog``)."""
+
+    async def record(
+        self, queue_item_id: int, seq: int, tool: str, arguments: Any, ok: bool, excerpt: str
+    ) -> None: ...
 
 
 class _Model(Protocol):

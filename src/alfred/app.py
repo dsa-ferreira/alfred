@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 
 import uvicorn
 from aiogram import Bot, Dispatcher
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent
@@ -54,7 +55,6 @@ from alfred.llm.chat import ModelClient
 from alfred.llm.embedding import EmbeddingClient
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
-from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
 from alfred.startup import check_tool_names, warn_unknown_users
 from alfred.telegram.bot import (
@@ -69,10 +69,13 @@ from alfred.telegram.taps import Taps
 from alfred.toolbox.calculator import CalculatorTools
 from alfred.toolbox.dates import DateTools
 from alfred.turns.background import Sweeper
+from alfred.turns.call_log import ToolCallLog
+from alfred.turns.due_reminders import run_due_loop
 from alfred.turns.inputs.loop import cancel_on_new_message, run_expiry_loop
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
-from alfred.turns.queue import Queue
+from alfred.turns.intake import ChatIntake
+from alfred.turns.queue import Queue, busy
 from alfred.turns.worker import Worker
 from alfred.web.tools import WebTools
 
@@ -183,6 +186,7 @@ class _Services:
     """What the tasks run, once built."""
 
     server: _Server
+    sessions: async_sessionmaker[AsyncSession]
     bot: Bot
     dispatcher: Dispatcher
     worker: Worker
@@ -241,7 +245,9 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     # Turns waiting for their user's answer: a user's new message
     # cancels theirs before it is queued.
     inputs = InputRequests(sessions, history, config.users)
-    queue.before_user_message = cancel_on_new_message(inputs, outbox, config.users)
+    chat = ChatIntake(
+        sessions, queue, before_message=cancel_on_new_message(inputs, outbox, config.users)
+    )
     # User facts: extraction after the summaries, then embedding, which
     # needs no quiet queue, then the duplicate check.
     facts = FactStore(config.memory, config.queue, sessions, embedder)
@@ -285,14 +291,14 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         assert config.s3_key is not None
         store = await S3Store.open(config.attachments, config.s3_key)
         stack.push_async_callback(store.aclose)
-        intake = Intake(config.attachments, store, queue, TelegramDownloader(bot))
+        intake = Intake(config.attachments, store, chat, TelegramDownloader(bot))
         attachment_tools = AttachmentTools(store, sessions, brains, config.attachments, history)
         inline = InlineAttachments(store, config.attachments)
         orphans = OrphanSweeper(store, sessions)
     agent = Agent(
         model,
         history,
-        sessions,
+        ToolCallLog(sessions),
         ai=config.ai,
         window=config.history,
         memory=config.memory,
@@ -330,7 +336,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     )
     dispatcher = make_dispatcher(
         config.users,
-        queue,
+        chat,
         intake=intake,
         album_wait_s=config.attachments.album_wait_s if config.attachments else 2,
         memory=MemoryCommand(facts, ZoneInfo(config.ai.timezone)),
@@ -351,9 +357,10 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     # Only with [history] idle_close_after_h.
     idle: IdleCloser | None = None
     if idle_after is not None:
-        idle = IdleCloser(history, idle_after, nudge=summaries.changed.set)
+        idle = IdleCloser(history, idle_after, busy=busy, nudge=summaries.changed.set)
     return _Services(
         server=server,
+        sessions=sessions,
         bot=bot,
         dispatcher=dispatcher,
         worker=worker,
@@ -389,9 +396,7 @@ async def _run_tasks(config: Config, services: _Services) -> asyncio.Task[object
         asyncio.create_task(s.worker.run_forever(), name="worker"),
         asyncio.create_task(s.sweeper.run_forever(), name="memory"),
         asyncio.create_task(
-            run_due_loop(
-                s.reminders.store, s.queue.activity.notify, config.reminders.check_interval_s
-            ),
+            run_due_loop(s.sessions, s.reminders.store, s.queue, config.reminders.check_interval_s),
             name="reminders",
         ),
         # On the reminders' clock; no setting of its own.

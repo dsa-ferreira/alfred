@@ -7,8 +7,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.reminders.loop import run_due_loop
 from alfred.reminders.store import Reminders
+from alfred.turns.due_reminders import run_due_loop
+from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 
 DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
@@ -37,8 +38,11 @@ class FakeClock:
 
 
 async def run(store: Reminders, signal: asyncio.Event, clock: FakeClock) -> None:
+    """Run the loop until ``clock`` stops it; ``signal`` is set when items are queued."""
+    queue = Queue(store._sessions)
+    queue.activity.arrived = signal
     with pytest.raises(Stop):
-        await run_due_loop(store, signal.set, 30, now=clock, sleep=clock.sleep)
+        await run_due_loop(store._sessions, store, queue, 30, now=clock, sleep=clock.sleep)
 
 
 async def queue_items(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
@@ -101,16 +105,18 @@ async def test_days_late(sessions: async_sessionmaker[AsyncSession]) -> None:
     assert [i.reminder_id for i in await queue_items(sessions)] == [first, later]
 
 
-async def test_failure_does_not_stop_the_loop() -> None:
+async def test_failure_does_not_stop_the_loop(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
     class Broken:
         calls = 0
 
-        async def claim_due(self, now: datetime) -> list[int]:
+        async def claim_due(self, session: AsyncSession, now: datetime) -> list[object]:
             self.calls += 1
             raise OSError("database down")
 
     broken = Broken()
     clock = FakeClock(DUE, passes=3)
     with pytest.raises(Stop):
-        await run_due_loop(broken, asyncio.Event().set, 30, now=clock, sleep=clock.sleep)  # type: ignore[arg-type]
+        await run_due_loop(sessions, broken, Queue(sessions), 30, now=clock, sleep=clock.sleep)  # type: ignore[arg-type]
     assert broken.calls == 3

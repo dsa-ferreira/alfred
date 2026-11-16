@@ -30,6 +30,7 @@ from alfred.kernel.access import AllowList
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.kernel.users import User
+from alfred.turns.call_log import ToolCallLog
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.fakes import NoFacts
@@ -374,7 +375,7 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     agent = Agent(
         model,
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(config),
         toolsets=[toolset],
         brains=the_brains,
@@ -404,7 +405,7 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     agent = Agent(
         model,
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(make_config()),
         toolsets=[toolset],
         brains=the_brains,

@@ -18,6 +18,7 @@ from alfred.http.config import Service
 from alfred.kernel.users import Users
 from alfred.telegram.bot import TelegramOutbox
 from alfred.turns.inputs.parking import Parking
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
@@ -146,7 +147,7 @@ async def test_notify_while_ai_busy(env: Env) -> None:
         typing=no_typing,
         nudge=ignore,
     )
-    await env.queue.enqueue_user("diogo", "long job")
+    await ChatIntake(env.sessions, env.queue).enqueue_user("diogo", "long job")
     task = asyncio.create_task(worker._step())
     await asyncio.wait_for(started.wait(), 5)
 

@@ -19,7 +19,7 @@ from alfred.reminders.tools import (
     _parse_text,
 )
 from alfred.times import WhenError
-from tests.helpers import ANA, DIOGO
+from tests.helpers import ANA, DIOGO, claim_due
 
 LISBON = ZoneInfo("Europe/Lisbon")
 USERS = Users((DIOGO, ANA))
@@ -145,7 +145,7 @@ async def test_cancel_a_set_reminder(tools: ReminderTools) -> None:
 
 async def test_cancel_already_delivered(tools: ReminderTools, clock: Clock) -> None:
     await tools.call(_REMIND_SET, {"text": "call mum", "in_minutes": 5}, AS_DIOGO)
-    await tools.store.claim_due(clock.now + timedelta(minutes=5))
+    await claim_due(tools.store, clock.now + timedelta(minutes=5))
     outcome = await tools.call(_REMINDER_CANCEL, {"id": 1}, AS_DIOGO)
     assert not outcome.ok
     assert "#1 was already delivered" in outcome.text
@@ -411,7 +411,7 @@ async def test_list_a_series_after_it_fired(tools: ReminderTools, clock: Clock) 
     await tools.call(
         _REMIND_SET, {"text": "brief me", "repeat": "weekdays", "at": "08:00"}, AS_DIOGO
     )
-    await tools.store.claim_due(datetime(2026, 11, 16, 8, 0, tzinfo=LISBON))
+    await claim_due(tools.store, datetime(2026, 11, 16, 8, 0, tzinfo=LISBON))
     clock.now = datetime(2026, 11, 16, 9, 0, tzinfo=LISBON)
     lines = (await tools.call(_REMINDERS_LIST, {}, AS_DIOGO)).text.splitlines()[1:]
     assert lines == [

@@ -38,6 +38,7 @@ from tests.helpers import (
     FakeModel,
     add_queue_item,
     calls,
+    claim_due,
     make_agent,
     make_config,
     text,
@@ -270,7 +271,7 @@ async def test_morning_briefing_uses_the_tools(
         rule=rule,
     )
     await store.set("dentist", monday.replace(hour=17), "diogo", ["diogo"])
-    await store.claim_due(monday)
+    await claim_due(store, monday)
     while await worker._step():
         pass
 

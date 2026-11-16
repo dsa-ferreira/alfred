@@ -29,6 +29,7 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET
 from alfred.toolbox.calculator import _CALCULATE
 from alfred.toolbox.dates import _DATE
+from alfred.turns.call_log import ToolCallLog
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
     BAD_MODEL,
@@ -481,7 +482,7 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
     a = Agent(
         model,
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(make_config()),
         toolsets=[recorder],
         brains=brains,
@@ -562,7 +563,7 @@ async def test_tool_result_with_images(
     a = Agent(
         model,
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(make_config()),
         toolsets=[Camera(count)],
         brains=Brains.from_config(make_config().ai),
@@ -588,7 +589,7 @@ async def test_tool_result_without_images_stays_text(
     a = Agent(
         model,
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(make_config()),
         toolsets=[Camera(0)],
         brains=Brains.from_config(make_config().ai),
@@ -797,7 +798,7 @@ async def test_images_in_the_tail_are_replaced_by_a_note(
     alfred = Agent(
         FakeModel([calls(("alfred_look", "{}"), ADD)]),
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(config),
         toolsets=[
             Pictures(),

@@ -18,6 +18,7 @@ from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
 from alfred.conversations.store import History
 from alfred.kernel.turn import AskTurn, ChatTurn
+from alfred.turns.call_log import ToolCallLog
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.fakes import NoFacts
@@ -61,7 +62,7 @@ def make(
     return Agent(
         model,
         History(sessions),
-        sessions,
+        ToolCallLog(sessions),
         **agent_settings(make_config()),
         brains=the_brains or brains(vision),
         attachments=InlineAttachments(store, config),

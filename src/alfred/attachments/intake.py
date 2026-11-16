@@ -5,7 +5,7 @@ each file:  size from Telegram > max_bytes -> too_large, skip (not downloaded)
             download                       -> failure: not_kept, queue nothing
             decode the image / read the PDF -> unreadable, skip
 any left:   PUT each to attachments/<uuid4> -> failure: not_kept, queue nothing
-            one transaction: queue item + attachments + PDF pages
+            queue the message with them (_Enqueue: one transaction)
 ```
 
 A refused file gets its own notice and the rest of the message (an album)
@@ -141,6 +141,8 @@ class Intake:
 
 
 class _Enqueue(Protocol):
+    """Queues a message with its files; ``turns.intake.ChatIntake``."""
+
     async def enqueue_user(
         self,
         user: str,

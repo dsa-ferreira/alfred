@@ -22,11 +22,22 @@ from alfred.kernel.users import User
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.turns.inputs.parking import Parking
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
 from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
-from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeModel, calls, make_agent, make_config, text
+from tests.helpers import (
+    ANA,
+    DIOGO,
+    FakeEmbedder,
+    FakeModel,
+    calls,
+    claim_due,
+    make_agent,
+    make_config,
+    text,
+)
 from tests.mcp.servers import in_process, make_cookbook, make_mcparr
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -49,6 +60,7 @@ class House:
         self.clock = Clock(START)
         self.model = model
         self.history = History(sessions)
+        self.sessions = sessions
         self.queue = Queue(sessions)
         self.outbox = Outbox()
         self.reminders = Reminders(sessions)
@@ -82,7 +94,7 @@ class House:
         )
 
     async def say(self, user: str, message: str) -> None:
-        await self.queue.enqueue_user(user, message)
+        await ChatIntake(self.sessions, self.queue).enqueue_user(user, message)
         while await self.worker._step():
             pass
 
@@ -154,7 +166,7 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
     # The cross-user reminder: listed for ana as set by diogo, delivered to her alone.
     assert "buy milk (set by diogo; for ana)" in context(model, 9)[-1]
     house.clock.now = START + timedelta(hours=2)  # 18:00 Lisbon
-    assert len(await house.reminders.claim_due(house.clock.now)) == 1
+    assert len(await claim_due(house.reminders, house.clock.now)) == 1
     while await house.worker._step():
         pass
     assert context(model, 10)[-1].endswith("; set by diogo] buy milk")

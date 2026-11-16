@@ -27,7 +27,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from alfred.conversations.store import History
+from alfred.conversations.store import Busy, History
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +41,15 @@ class IdleCloser:
         history: History,
         after: timedelta,
         *,
+        busy: Busy,
         nudge: Callable[[], None],
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
     ) -> None:
         self._history = history
         self._after = after
+        # Whether a user's queue item is waiting or running: theirs stays open.
+        self._busy = busy
         # Wakes the memory sweeper to summarise what was closed.
         self._nudge = nudge
         self._now = now
@@ -76,7 +79,7 @@ class IdleCloser:
                 due = last.at + self._after
                 soonest = due if soonest is None else min(soonest, due)
                 continue
-            reset = await self._history.close_idle(last.conversation_id, cutoff)
+            reset = await self._history.close_idle(last.conversation_id, cutoff, busy=self._busy)
             if reset is None:
                 # A queue item of theirs is waiting or running, or they just wrote.
                 skipped = True

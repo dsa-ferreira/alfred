@@ -6,13 +6,13 @@ anyone else the reminder doesn't exist. The creator cancels it for every
 recipient; a recipient who didn't set it only leaves it, and the last one
 leaving cancels it.
 
-``claim_due`` marks due reminders ``fired`` and inserts one queue item
-per recipient in one transaction, so each recipient's item is queued
+``claim_due`` marks due reminders ``fired`` in the caller's transaction
+and returns their occurrences; ``turns.due_reminders`` queues one item per
+recipient in that same transaction, so each recipient's item is queued
 exactly once: a crash leaves the reminder either pending (claimed again
 after restart) or queued (the queue survives restarts). A repeating
 reminder stays ``pending`` and moves on to its next occurrence instead;
-after an outage only its latest missed occurrence is queued. Each item
-carries the due time of the occurrence it delivers.
+after an outage only its latest missed occurrence is claimed.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.reminders.tables import Reminder, ReminderRecipient
 from alfred.reminders.when import Rule, latest_occurrence, next_occurrence
-from alfred.turns.tables import QueueItem
 
 _UTC_ZONE = ZoneInfo("UTC")
 
@@ -151,46 +150,44 @@ class Reminders:
             reminder.cancelled_at = now
             return "cancelled", (await _rows(session, [reminder]))[0]
 
-    async def claim_due(self, now: datetime) -> list[int]:
-        """Queue every pending reminder due by ``now``, one item per recipient.
+    async def claim_due(self, session: AsyncSession, now: datetime) -> list[_Occurrence]:
+        """Claim every pending reminder due by ``now``, in the caller's transaction.
 
-        In due order, then recipient name. A one-shot reminder is marked
-        ``fired``; a repeating one queues its latest occurrence by ``now`` and
-        moves on to its next one after ``now``. Returns the queue item IDs.
+        In due order. A one-shot reminder is marked ``fired``; a repeating
+        one returns its latest occurrence by ``now`` and moves on to its next
+        one after ``now``. Recipients are in name order.
         """
-        async with self._sessions.begin() as session:
-            due = list(
-                await session.scalars(
-                    select(Reminder)
-                    .where(Reminder.status == "pending", Reminder.due_at <= now)
-                    .order_by(Reminder.due_at, Reminder.id)
-                    .with_for_update(skip_locked=True)
-                )
+        due = list(
+            await session.scalars(
+                select(Reminder)
+                .where(Reminder.status == "pending", Reminder.due_at <= now)
+                .order_by(Reminder.due_at, Reminder.id)
+                .with_for_update(skip_locked=True)
             )
-            ids: list[int] = []
-            for row in await _rows(session, due):
-                reminder = next(r for r in due if r.id == row.id)
-                reminder.fired_at = now
-                occurrence = reminder.due_at
-                if row.rule is None:
-                    reminder.status = "fired"
-                else:
-                    days, clock = row.rule.days, row.rule.clock
-                    occurrence = latest_occurrence(days, clock, reminder.due_at, now, self._zone)
-                    reminder.due_at = next_occurrence(days, clock, now, self._zone)
-                for name in row.recipients:
-                    item = QueueItem(
-                        kind="reminder",
-                        user_name=name,
-                        text=row.text,
-                        reminder_id=row.id,
-                        reminder_due_at=occurrence,
-                    )
-                    session.add(item)
-                    # One by one, so queue item IDs (the queue's order) follow due order.
-                    await session.flush()
-                    ids.append(item.id)
-            return ids
+        )
+        claimed: list[_Occurrence] = []
+        for row in await _rows(session, due):
+            reminder = next(r for r in due if r.id == row.id)
+            reminder.fired_at = now
+            occurrence = reminder.due_at
+            if row.rule is None:
+                reminder.status = "fired"
+            else:
+                days, clock = row.rule.days, row.rule.clock
+                occurrence = latest_occurrence(days, clock, reminder.due_at, now, self._zone)
+                reminder.due_at = next_occurrence(days, clock, now, self._zone)
+            claimed.append(_Occurrence(row, occurrence))
+        await session.flush()
+        return claimed
+
+
+@dataclass(frozen=True)
+class _Occurrence:
+    """A due reminder, claimed: deliver it to each of its recipients."""
+
+    reminder: ReminderRow
+    # When this occurrence was due (a repeating reminder's row has moved on).
+    due_at: datetime
 
 
 async def _rows(session: AsyncSession, reminders: Sequence[Reminder]) -> list[ReminderRow]:

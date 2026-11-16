@@ -8,8 +8,9 @@ skips; once answered it is ``pending`` again and, being older than anything
 queued since, it is the next head.
 
 The queue tells the worker and the memory sweeper when items arrive and
-finish (``QueueActivity``). A user's new message first cancels their open
-requests (``before_user_message``).
+finish (``QueueActivity``). Writes that queue an item with other slices'
+rows (``turns.intake``, ``turns.due_reminders``) call :meth:`Queue.add` in
+their own transaction, then :meth:`Queue.notify`.
 """
 
 from __future__ import annotations
@@ -17,15 +18,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.attachments import NewAttachment
-from alfred.attachments.tables import Attachment, AttachmentPage
 from alfred.turns.tables import QueueItem
 
 log = logging.getLogger(__name__)
@@ -79,9 +78,6 @@ class Queue:
         self._sessions = sessions
         self.signal = asyncio.Event()
         self.activity = QueueActivity(self.signal, clock)
-        # Run with the user's name before their message is queued: cancels
-        # their waiting turns.
-        self.before_user_message: Callable[[str], Awaitable[object]] | None = None
 
     async def has_pending(self) -> bool:
         """Whether an item is waiting or running (it stays pending until it ends)."""
@@ -91,59 +87,45 @@ class Queue:
             )
         return found is not None
 
-    async def enqueue_user(
+    async def add(
         self,
+        session: AsyncSession,
         user: str,
+        kind: TurnKind,
+        *,
         text: str,
+        source: str | None = None,
         telegram_message_id: int | None = None,
-        attachments: Sequence[NewAttachment] = (),
+        reminder_id: int | None = None,
+        reminder_due_at: datetime | None = None,
     ) -> int:
-        """Queue ``user``'s message, with its attachments, in one transaction.
+        """Queue a ``kind`` turn for ``user`` in the caller's transaction; the item's id.
 
-        The files must already be in the object store: the commit is what
-        makes the message exist. They belong to ``user``.
-
-        The user's waiting turns are cancelled first, so the message's turn
-        never runs while one of them could still be answered.
+        Nothing is told: the caller calls :meth:`notify` once it has committed.
         """
-        if self.before_user_message is not None:
-            await self.before_user_message(user)
-        async with self._sessions.begin() as session:
-            item = QueueItem(
-                kind=_STORED_CHAT,
-                user_name=user,
-                text=text,
-                telegram_message_id=telegram_message_id,
-            )
-            session.add(item)
-            await session.flush()
-            for position, new in enumerate(attachments):
-                row = Attachment(
-                    queue_item_id=item.id,
-                    user_name=user,
-                    position=position,
-                    kind=new.kind,
-                    mime=new.mime,
-                    file_name=new.file_name,
-                    size_bytes=new.size_bytes,
-                    object_key=new.object_key,
-                    width=new.width,
-                    height=new.height,
-                    page_count=new.page_count,
-                )
-                session.add(row)
-                await session.flush()
-                session.add_all(
-                    AttachmentPage(attachment_id=row.id, page=n, text=page)
-                    for n, page in enumerate(new.pages, start=1)
-                )
-            item_id = item.id
+        item = QueueItem(
+            kind=_STORED_CHAT if kind == "chat" else kind,
+            user_name=user,
+            source=source,
+            text=text,
+            telegram_message_id=telegram_message_id,
+            reminder_id=reminder_id,
+            reminder_due_at=reminder_due_at,
+        )
+        session.add(item)
+        await session.flush()
+        return item.id
+
+    def notify(self) -> None:
+        """Items were queued and committed: wake the worker, and tell the sweeper."""
         self.activity.notify()
-        return item_id
 
     async def enqueue_ask(self, source: str, prompt: str, user: str) -> int:
         """Queue ``source``'s ``/ask`` prompt as a turn for ``user``."""
-        return await self._insert(QueueItem(kind="ask", user_name=user, source=source, text=prompt))
+        async with self._sessions.begin() as session:
+            item_id = await self.add(session, user, "ask", text=prompt, source=source)
+        self.notify()
+        return item_id
 
     async def head(self) -> QueueItem | None:
         """The oldest pending item, which must finish before any other starts."""
@@ -171,13 +153,18 @@ class Queue:
                 .values(status=status, failure_reason=reason, finished_at=datetime.now(UTC))
             )
 
-    async def _insert(self, item: QueueItem) -> int:
-        async with self._sessions.begin() as session:
-            session.add(item)
-            await session.flush()
-            item_id = item.id
-        self.activity.notify()
-        return item_id
+
+async def busy(session: AsyncSession, user: str) -> bool:
+    """Whether ``user`` has an item queued, running or waiting for their answer.
+
+    Read in the caller's transaction: ``History.close_idle``'s ``busy``.
+    """
+    found = await session.scalar(
+        select(QueueItem.id)
+        .where(QueueItem.status.in_(("pending", "waiting")), QueueItem.user_name == user)
+        .limit(1)
+    )
+    return found is not None
 
 
 def turn_kind(item: QueueItem) -> TurnKind:

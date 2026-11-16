@@ -17,11 +17,11 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import ColumnElement, and_, exists, select, text
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.config import ArchiveConfig
 from alfred.conversations.current import current_id
+from alfred.conversations.store import append_recall
 from alfred.conversations.tables import Conversation, Entry
 from alfred.conversations.transcript import (
     TranscriptEntry,
@@ -191,20 +191,7 @@ class ConversationSearch:
                 return ToolOutcome(False, _already(cid))
             entries = await load_transcript(session, cid)
             recalled_text = self._recall_text(target, entries)
-            inserted = await session.execute(
-                insert(Entry)
-                .values(
-                    conversation_id=current,
-                    kind="recall",
-                    text=recalled_text,
-                    recalled_conversation_id=cid,
-                )
-                .on_conflict_do_nothing(
-                    index_elements=["conversation_id", "recalled_conversation_id"],
-                    index_where=text("kind = 'recall'"),
-                )
-            )
-            if inserted.rowcount == 0:  # type: ignore[attr-defined]
+            if not await append_recall(session, current, cid, recalled_text):
                 return ToolOutcome(False, _already(cid))
         log.info("conversation %s recalled into %s", cid, current)
         return ToolOutcome(True, recalled_text)

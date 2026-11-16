@@ -9,6 +9,7 @@ from alfred.attachments import notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
 from alfred.attachments.tables import Attachment, AttachmentPage
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 from tests.attachments.files import image_bytes, text_pdf
@@ -40,7 +41,7 @@ def intake(
     downloader = FakeDownloader(files)
     store = store or FakeStore()
     return (
-        Intake(config, store, Queue(sessions), downloader),
+        Intake(config, store, ChatIntake(sessions, Queue(sessions)), downloader),
         downloader,
         store,
     )

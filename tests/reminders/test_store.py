@@ -10,6 +10,7 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tables import Reminder
 from alfred.reminders.when import parse_rule
 from alfred.turns.tables import QueueItem
+from tests.helpers import claim_due
 
 NOW = datetime(2026, 11, 9, 16, 47, tzinfo=UTC)
 
@@ -45,7 +46,7 @@ async def test_cancel_pending(sessions: async_sessionmaker[AsyncSession]) -> Non
     assert row is not None and row.text == "call mum"
     assert await store.pending("diogo") == []
     # Never delivered.
-    assert await store.claim_due(NOW + timedelta(days=1)) == []
+    assert await claim_due(store, NOW + timedelta(days=1)) == []
     async with sessions() as session:
         reminder = await session.get(Reminder, rid)
         assert reminder is not None and reminder.cancelled_at == NOW
@@ -57,7 +58,7 @@ async def test_cancel_unknown_fired_or_cancelled(
     store = Reminders(sessions)
     assert await store.cancel(99, NOW, "diogo") == ("unknown", None)
     fired = await store.set("call mum", NOW - timedelta(days=1), "diogo", ["diogo"])
-    await store.claim_due(NOW)
+    await claim_due(store, NOW)
     outcome, _ = await store.cancel(fired, NOW, "diogo")
     assert outcome == "fired"
     cancelled = await store.set("stretch", NOW + timedelta(hours=1), "diogo", ["diogo"])
@@ -73,7 +74,7 @@ async def test_claim_due_in_due_order(sessions: async_sessionmaker[AsyncSession]
     first = await store.set("first", NOW - timedelta(days=3), "diogo", ["diogo"])
     exactly_now = await store.set("now", NOW, "diogo", ["diogo"])
 
-    ids = await store.claim_due(NOW)
+    ids = await claim_due(store, NOW)
     assert len(ids) == 3
     items = await queue_items(sessions)
     assert [(i.kind, i.reminder_id, i.text, i.status) for i in items] == [
@@ -91,15 +92,15 @@ async def test_claimed_reminder_not_claimed_twice(
 ) -> None:
     store = Reminders(sessions)
     await store.set("call mum", NOW, "diogo", ["diogo"])
-    assert len(await store.claim_due(NOW)) == 1
-    assert await store.claim_due(NOW + timedelta(minutes=1)) == []
+    assert len(await claim_due(store, NOW)) == 1
+    assert await claim_due(store, NOW + timedelta(minutes=1)) == []
     assert len(await queue_items(sessions)) == 1
 
 
 async def test_nothing_due(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = Reminders(sessions)
     await store.set("call mum", NOW + timedelta(hours=1), "diogo", ["diogo"])
-    assert await store.claim_due(NOW) == []
+    assert await claim_due(store, NOW) == []
     assert await queue_items(sessions) == []
 
 
@@ -138,7 +139,7 @@ async def test_a_recipient_leaves_a_shared_reminder(
     assert row.status == "pending"
     assert await store.pending("ana") == []
     assert [r.id for r in await store.pending("diogo")] == [shared]
-    await store.claim_due(NOW + timedelta(days=1))
+    await claim_due(store, NOW + timedelta(days=1))
     assert [i.user_name for i in await queue_items(sessions)] == ["diogo"]
 
 
@@ -150,7 +151,7 @@ async def test_the_creator_cancels_for_everyone(
     outcome, row = await store.cancel(shared, NOW, "diogo")
     assert outcome == "cancelled" and row is not None and row.recipients == ("ana", "diogo")
     assert await store.pending("diogo") == [] and await store.pending("ana") == []
-    assert await store.claim_due(NOW + timedelta(days=1)) == []
+    assert await claim_due(store, NOW + timedelta(days=1)) == []
 
 
 async def test_the_last_recipient_leaving_cancels(
@@ -161,7 +162,7 @@ async def test_the_last_recipient_leaving_cancels(
     outcome, row = await store.cancel(for_ana, NOW, "ana")
     assert outcome == "cancelled" and row is not None and row.recipients == ()
     assert await store.pending("diogo") == [] and await store.pending("ana") == []
-    assert await store.claim_due(NOW + timedelta(days=1)) == []
+    assert await claim_due(store, NOW + timedelta(days=1)) == []
     reloaded = await store.get(for_ana)
     assert reloaded is not None and reloaded.status == "cancelled"
 
@@ -175,7 +176,7 @@ async def test_leaving_keeps_an_item_already_queued(
     shared = await store.set(
         "dinner", NOW - timedelta(minutes=47), "diogo", ["diogo", "ana"], rule=rule
     )
-    await store.claim_due(NOW)
+    await claim_due(store, NOW)
     outcome, _ = await store.cancel(shared, NOW, "ana")
     assert outcome == "left"
     items = await queue_items(sessions)
@@ -187,7 +188,7 @@ async def test_not_involved_is_unknown(sessions: async_sessionmaker[AsyncSession
     hers = await store.set("yoga", NOW + timedelta(hours=3), "ana", ["ana"])
     assert await store.cancel(hers, NOW, "diogo") == ("unknown", None)
     fired = await store.set("call mum", NOW - timedelta(days=1), "ana", ["ana"])
-    await store.claim_due(NOW)
+    await claim_due(store, NOW)
     assert await store.cancel(fired, NOW, "diogo") == ("unknown", None)
     assert [r.id for r in await store.pending("ana")] == [hers]
 
@@ -198,7 +199,7 @@ async def test_shared_reminder_queues_one_item_per_recipient(
     store = Reminders(sessions)
     early = await store.set("early", NOW - timedelta(hours=1), "ana", ["ana"])
     shared = await store.set("dinner", NOW, "ana", ["diogo", "ana"])
-    ids = await store.claim_due(NOW)
+    ids = await claim_due(store, NOW)
     items = await queue_items(sessions)
     assert [i.id for i in items] == ids
     assert [(i.kind, i.reminder_id, i.user_name) for i in items] == [
@@ -207,7 +208,7 @@ async def test_shared_reminder_queues_one_item_per_recipient(
         ("reminder", shared, "diogo"),
     ]
     # Exactly once: claimed again later, nothing more is queued.
-    assert await store.claim_due(NOW + timedelta(minutes=1)) == []
+    assert await claim_due(store, NOW + timedelta(minutes=1)) == []
     assert len(await queue_items(sessions)) == 3
 
 
@@ -247,7 +248,7 @@ async def test_repeating_reminder_moves_on(sessions: async_sessionmaker[AsyncSes
     store = Reminders(sessions, LISBON)
     friday = lisbon(2026, 11, 20, 8, 0)
     rid = await weekday_briefing(store, friday, ["diogo", "ana"])
-    ids = await store.claim_due(friday)
+    ids = await claim_due(store, friday)
     items = await queue_items(sessions)
     assert [i.id for i in items] == ids
     assert [(i.user_name, i.reminder_id, i.reminder_due_at) for i in items] == [
@@ -260,7 +261,7 @@ async def test_repeating_reminder_moves_on(sessions: async_sessionmaker[AsyncSes
     # Still listed, by its next time.
     assert [(r.id, r.due_at) for r in await store.pending("diogo")] == [(rid, row.due_at)]
     # Not claimed again before then.
-    assert await store.claim_due(friday + timedelta(hours=1)) == []
+    assert await claim_due(store, friday + timedelta(hours=1)) == []
 
 
 async def test_repeating_reminder_after_an_outage(
@@ -268,7 +269,7 @@ async def test_repeating_reminder_after_an_outage(
 ) -> None:
     store = Reminders(sessions, LISBON)
     rid = await weekday_briefing(store, lisbon(2026, 11, 16, 8, 0), ["diogo"])
-    await store.claim_due(lisbon(2026, 11, 18, 10, 0))
+    await claim_due(store, lisbon(2026, 11, 18, 10, 0))
     items = await queue_items(sessions)
     assert [i.reminder_due_at for i in items] == [lisbon(2026, 11, 18, 8, 0)]
     row = await store.get(rid)
@@ -281,7 +282,7 @@ async def test_one_shot_items_carry_their_due_time(
     store = Reminders(sessions, LISBON)
     due = NOW - timedelta(hours=2)
     rid = await store.set("call mum", due, "diogo", ["diogo"])
-    await store.claim_due(NOW)
+    await claim_due(store, NOW)
     assert [(i.reminder_id, i.reminder_due_at) for i in await queue_items(sessions)] == [(rid, due)]
     row = await store.get(rid)
     assert row is not None and row.status == "fired"
@@ -290,8 +291,8 @@ async def test_one_shot_items_carry_their_due_time(
 async def test_cancelling_a_series_stops_it(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = Reminders(sessions, LISBON)
     rid = await weekday_briefing(store, lisbon(2026, 11, 16, 8, 0), ["diogo"])
-    await store.claim_due(lisbon(2026, 11, 16, 8, 0))
+    await claim_due(store, lisbon(2026, 11, 16, 8, 0))
     outcome, _ = await store.cancel(rid, lisbon(2026, 11, 16, 9, 0), "diogo")
     assert outcome == "cancelled"
-    assert await store.claim_due(lisbon(2026, 11, 30, 8, 0)) == []
+    assert await claim_due(store, lisbon(2026, 11, 30, 8, 0)) == []
     assert len(await queue_items(sessions)) == 1

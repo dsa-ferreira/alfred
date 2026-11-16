@@ -18,6 +18,7 @@ from alfred.llm.chat import ModelReply, ModelUnreachable
 from alfred.llm.embedding import _EmbeddingUnreachable
 from alfred.turns.background import Sweeper
 from alfred.turns.inputs.parking import Parking
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
@@ -216,8 +217,8 @@ async def test_owner_messages_answered_while_sweeper_fails(
     tasks = [asyncio.create_task(mem.run_forever()), asyncio.create_task(worker.run_forever())]
     try:
         await until(lambda: _has_failed(summary_model, 3))
-        await queue.enqueue_user("diogo", "first")
-        await queue.enqueue_user("diogo", "second")
+        await ChatIntake(sessions, queue).enqueue_user("diogo", "first")
+        await ChatIntake(sessions, queue).enqueue_user("diogo", "second")
 
         async def answered() -> bool:
             return sent == ["one", "two"]
@@ -353,7 +354,7 @@ async def test_an_arriving_item_cancels_the_summary(
     try:
         for cancelled in (1, 2):
             await asyncio.wait_for(model.running.wait(), 5)
-            await queue.enqueue_user("diogo", "a message")
+            await ChatIntake(sessions, queue).enqueue_user("diogo", "a message")
             await until(lambda: _true(model.cancelled == cancelled))  # noqa: B023
             stored = await row(sessions, cid)
             assert stored.summary is None
@@ -385,7 +386,7 @@ async def test_embedding_only_does_not_wait_for_the_queue(
     model = FakeModel()
     embedder = FakeEmbedder(default=[1.0])
     mem, queue, _ = quiet_sweeper(sessions, model, embedder, 0)
-    await queue.enqueue_user("diogo", "busy")
+    await ChatIntake(sessions, queue).enqueue_user("diogo", "busy")
     task = asyncio.create_task(mem.run_forever())
     try:
 

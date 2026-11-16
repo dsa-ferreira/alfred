@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments.sweeper import OrphanSweeper
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from tests.agent.turn_helpers import Clock
 from tests.helpers import FakeStore, image_file
@@ -29,7 +30,9 @@ async def test_crash_between_upload_and_record(
     store = FakeStore(now=clock)
     await put_at(store, clock, "attachments/orphan", NOW - timedelta(days=2))
     await put_at(store, clock, "attachments/kept", NOW - timedelta(days=2))
-    await Queue(sessions).enqueue_user("diogo", "total?", None, [image_file("attachments/kept")])
+    await ChatIntake(sessions, Queue(sessions)).enqueue_user(
+        "diogo", "total?", None, [image_file("attachments/kept")]
+    )
     clock.now = NOW
     assert await OrphanSweeper(store, sessions, now=clock)._sweep_once() == 1
     assert set(store.objects) == {"attachments/kept"}

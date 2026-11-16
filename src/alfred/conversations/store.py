@@ -15,12 +15,12 @@ new conversation, with no marker.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import ColumnElement, func, or_, select, update
+from sqlalchemy import ColumnElement, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -30,7 +30,6 @@ from alfred.attachments.tables import Attachment
 from alfred.conversations.current import current_id
 from alfred.conversations.tables import Conversation, Entry
 from alfred.reminders.tables import Reminder
-from alfred.turns.tables import QueueItem
 
 _EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
@@ -38,7 +37,9 @@ _EntryKind = Literal[
 # The first entry of something that arrives without the user: a new one may
 # close a conversation that has no user message. Never a reply.
 _ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
-# An input request whose turn is still waiting or going on (a parked turn).
+# Whether a user has a queue item queued, running or waiting for their answer, read
+# in the caller's transaction (``turns.queue.busy``).
+Busy = Callable[[AsyncSession, str], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
@@ -251,12 +252,14 @@ class History:
             )
             return [_LastMessage(*row) for row in rows]
 
-    async def close_idle(self, conversation_id: int, cutoff: datetime) -> _Reset | None:
+    async def close_idle(
+        self, conversation_id: int, cutoff: datetime, *, busy: Busy
+    ) -> _Reset | None:
         """Archive a current conversation whose user hasn't written since ``cutoff``.
 
         Returns ``None`` and changes nothing if it is no longer current, its
-        user wrote after ``cutoff`` (or never), or one of its user's
-        queue items is queued, running, or waiting for their answer.
+        user wrote after ``cutoff`` (or never), or ``busy`` says one of its
+        user's queue items is queued, running, or waiting for their answer.
         """
         async with self._sessions.begin() as session:
             # Lock first: this waits for an append in flight (it holds FOR
@@ -278,12 +281,7 @@ class History:
                 return None
             # A turn waiting for its user's answer is busy too, until it is
             # answered, cancelled or expires.
-            busy = await session.scalar(
-                select(QueueItem.id)
-                .where(QueueItem.status.in_(("pending", "waiting")), QueueItem.user_name == user)
-                .limit(1)
-            )
-            if busy is not None:
+            if await busy(session, user):
                 return None
             await session.execute(
                 update(Conversation)
@@ -376,6 +374,30 @@ class History:
             dataclasses.replace(e, attachments=refs[e.entry_id]) if e.entry_id in refs else e
             for e in entries
         ]
+
+
+async def append_recall(
+    session: AsyncSession, conversation_id: int, recalled_id: int, text_: str
+) -> bool:
+    """Recall ``recalled_id`` into ``conversation_id``, in the caller's transaction.
+
+    Returns ``False`` and adds nothing if that conversation is already
+    recalled into it.
+    """
+    inserted = await session.execute(
+        insert(Entry)
+        .values(
+            conversation_id=conversation_id,
+            kind="recall",
+            text=text_,
+            recalled_conversation_id=recalled_id,
+        )
+        .on_conflict_do_nothing(
+            index_elements=["conversation_id", "recalled_conversation_id"],
+            index_where=text("kind = 'recall'"),
+        )
+    )
+    return bool(inserted.rowcount)  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True)

@@ -34,7 +34,8 @@ from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.turns import notices as turns_notices
 from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.parking import Parking
-from alfred.turns.queue import Queue
+from alfred.turns.intake import ChatIntake
+from alfred.turns.queue import Queue, busy
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
@@ -44,6 +45,7 @@ from tests.helpers import (
     FakeEmbedder,
     FakeModel,
     calls,
+    claim_due,
     make_agent,
     make_config,
     text,
@@ -84,6 +86,7 @@ class Setup:
         self.model = model
         self.history = History(sessions)
         self.queue = Queue(sessions) if clock is None else Queue(sessions, clock=clock)
+        self.chat = ChatIntake(sessions, self.queue)
         self.outbox = FakeOutbox()
         connect = in_process({"mcparr": make_mcparr()})
         self.agent = make_agent(
@@ -138,8 +141,8 @@ async def test_two_messages_in_quick_succession(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Setup(sessions, FakeModel([text("Added Dune."), text("Nothing.")]))
-    await s.queue.enqueue_user("diogo", "add Dune Part Three", 1)
-    await s.queue.enqueue_user("diogo", "and what's downloading?", 2)
+    await s.chat.enqueue_user("diogo", "add Dune Part Three", 1)
+    await s.chat.enqueue_user("diogo", "and what's downloading?", 2)
     await s.drain()
     assert s.outbox.sent == ["Added Dune.", "Nothing."]
     # The second turn sees the first turn in its context.
@@ -155,7 +158,7 @@ async def test_owner_message_and_ask_interleaved(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Setup(sessions, FakeModel([text("owner reply"), text("disk alert")]))
-    await s.queue.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("diogo", "hi")
     await s.queue.enqueue_ask("disk-check", "93%", "diogo")
     await s.drain()
     assert s.outbox.sent == ["owner reply", "[disk-check] disk alert"]
@@ -191,7 +194,7 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
     )
     task = asyncio.create_task(worker.run_forever())
     for i in range(3):
-        await s.queue.enqueue_user("diogo", f"m{i}")
+        await s.chat.enqueue_user("diogo", f"m{i}")
     for _ in range(100):
         if len(s.outbox.sent) == 3:
             break
@@ -206,8 +209,8 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
 
 async def test_restart_with_pending_items(sessions: async_sessionmaker[AsyncSession]) -> None:
     before = Setup(sessions, FakeModel())
-    await before.queue.enqueue_user("diogo", "first")
-    await before.queue.enqueue_user("diogo", "second")
+    await before.chat.enqueue_user("diogo", "first")
+    await before.chat.enqueue_user("diogo", "second")
     # A new worker (a restarted process) picks them up in order.
     after = Setup(sessions, FakeModel([text("r1"), text("r2")]))
     await after.drain()
@@ -235,7 +238,7 @@ def test_backoff_doubles_up_to_max() -> None:
 async def test_ai_server_down(sessions: async_sessionmaker[AsyncSession]) -> None:
     down = ModelUnreachable("refused")
     s = Setup(sessions, FakeModel([down, down, down, text("Here you go.")]))
-    await s.queue.enqueue_user("diogo", "what's downloading?")
+    await s.chat.enqueue_user("diogo", "what's downloading?")
 
     assert await s.worker._step()  # attempt 1 fails
     (item,) = await s.items()
@@ -268,9 +271,9 @@ async def test_head_of_line_waits_for_retry(sessions: async_sessionmaker[AsyncSe
         typing=no_typing,
         nudge=ignore,
     )
-    await s.queue.enqueue_user("diogo", "one")
+    await s.chat.enqueue_user("diogo", "one")
     await s.worker._step()  # fails, retry in 0.3 s
-    await s.queue.enqueue_user("diogo", "two")
+    await s.chat.enqueue_user("diogo", "two")
     # The next step waits for the head's retry time instead of taking "two".
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(s.worker._step(), 0.1)
@@ -283,7 +286,7 @@ async def test_order_preserved_during_outage(sessions: async_sessionmaker[AsyncS
     down = ModelUnreachable("refused")
     s = Setup(sessions, FakeModel([down, down, text("a"), text("b"), text("c")]))
     for m in ("one", "two", "three"):
-        await s.queue.enqueue_user("diogo", m)
+        await s.chat.enqueue_user("diogo", m)
     await s.drain()
     assert s.outbox.sent == ["a", "b", "c"]
     assert [user_messages(s.model, i)[-1] for i in (2, 3, 4)] == ["one", "two", "three"]
@@ -303,8 +306,8 @@ async def test_ai_drops_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
             ]
         ),
     )
-    await s.queue.enqueue_user("diogo", "add Dune")
-    await s.queue.enqueue_user("diogo", "next")
+    await s.chat.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "next")
     await s.drain()
     first, second = await s.items()
     assert first.status == "failed" and first.attempts == 0
@@ -318,8 +321,8 @@ async def test_ai_drops_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
 
 async def test_model_rejects_request(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([ModelFailed("model server answered HTTP 400: bad"), text("ok")]))
-    await s.queue.enqueue_user("diogo", "hi")
-    await s.queue.enqueue_user("diogo", "again")
+    await s.chat.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("diogo", "again")
     await s.drain()
     first, second = await s.items()
     assert first.status == "failed" and "HTTP 400" in (first.failure_reason or "")
@@ -350,7 +353,7 @@ async def test_unexpected_error_fails_item(sessions: async_sessionmaker[AsyncSes
         typing=no_typing,
         nudge=ignore,
     )
-    await s.queue.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("diogo", "hi")
     await s.drain()
     (item,) = await s.items()
     assert item.status == "failed"
@@ -376,7 +379,7 @@ async def test_silent_ask_not_recorded(
 async def test_notifying_ask_recorded(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([text("Disk jumped 13%."), text("It's downloads.")]))
     await s.queue.enqueue_ask("disk-check", "/mnt/data at 93%", "diogo")
-    await s.queue.enqueue_user("diogo", "what's using it?")
+    await s.chat.enqueue_user("diogo", "what's using it?")
     await s.drain()
     assert s.outbox.sent[0] == "[disk-check] Disk jumped 13%."
     assert user_messages(s.model, 1) == [
@@ -427,13 +430,13 @@ async def test_reset_sequence(sessions: async_sessionmaker[AsyncSession]) -> Non
         FakeModel([calls((_END_CONVERSATION, "{}")), text("Done 👍"), text("Hi again")]),
         summary_model=summary_model,
     )
-    await s.queue.enqueue_user("diogo", "great, that's sorted, we're done here")
+    await s.chat.enqueue_user("diogo", "great, that's sorted, we're done here")
     await s.drain()
     assert s.outbox.sent == ["Done 👍", "— #41 archived —\n— new conversation #42 —"]
     assert s.nudges == 1
     assert not summary_model.asked.is_set()  # the worker never summarises
 
-    await s.queue.enqueue_user("diogo", "new question")
+    await s.chat.enqueue_user("diogo", "new question")
     await s.drain()
     assert user_messages(s.model, 2) == ["new question"]
 
@@ -449,8 +452,8 @@ async def test_next_message_does_not_wait_for_the_summary(
         summary_model=summary_model,
     )
     assert s.memory is not None
-    await s.queue.enqueue_user("diogo", "we're done")
-    await s.queue.enqueue_user("diogo", "new topic: what's for dinner?")
+    await s.chat.enqueue_user("diogo", "we're done")
+    await s.chat.enqueue_user("diogo", "new topic: what's for dinner?")
     await s.worker._step()
     # #41's summary is being made (and never finishes) while the next item runs.
     summarising = asyncio.create_task(s.memory.summarise(41))
@@ -468,7 +471,7 @@ async def test_next_message_does_not_wait_for_the_summary(
 async def test_reset_end_reason_is_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     await start_at_41(sessions)
     s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye")]))
-    await s.queue.enqueue_user("diogo", "we're done")
+    await s.chat.enqueue_user("diogo", "we're done")
     await s.drain()
     async with sessions() as session:
         reason = await session.scalar(sql("SELECT end_reason FROM conversations WHERE id = 41"))
@@ -478,7 +481,7 @@ async def test_reset_end_reason_is_user(sessions: async_sessionmaker[AsyncSessio
 async def test_reset_without_memory_sends_ids(sessions: async_sessionmaker[AsyncSession]) -> None:
     await start_at_41(sessions)
     s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye")]))
-    await s.queue.enqueue_user("diogo", "we're done")
+    await s.chat.enqueue_user("diogo", "we're done")
     await s.drain()
     assert s.outbox.sent == ["Bye", "— #41 archived —\n— new conversation #42 —"]
 
@@ -487,7 +490,7 @@ async def test_notice_after_reset_in_new_conversation(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye")]))
-    await s.queue.enqueue_user("diogo", "we're done")
+    await s.chat.enqueue_user("diogo", "we're done")
     await s.drain()
     await s.history.append("diogo", "notice", "backup ok", source="backup")
     assert [e.text for e in await s.history.recent("diogo", 30)] == ["backup ok"]
@@ -547,7 +550,7 @@ async def test_typing_while_owner_turn_runs(sessions: async_sessionmaker[AsyncSe
     s = Setup(sessions, FakeModel())
     s.agent = Agent_()  # type: ignore[assignment]
     worker = typing_worker(s, events)
-    await s.queue.enqueue_user("diogo", "add Dune")
+    await s.chat.enqueue_user("diogo", "add Dune")
     while await worker._step():
         pass
     assert events == ["typing on", "turn", "typing off", "send Added Dune."]
@@ -568,7 +571,7 @@ async def test_typing_stops_during_retry_wait(sessions: async_sessionmaker[Async
     s = Setup(sessions, FakeModel([ModelUnreachable("refused"), text("Here you go.")]))
     # Long enough that the second step is certainly the backoff wait.
     worker = typing_worker(s, events, QueueConfig(retry_initial_s=0.2, retry_max_s=1))
-    await s.queue.enqueue_user("diogo", "what's downloading?")
+    await s.chat.enqueue_user("diogo", "what's downloading?")
     assert await worker._step()  # attempt 1 fails and is scheduled for a retry
     assert events == ["typing on", "typing off"]
     assert await worker._step()  # the backoff wait: no turn runs, no typing
@@ -584,7 +587,7 @@ async def test_typing_stops_before_failure_notice(
     events: list[str] = []
     s = Setup(sessions, FakeModel([ModelFailed("model server answered HTTP 400")]))
     worker = typing_worker(s, events)
-    await s.queue.enqueue_user("diogo", "status?")
+    await s.chat.enqueue_user("diogo", "status?")
     while await worker._step():
         pass
     assert events == ["typing on", "typing off", f"send {agent_notices.failed('sir')}"]
@@ -606,7 +609,7 @@ async def test_fallback_before_the_reply(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     s = Setup(sessions, FakeModel([BAD_MODEL, text("gemma's answer")]), brains=on_bonsai())
-    await s.queue.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("diogo", "hi")
     await s.drain()
     assert s.outbox.sent == [FELL_BACK, "gemma's answer"]
     contents = [e.text for e in await s.history.recent("diogo", 10)]
@@ -618,7 +621,7 @@ async def test_fallback_before_the_failure_notice(
 ) -> None:
     model = FakeModel([calls(("mcparr_get_downloads", "{}")), BAD_MODEL])
     s = Setup(sessions, model, brains=on_bonsai())
-    await s.queue.enqueue_user("diogo", "downloads?")
+    await s.chat.enqueue_user("diogo", "downloads?")
     await s.drain()
     assert s.outbox.sent == [FELL_BACK, agent_notices.failed("sir", True)]
 
@@ -646,7 +649,7 @@ async def test_fallback_sent_once_across_a_retry(
 ) -> None:
     model = FakeModel([BAD_MODEL, ModelUnreachable("model request timed out"), text("ok")])
     s = Setup(sessions, model, brains=on_bonsai())
-    await s.queue.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("diogo", "hi")
     await s.drain()
     assert s.outbox.sent == [FELL_BACK, "ok"]
 
@@ -660,7 +663,7 @@ async def test_summary_ignores_the_chosen_brain(
     model = FakeModel([calls((_END_CONVERSATION, "{}")), text("Done."), text(SUMMARY)])
     s = Setup(sessions, model, summary_model=model, brains=on_bonsai())
     assert s.memory is not None
-    await s.queue.enqueue_user("diogo", "we're done")
+    await s.chat.enqueue_user("diogo", "we're done")
     await s.drain()
     await s.memory.summarise(41)
     assert model.models == ["b:8b", "b:8b", None]
@@ -673,7 +676,7 @@ async def due_reminder(s: Setup, text_: str = "call mum", late: timedelta = time
     """A reminder that came due ``late`` ago, claimed into the queue."""
     now = datetime.now(UTC)
     reminder_id = await s.reminders.set(text_, now - late, "diogo", ["diogo"])
-    assert len(await s.reminders.claim_due(now)) == 1
+    assert len(await claim_due(s.reminders, now)) == 1
     return reminder_id
 
 
@@ -727,7 +730,7 @@ async def test_reminder_model_says_no_reply(
 async def quiet_reminder(s: Setup, text_: str = "tell me if Dune is done") -> int:
     now = datetime.now(UTC)
     reminder_id = await s.reminders.set(text_, now, "diogo", ["diogo"], quiet_ok=True)
-    assert len(await s.reminders.claim_due(now)) == 1
+    assert len(await claim_due(s.reminders, now)) == 1
     return reminder_id
 
 
@@ -773,7 +776,7 @@ async def test_repeating_reminder_turn_uses_the_items_due_time(
     tuesday = datetime(2026, 11, 17, 8, 0, tzinfo=LISBON)
     rule = parse_rule(repeat="weekdays", at="08:00")
     rid = await s.reminders.set("brief me", tuesday, "diogo", ["diogo"], rule=rule)
-    await s.reminders.claim_due(tuesday)
+    await claim_due(s.reminders, tuesday)
     row = await s.reminders.get(rid)
     assert row is not None and row.due_at == datetime(2026, 11, 18, 8, 0, tzinfo=LISBON)
     await s.drain()
@@ -811,7 +814,7 @@ async def test_reminder_ai_asleep(sessions: async_sessionmaker[AsyncSession]) ->
 
 async def test_reminder_during_an_owner_turn(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([text("Added Dune."), text("Time to call mum, sir.")]))
-    await s.queue.enqueue_user("diogo", "add Dune Part Three")
+    await s.chat.enqueue_user("diogo", "add Dune Part Three")
     rid = await due_reminder(s)
     await s.drain()
     assert s.outbox.sent == ["Added Dune.", "Time to call mum, sir."]
@@ -842,7 +845,7 @@ async def test_snooze(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, model)
     rid = await due_reminder(s)
     await s.drain()
-    await s.queue.enqueue_user("diogo", "snooze 15 minutes")
+    await s.chat.enqueue_user("diogo", "snooze 15 minutes")
     before = datetime.now(UTC)
     await s.drain()
     # The model's context for the snooze has the reminder's text.
@@ -865,7 +868,7 @@ async def test_retried_turn_links_attachments_once(
     s = Setup(sessions, FakeModel([down, text("A receipt for 12.40 EUR.")]))
     photo = NewAttachment("image", "image/jpeg", 1000, "attachments/a", width=10, height=10)
     pdf = NewAttachment("pdf", "application/pdf", 2000, "attachments/b", "x.pdf", pages=["p1"])
-    item_id = await s.queue.enqueue_user("diogo", "what are these?", 5, [photo, pdf])
+    item_id = await s.chat.enqueue_user("diogo", "what are these?", 5, [photo, pdf])
 
     assert await s.worker._step()  # attempt 1: the owner entry is recorded, the AI is down
     await s.drain()
@@ -886,7 +889,7 @@ async def test_append_returns_the_entry_id_on_a_retry(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
-    item = await Queue(sessions).enqueue_user("diogo", "hi")
+    item = await ChatIntake(sessions, Queue(sessions)).enqueue_user("diogo", "hi")
     first = await history.append("diogo", "user", "hi", queue_item_id=item)
     assert await history.append("diogo", "user", "hi", queue_item_id=item) == first
 
@@ -897,7 +900,7 @@ async def test_append_returns_the_entry_id_on_a_retry(
 async def test_turn_runs_for_the_items_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([text("Lemon and garlic, madam.")]), users=(DIOGO, ANA))
     await s.history.append("diogo", "user", "diogo's secret")
-    await s.queue.enqueue_user("ana", "what's for dinner?")
+    await s.chat.enqueue_user("ana", "what's for dinner?")
     await s.drain()
     assert s.outbox.sent_to == [("ana", "Lemon and garlic, madam.")]
     assert user_messages(s.model, 0) == ["what's for dinner?"]
@@ -921,8 +924,8 @@ async def test_item_for_an_unconfigured_user_fails(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     s = Setup(sessions, FakeModel([text("hello")]))
-    await s.queue.enqueue_user("bob", "hi")
-    await s.queue.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("bob", "hi")
+    await s.chat.enqueue_user("diogo", "hi")
     with caplog.at_level(logging.ERROR):
         await s.drain()
     bob, diogo = await s.items()
@@ -934,7 +937,7 @@ async def test_item_for_an_unconfigured_user_fails(
 
 async def test_failure_reaches_only_its_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([ModelFailed("HTTP 400")]), users=(DIOGO, ANA))
-    await s.queue.enqueue_user("ana", "hi")
+    await s.chat.enqueue_user("ana", "hi")
     await s.drain()
     assert s.outbox.sent_to == [("ana", agent_notices.failed("madam"))]
     assert s.outbox.sent[0].endswith(", madam.")
@@ -945,7 +948,7 @@ async def test_reset_marker_goes_to_its_user(sessions: async_sessionmaker[AsyncS
     s = Setup(sessions, model, users=(DIOGO, ANA))
     await s.history.append("diogo", "user", "keep this")
     diogo = await s.history.current_conversation_id("diogo")
-    await s.queue.enqueue_user("ana", "we're done")
+    await s.chat.enqueue_user("ana", "we're done")
     await s.drain()
     assert [to for to, _ in s.outbox.sent_to] == ["ana", "ana"]
     assert "new conversation" in s.outbox.sent[1]
@@ -957,7 +960,7 @@ async def test_fallback_on_another_users_turn_reaches_the_admin(
 ) -> None:
     model = FakeModel([BAD_MODEL, text("gemma's answer")])
     s = Setup(sessions, model, brains=on_bonsai(), users=(DIOGO, ANA))
-    await s.queue.enqueue_user("ana", "hi")
+    await s.chat.enqueue_user("ana", "hi")
     await s.drain()
     assert s.outbox.sent_to == [
         ("ana", turns_notices.fell_back("madam", "bonsai", "gemma")),
@@ -973,7 +976,7 @@ async def test_fallback_on_the_admins_turn_is_sent_once(
 ) -> None:
     model = FakeModel([BAD_MODEL, text("gemma's answer")])
     s = Setup(sessions, model, brains=on_bonsai(), users=(DIOGO, ANA))
-    await s.queue.enqueue_user("diogo", "hi")
+    await s.chat.enqueue_user("diogo", "hi")
     await s.drain()
     assert [to for to, _ in s.outbox.sent_to] == ["diogo", "diogo"]
 
@@ -993,7 +996,7 @@ async def test_typing_in_the_users_own_chat(sessions: async_sessionmaker[AsyncSe
         reminders=NoReminders(),
         nudge=ignore,
     )
-    await s.queue.enqueue_user("ana", "hi")
+    await s.chat.enqueue_user("ana", "hi")
     while await worker._step():
         pass
     assert events == ["typing on for ana", "typing off", "send hello"]
@@ -1003,7 +1006,7 @@ async def test_reminder_set_for_another_user(sessions: async_sessionmaker[AsyncS
     s = Setup(sessions, FakeModel([text("Diogo asks you to buy milk, madam.")]), users=(DIOGO, ANA))
     now = datetime.now(UTC)
     rid = await s.reminders.set("buy milk", now, "diogo", ["ana"])
-    await s.reminders.claim_due(now)
+    await claim_due(s.reminders, now)
     await s.drain()
     assert s.outbox.sent_to == [("ana", "Diogo asks you to buy milk, madam.")]
     assert "; set by diogo] buy milk" in user_messages(s.model, 0)[-1]
@@ -1023,7 +1026,7 @@ async def test_shared_reminder_one_recipient_fails(
     s = Setup(sessions, model, users=(DIOGO, ANA))
     now = datetime.now(UTC)
     rid = await s.reminders.set("dinner with my parents", now, "ana", ["ana", "diogo"])
-    await s.reminders.claim_due(now)
+    await claim_due(s.reminders, now)
     await s.drain()
     today = now.astimezone(LISBON).date()
     plain = reminders_notices.reminder(
@@ -1049,7 +1052,7 @@ async def test_reminder_reaches_a_user_without_reminder_tools(
     s = Setup(sessions, FakeModel([text("Buy milk, madam.")]), users=(DIOGO, no_tools))
     now = datetime.now(UTC)
     await s.reminders.set("buy milk", now, "diogo", ["ana"])
-    await s.reminders.claim_due(now)
+    await claim_due(s.reminders, now)
     await s.drain()
     assert s.outbox.sent_to == [("ana", "Buy milk, madam.")]
     assert s.model.tool_names(0) == set()
@@ -1069,7 +1072,7 @@ async def test_every_finished_item_is_reported(
     }[outcome]
     ticks = Ticks()
     s = Setup(sessions, FakeModel(script), clock=ticks)
-    await s.queue.enqueue_user("nobody" if outcome == "unknown user" else "diogo", "hi")
+    await s.chat.enqueue_user("nobody" if outcome == "unknown user" else "diogo", "hi")
     s.queue.activity.changed.clear()
     ticks.now += 50
     await s.drain()
@@ -1087,7 +1090,7 @@ async def closed_for_inactivity(s: Setup) -> tuple[int, int]:
     await s.history.append("diogo", "user", "chicken thighs tonight?")
     await s.history.append("diogo", "assistant", "Lemon and garlic, sir.")
     later = datetime.now(UTC) + timedelta(seconds=1)  # every entry is before it
-    reset = await s.history.close_idle(41, later)
+    reset = await s.history.close_idle(41, later, busy=busy)
     assert reset is not None and reset.archived_id == 41
     return 41, reset.new_id
 
@@ -1095,7 +1098,7 @@ async def closed_for_inactivity(s: Setup) -> tuple[int, int]:
 async def test_idle_marker_before_the_reply(sessions: async_sessionmaker[AsyncSession]) -> None:
     s = Setup(sessions, FakeModel([text("Sunny, sir."), text("You're welcome.")]))
     archived, new = await closed_for_inactivity(s)
-    await s.queue.enqueue_user("diogo", "morning! what's the weather?")
+    await s.chat.enqueue_user("diogo", "morning! what's the weather?")
     await s.drain()
     assert s.outbox.sent == [
         f"— #{archived} closed after inactivity —\n— new conversation #{new} —",
@@ -1103,7 +1106,7 @@ async def test_idle_marker_before_the_reply(sessions: async_sessionmaker[AsyncSe
     ]
     assert user_messages(s.model, 0) == ["morning! what's the weather?"]
 
-    await s.queue.enqueue_user("diogo", "thanks")
+    await s.chat.enqueue_user("diogo", "thanks")
     await s.drain()
     assert s.outbox.sent[2:] == ["You're welcome."]  # sent once
 
@@ -1118,7 +1121,7 @@ async def test_ask_and_reminders_do_not_take_the_idle_marker(
     await s.drain()
     assert s.outbox.sent == ["[backup] Backup ok.", "Call mum, sir."]
 
-    await s.queue.enqueue_user("diogo", "hello")
+    await s.chat.enqueue_user("diogo", "hello")
     await s.drain()
     assert s.outbox.sent[2:] == [
         f"— #{archived} closed after inactivity —\n— new conversation #{new} —",
@@ -1132,7 +1135,7 @@ async def test_idle_marker_not_resent_on_a_retry(
     down = ModelUnreachable("refused")
     s = Setup(sessions, FakeModel([down, down, text("Here you go.")]))
     archived, new = await closed_for_inactivity(s)
-    await s.queue.enqueue_user("diogo", "what's downloading?")
+    await s.chat.enqueue_user("diogo", "what's downloading?")
     await s.drain()
     assert s.outbox.sent == [
         f"— #{archived} closed after inactivity —\n— new conversation #{new} —",
@@ -1145,7 +1148,7 @@ async def test_no_idle_marker_after_a_user_reset(
 ) -> None:
     await start_at_41(sessions)
     s = Setup(sessions, FakeModel([calls((_END_CONVERSATION, "{}")), text("Bye"), text("Hi")]))
-    await s.queue.enqueue_user("diogo", "we're done")
-    await s.queue.enqueue_user("diogo", "hello again")
+    await s.chat.enqueue_user("diogo", "we're done")
+    await s.chat.enqueue_user("diogo", "hello again")
     await s.drain()
     assert s.outbox.sent == ["Bye", "— #41 archived —\n— new conversation #42 —", "Hi"]

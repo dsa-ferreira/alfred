@@ -27,11 +27,23 @@ from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
+from alfred.turns.intake import ChatIntake
 from alfred.turns.queue import Queue
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import LISBON, tool_rows
 from tests.fakes import NoMemoryCommand, ignore, no_typing
-from tests.helpers import ANA, ANA_ID, DIOGO, OWNER, FakeModel, calls, make_agent, make_config, text
+from tests.helpers import (
+    ANA,
+    ANA_ID,
+    DIOGO,
+    OWNER,
+    FakeModel,
+    calls,
+    claim_due,
+    make_agent,
+    make_config,
+    text,
+)
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_asking
 from tests.telegram.fake_bot import FakeSession, callback_update, make_bot
@@ -72,7 +84,9 @@ class Alfred:
         self.queue = Queue(sessions)
         outbox = TelegramOutbox(self.bot)
         self.requests = InputRequests(sessions, history, users)
-        self.queue.before_user_message = cancel_on_new_message(self.requests, outbox, users)
+        self.chat = ChatIntake(
+            sessions, self.queue, before_message=cancel_on_new_message(self.requests, outbox, users)
+        )
         agent = make_agent(
             config,
             model,
@@ -143,7 +157,7 @@ async def test_confirmed_call_then_a_reminder(sessions: async_sessionmaker[Async
         ]
     )
     alfred = Alfred(sessions, model, counting_mcparr(added))
-    await alfred.queue.enqueue_user("ana", "add Dune and remind me to watch it")
+    await alfred.chat.enqueue_user("ana", "add Dune and remind me to watch it")
     await alfred.drain()
 
     (question,) = alfred.questions()
@@ -174,7 +188,7 @@ async def test_server_question_answered_yes(sessions: async_sessionmaker[AsyncSe
         [calls(("mcparr_add_media", '{"title": "Dune"}')), text("Dune is added, sir.")]
     )
     alfred = Alfred(sessions, model, make_asking(ran=ran), Users((DIOGO, ANA_CONFIRMS)))
-    await alfred.queue.enqueue_user("diogo", "add Dune")
+    await alfred.chat.enqueue_user("diogo", "add Dune")
     await alfred.drain()
 
     (question,) = alfred.questions()
@@ -198,7 +212,7 @@ async def test_reminder_needs_confirmation(sessions: async_sessionmaker[AsyncSes
     alfred = Alfred(sessions, model, counting_mcparr(added))
     now = datetime.now(UTC)
     rid = await alfred.reminders.set("add Dune to the library", now, "diogo", ["diogo"])
-    assert len(await alfred.reminders.claim_due(now)) == 1
+    assert len(await claim_due(alfred.reminders, now)) == 1
     await alfred.drain()
 
     (question,) = alfred.questions()

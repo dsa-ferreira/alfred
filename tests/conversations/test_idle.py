@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.conversations.idle import IdleCloser
 from alfred.conversations.store import History
 from alfred.conversations.tables import Conversation, Entry
+from alfred.turns.queue import busy
 from alfred.turns.tables import QueueItem
 from tests.fakes import QuietQueue, ignore
 from tests.helpers import add_queue_item, make_sweeper
@@ -47,6 +48,7 @@ def closer(
     return IdleCloser(
         History(sessions),
         SIX_HOURS,
+        busy=busy,
         nudge=(lambda: nudges.append(1)) if nudges is not None else ignore,
         now=clock,
     )
@@ -141,7 +143,7 @@ async def test_run_forever_sleeps_as_told(sessions: async_sessionmaker[AsyncSess
         clock.now += timedelta(seconds=seconds)
 
     cid = await wrote(sessions, "diogo", clock.now - timedelta(hours=2))
-    idle = IdleCloser(History(sessions), SIX_HOURS, nudge=ignore, now=clock, sleep=sleep)
+    idle = IdleCloser(History(sessions), SIX_HOURS, busy=busy, nudge=ignore, now=clock, sleep=sleep)
     with pytest.raises(Stop):
         await asyncio.wait_for(idle.run_forever(), 5)
     assert sleeps == [pytest.approx(4 * 3600), SIX_HOURS.total_seconds()]

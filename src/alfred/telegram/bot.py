@@ -47,7 +47,7 @@ from alfred.telegram import notices as telegram_notices
 from alfred.telegram.formatting import split_for_telegram, split_markdown
 from alfred.telegram.questions import ended_html, keyboard, question_html
 from alfred.turns.inputs.store import RequestRow
-from alfred.turns.queue import Queue
+from alfred.turns.intake import ChatIntake
 
 log = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class MemoryCommand:
 
 def make_dispatcher(
     users: Users,
-    queue: Queue,
+    chat: ChatIntake,
     *,
     intake: Intake | None,
     memory: _MemoryAnswer,
@@ -195,7 +195,7 @@ def make_dispatcher(
                 for text in await memory.answer(user, command.group(1)):
                     await message.answer(text, parse_mode=None)
                 return
-            item_id = await queue.enqueue_user(user.name, message.text, message.message_id)
+            item_id = await chat.enqueue_user(user.name, message.text, message.message_id)
             log.info("queued %s's message %s as item %s", user.name, message.message_id, item_id)
             return
         if intake is None:
