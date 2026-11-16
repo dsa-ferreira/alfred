@@ -63,6 +63,43 @@ Everything the model can call is a toolset. The contract lives in
 - Exceptions from `call` become error results for the model (`safe_call`).
 - Test the toolset alone, and a whole turn with `tests/agent/turn_helpers.py`.
 
+## Code layout
+
+Every module under `src/alfred/` and `migrations/` follows one order, so a
+reader can tell from a name and its position whether other modules use it:
+
+```
+module
+  imports (TYPE_CHECKING block included)
+  constants and variables      log, type aliases, TypeVars, public and _private constants
+  public supporting types      results, exceptions, protocols, small dataclasses
+  public main items            the module's main class(es) or function(s)
+  _internal items              classes and functions used only in this module
+
+class
+  class attributes (dataclass fields included)
+  __init__ and other dunders
+  public methods
+  _private methods
+```
+
+- **Public** means used by another module: anything under `src/alfred/`,
+  anything under `migrations/`, or an entry point in `pyproject.toml`
+  (`alfred.cli:run`). Tests don't count. A name is public exactly when it
+  has no leading `_`; a name only its own module uses starts with `_`.
+- Tests may import `_` names where they need to.
+- **Python's definition order wins.** A `_` item that a later item needs at
+  import time (a base class, a decorator, a default value, a
+  `default_factory`, something called at module level) goes directly above
+  its first such user, not in the internal section.
+- A method is public when something outside its class calls it, including
+  through a protocol (`Toolset.open`, `call`, `resume`). Method names follow
+  the same `_` rule.
+
+`scripts/check_layout.py` (run by `make lint`) checks the parts that can be
+checked mechanically. It can't tell whether a method is called outside its
+class, or which public item is the main one; review covers those.
+
 ## Commits
 
 Before every commit, follow the `commit-messages` skill.
