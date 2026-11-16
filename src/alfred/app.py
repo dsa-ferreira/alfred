@@ -19,11 +19,12 @@ import contextlib
 import logging
 import signal
 from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import uvicorn
-from aiogram import Bot
+from aiogram import Bot, Dispatcher
 
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent
@@ -90,20 +91,108 @@ def configure_logging(level: str) -> None:
 
 
 async def serve(config: Config) -> None:
+    async with contextlib.AsyncExitStack() as stack:
+        services = await _build_services(config, stack)
+        _log_startup(config, services.brains)
+        failed = await _run_tasks(config, services)
+    if failed is not None:
+        exc = failed.exception() if not failed.cancelled() else None
+        cause = f": {type(exc).__name__}: {exc}" if exc is not None else ""
+        # Belt and braces: error texts never carry the bot token, but make sure.
+        cause = cause.replace(config.telegram_bot_token.get_secret_value(), "<bot token>")
+        raise RuntimeError(f"{failed.get_name()} stopped unexpectedly{cause}") from exc
+    log.info("alfred stopped")
+
+
+class _Server(uvicorn.Server):
+    """uvicorn without its own signal handlers; ``serve`` owns shutdown."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Generator[None]:
+        yield
+
+
+def _build_toolsets(
+    config: Config,
+    connect: Connector,
+    *,
+    brains: Brains,
+    web: WebTools | None = None,
+    memory: Searcher | None = None,
+    facts: FactTools | None = None,
+    reminders: ReminderTools | None = None,
+    attachments: AttachmentTools | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> list[Toolset]:
+    """What the model may call, in the order it is offered; alfred's own tools first.
+
+    Each toolset decides on which turns it is offered; the turn user's
+    allow-list then gates every one of them (``alfred.agent.turn``). A name
+    offered by two toolsets goes to the first.
+    """
+    toolsets: list[Toolset] = []
+    if web is not None:
+        toolsets.append(web)
+    toolsets.append(ConversationTools())
+    if memory is not None:
+        toolsets.append(MemoryTools(memory))
+    if facts is not None:
+        toolsets.append(facts)
+    # Only with [attachments].
+    if attachments is not None:
+        toolsets.append(attachments)
+    if reminders is not None:
+        toolsets.append(reminders)
+    toolsets.append(BrainTools(brains))
+    # Arithmetic and dates, on every turn.
+    toolsets.append(CalculatorTools())
+    toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
+    toolsets.append(McpTools.from_config(config, connect))
+    return toolsets
+
+
+@dataclass(frozen=True)
+class _Services:
+    """What the tasks run, once built."""
+
+    server: _Server
+    bot: Bot
+    dispatcher: Dispatcher
+    worker: Worker
+    sweeper: Sweeper
+    queue: Queue
+    reminders: ReminderTools
+    inputs: InputRequests
+    outbox: TelegramOutbox
+    brains: Brains
+    orphans: OrphanSweeper | None
+    idle: IdleCloser | None
+
+
+async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _Services:
+    """Build everything ``serve`` runs; each resource's close goes on ``stack`` as it is made.
+
+    The stack closes them in reverse order, the database engine last.
+    """
     engine = make_engine(config.database_url.get_secret_value())
+    stack.push_async_callback(engine.dispose)
     sessions = make_session_factory(engine)
     # A misspelt ALFRED_MIGRATE_ADMIN or a renamed user shows up here.
     await warn_unknown_users(sessions, config.users.names)
     queue = Queue(sessions)
     bot = Bot(config.telegram_bot_token.get_secret_value())
+    stack.push_async_callback(bot.session.close)
     outbox = TelegramOutbox(bot)
     model = ModelClient(config.ai.base_url, config.ai.model, config.ai.request_timeout_s)
+    stack.push_async_callback(model.aclose)
     # A second client only when summaries use another model.
     summary_model = (
         model
         if config.summary_model == config.ai.model
         else ModelClient(config.ai.base_url, config.summary_model, config.ai.request_timeout_s)
     )
+    if summary_model is not model:
+        stack.push_async_callback(summary_model.aclose)
     embedder = EmbeddingClient(
         config.memory.embedding_base_url,
         config.memory.embedding_model,
@@ -111,6 +200,7 @@ async def serve(config: Config) -> None:
         document_prefix=config.memory.document_prefix,
         query_prefix=config.memory.query_prefix,
     )
+    stack.push_async_callback(embedder.aclose)
     summaries = Summaries(config, sessions, summary_model, embedder)
     # A conversation with no user message is archived when something new arrives
     # after the idle close time; the sweeper then summarises it.
@@ -145,6 +235,7 @@ async def serve(config: Config) -> None:
     brains = Brains.from_config(config.ai)
     # Web search and fetch share one HTTP client.
     web = WebTools.from_config(config)
+    stack.push_async_callback(web.aclose)
     reminders = ReminderTools.from_config(config, sessions)
     # Photos, image files and PDFs, only with [attachments].
     store: S3Store | None = None
@@ -155,6 +246,7 @@ async def serve(config: Config) -> None:
     if config.attachments is not None:
         assert config.s3_key is not None
         store = await S3Store.open(config.attachments, config.s3_key)
+        stack.push_async_callback(store.aclose)
         intake = Intake(config.attachments, store, queue, TelegramDownloader(bot))
         attachment_tools = AttachmentTools(store, sessions, brains, config.attachments)
         inline = InlineAttachments(store, config.attachments)
@@ -215,42 +307,86 @@ async def serve(config: Config) -> None:
         )
     )
 
+    # Only with [history] idle_close_after_h.
+    idle: IdleCloser | None = None
+    if idle_after is not None:
+        idle = IdleCloser(history, idle_after, nudge=summaries.changed.set)
+    return _Services(
+        server=server,
+        bot=bot,
+        dispatcher=dispatcher,
+        worker=worker,
+        sweeper=sweeper,
+        queue=queue,
+        reminders=reminders,
+        inputs=inputs,
+        outbox=outbox,
+        brains=brains,
+        orphans=orphans,
+        idle=idle,
+    )
+
+
+async def _run_tasks(config: Config, services: _Services) -> asyncio.Task[object] | None:
+    """Run every task until SIGTERM or SIGINT, or until one stops on its own (returned)."""
+    s = services
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-
     tasks = {
-        asyncio.create_task(server.serve(), name="api"),
+        asyncio.create_task(s.server.serve(), name="api"),
         asyncio.create_task(
-            dispatcher.start_polling(
-                bot,
+            s.dispatcher.start_polling(
+                s.bot,
                 handle_signals=False,
                 close_bot_session=False,
                 allowed_updates=ALLOWED_UPDATES,
             ),
             name="telegram",
         ),
-        asyncio.create_task(worker.run_forever(), name="worker"),
-        asyncio.create_task(sweeper.run_forever(), name="memory"),
+        asyncio.create_task(s.worker.run_forever(), name="worker"),
+        asyncio.create_task(s.sweeper.run_forever(), name="memory"),
         asyncio.create_task(
-            run_due_loop(reminders.store, queue.activity.notify, config.reminders.check_interval_s),
+            run_due_loop(
+                s.reminders.store, s.queue.activity.notify, config.reminders.check_interval_s
+            ),
             name="reminders",
         ),
         # On the reminders' clock; no setting of its own.
         asyncio.create_task(
-            run_expiry_loop(inputs, outbox, config.users, config.reminders.check_interval_s),
+            run_expiry_loop(s.inputs, s.outbox, config.users, config.reminders.check_interval_s),
             name="input-requests",
         ),
     }
-    if orphans is not None:
-        tasks.add(asyncio.create_task(orphans.run_forever(), name="attachments"))
-    # Only with [history] idle_close_after_h.
-    if config.history.idle_close_after_h is not None:
-        assert idle_after is not None
-        idle = IdleCloser(history, idle_after, nudge=summaries.changed.set)
-        tasks.add(asyncio.create_task(idle.run_forever(), name="idle"))
+    if s.orphans is not None:
+        tasks.add(asyncio.create_task(s.orphans.run_forever(), name="attachments"))
+    if s.idle is not None:
+        tasks.add(asyncio.create_task(s.idle.run_forever(), name="idle"))
     stopper = asyncio.create_task(stop.wait(), name="stop")
+    failed: asyncio.Task[object] | None = None
+    try:
+        done, _ = await asyncio.wait(tasks | {stopper}, return_when=asyncio.FIRST_COMPLETED)
+        if stopper not in done:
+            failed = next(iter(done))
+            log.error("%s stopped unexpectedly; shutting down", failed.get_name())
+        else:
+            log.info("shutting down")
+    finally:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(sig)
+        stopper.cancel()
+        s.server.should_exit = True
+        with contextlib.suppress(RuntimeError):  # polling may already be stopped
+            await s.dispatcher.stop_polling()
+        for task in tasks:
+            if task.get_name() in _CANCELLED_ON_STOP:
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return failed
+
+
+def _log_startup(config: Config, brains: Brains) -> None:
     log.info(
         "alfred started: API on %s:%s, brain %s (of %s) at %s, summaries by %s, "
         "embeddings by %s at %s, web search at %s, reminders checked every %gs, "
@@ -280,85 +416,3 @@ async def serve(config: Config) -> None:
         ", ".join(config.users.names),
         config.users.admin.name,
     )
-    failed: asyncio.Task[object] | None = None
-    try:
-        done, _ = await asyncio.wait(tasks | {stopper}, return_when=asyncio.FIRST_COMPLETED)
-        if stopper not in done:
-            failed = next(iter(done))
-            log.error("%s stopped unexpectedly; shutting down", failed.get_name())
-        else:
-            log.info("shutting down")
-    finally:
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.remove_signal_handler(sig)
-        stopper.cancel()
-        server.should_exit = True
-        with contextlib.suppress(RuntimeError):  # polling may already be stopped
-            await dispatcher.stop_polling()
-        for task in tasks:
-            if task.get_name() in _CANCELLED_ON_STOP:
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await bot.session.close()
-        await model.aclose()
-        if summary_model is not model:
-            await summary_model.aclose()
-        await embedder.aclose()
-        await web.aclose()
-        if store is not None:
-            await store.aclose()
-        await engine.dispose()
-    if failed is not None:
-        exc = failed.exception() if not failed.cancelled() else None
-        cause = f": {type(exc).__name__}: {exc}" if exc is not None else ""
-        # Belt and braces: error texts never carry the bot token, but make sure.
-        cause = cause.replace(config.telegram_bot_token.get_secret_value(), "<bot token>")
-        raise RuntimeError(f"{failed.get_name()} stopped unexpectedly{cause}") from exc
-    log.info("alfred stopped")
-
-
-class _Server(uvicorn.Server):
-    """uvicorn without its own signal handlers; ``serve`` owns shutdown."""
-
-    @contextlib.contextmanager
-    def capture_signals(self) -> Generator[None]:
-        yield
-
-
-def _build_toolsets(
-    config: Config,
-    connect: Connector,
-    *,
-    brains: Brains,
-    web: WebTools | None = None,
-    memory: Searcher | None = None,
-    facts: FactTools | None = None,
-    reminders: ReminderTools | None = None,
-    attachments: AttachmentTools | None = None,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
-) -> list[Toolset]:
-    """What the model may call, in the order it is offered; alfred's own tools first.
-
-    Each toolset decides on which turns it is offered; the turn user's
-    allow-list then gates every one of them (``alfred.agent.turn``). A name
-    offered by two toolsets goes to the first.
-    """
-    toolsets: list[Toolset] = []
-    if web is not None:
-        toolsets.append(web)
-    toolsets.append(ConversationTools())
-    if memory is not None:
-        toolsets.append(MemoryTools(memory))
-    if facts is not None:
-        toolsets.append(facts)
-    # Only with [attachments].
-    if attachments is not None:
-        toolsets.append(attachments)
-    if reminders is not None:
-        toolsets.append(reminders)
-    toolsets.append(BrainTools(brains))
-    # Arithmetic and dates, on every turn.
-    toolsets.append(CalculatorTools())
-    toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
-    toolsets.append(McpTools.from_config(config, connect))
-    return toolsets
