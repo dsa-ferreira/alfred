@@ -57,12 +57,12 @@ commit(s). No task changes what a test asserts.
 
 ## 8. Startup
 
-- [ ] 8.1 Split `app.serve()` into `build_services`, `run_tasks` and the startup log line, closing resources through an `AsyncExitStack` (design D10); verify the app tests pass, and that `make run` starts and stops cleanly on Ctrl-C
+- [x] 8.1 Split `app.serve()` into `build_services`, `run_tasks` and the startup log line, closing resources through an `AsyncExitStack` (design D10); verify the app tests pass, and that `make run` starts and stops cleanly on Ctrl-C
 
 ## 9. Final checks
 
 - [x] 9.1 Re-run the package import graph and the layout check over the whole tree; verify no package pair imports each other and `make lint` and `make test` pass
-- [ ] 9.2 Build the image (`make image`, after bumping the version as usual) and run it against a parked turn created by the previous image; verify the turn resumes
+- [x] 9.2 Build the image (`make image`, after bumping the version as usual) and run it against a parked turn created by the previous image; verify the turn resumes
 
 ## Workflow follow-up
 
