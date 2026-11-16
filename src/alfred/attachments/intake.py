@@ -28,7 +28,6 @@ from alfred.attachments.pdf import MIME as PDF_MIME
 from alfred.attachments.pdf import read_pdf_async
 from alfred.attachments.store import PREFIX, ObjectStore, StoreError
 from alfred.config import AttachmentsConfig, User
-from alfred.queue import Queue
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +51,7 @@ class Intake:
         self,
         config: AttachmentsConfig,
         store: ObjectStore,
-        queue: Queue,
+        queue: _Enqueue,
         downloader: _Downloader,
     ) -> None:
         self._config = config
@@ -139,6 +138,18 @@ class Intake:
             log.info("refused a %s: %s", file.kind, exc)
             return notices.unreadable(address, "image" if file.kind == "image" else "PDF")
         return _Ready(new, data)
+
+
+class _Enqueue(Protocol):
+    async def enqueue_user(
+        self,
+        user: str,
+        text: str,
+        telegram_message_id: int | None = None,
+        attachments: Sequence[NewAttachment] = (),
+    ) -> int:
+        """Queue ``user``'s message with its files, in one transaction; the item's id."""
+        ...
 
 
 class _Downloader(Protocol):

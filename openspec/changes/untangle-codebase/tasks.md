@@ -24,7 +24,7 @@ commit(s). No task changes what a test asserts.
 - [x] 3.1 Move `to_messages`, `user_text`, `stamped`, `strip_stamp`, `format_stamp` and `Inline` from `history.py` to `agent/messages.py`, along with their tests; verify `history.py` no longer imports `memory` or `reminders`
 - [x] 3.2 Move `InlineAttachments` and `ImageCache` from `attachments/inline.py` into `agent/`, keeping `load_image` in `attachments`; verify no module in `attachments/` imports `history`
 - [x] 3.3 Move `agent/brains.py` to `alfred/brains.py`; verify `attachments` no longer imports `agent`
-- [ ] 3.4 Give `attachments.intake` an `Enqueue` protocol in place of `Queue`; verify `attachments` no longer imports `queue`
+- [x] 3.4 Give `attachments.intake` an `Enqueue` protocol in place of `Queue`; verify `attachments` no longer imports `queue`
 - [ ] 3.5 Split `queue.py` into `queue.py` (`Queue`, `QueueActivity`) and `worker.py` (`Worker` and its protocols), moving tests to match; verify `api` and `telegram` don't import `worker` or `agent`
 - [ ] 3.6 Add check 5 of design D2 (no two packages import each other) to `scripts/check_layout.py`; verify it passes now and fails on a deliberate back-import, which is then removed
 - [ ] 3.7 Update `AGENTS.md` for the moved names (the "Adding a tool group" section mentions `turn.py`); verify every module path it names exists
