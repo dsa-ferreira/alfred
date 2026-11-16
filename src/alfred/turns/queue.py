@@ -1,7 +1,7 @@
 """The AI-bound queue: users' messages, ``/ask`` prompts and due reminders.
 
 Each is a row in ``queue_items``, for one user. The worker
-(``alfred.worker``) takes the oldest ``pending`` row and runs its turn;
+(``alfred.turns.worker``) takes the oldest ``pending`` row and runs its turn;
 nothing behind it starts until it is done or failed. Pending rows simply
 resume after a restart. A parked turn's item is ``waiting``, which ``head``
 skips; once answered it is ``pending`` again and, being older than anything

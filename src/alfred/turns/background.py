@@ -115,7 +115,7 @@ class Sweeper:
 
 
 class _QueueState(Protocol):
-    """What the sweeper needs to know about the queue (``alfred.queue.Queue``)."""
+    """What the sweeper needs to know about the queue (``alfred.turns.queue.Queue``)."""
 
     activity: QueueActivity
 

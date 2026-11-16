@@ -35,10 +35,11 @@ Everything the model can call is a toolset. The contract lives in
 confirm lists in `access.py`), which imports nothing else from alfred; the
 turn loop in `agent/turn.py` names no tool. To add one:
 
-- Subclass `LocalToolset` in the feature's own package, or in `alfred/tools/`
-  if it belongs to no feature (like `conversation.py` and `brains.py`). Set
-  `names` (every name it can ever offer) and `definitions`, implement `call(name, raw_arguments, attempt)`, and
-  override `offered` if it is not for every turn (`chat_only` for turns
+- Subclass `LocalToolset` in the feature's own `tools.py` (see "Packages
+  and ranks"), or in `alfred/toolbox/` if it belongs to no feature (like
+  `calculator.py` and `dates.py`). Set `names` (every name it can ever
+  offer) and `definitions`, implement `call(name, raw_arguments, attempt)`,
+  and override `offered` if it is not for every turn (`chat_only` for turns
   started by a user's chat message). A turn is a `ChatTurn`, `AskTurn` or
   `ReminderTurn` (`TurnInput` is their union); tell them apart with
   `isinstance`, never by a kind string. Override `open` / `new_attempt`
@@ -105,6 +106,63 @@ class
 `scripts/check_layout.py` (run by `make lint`) checks the parts that can be
 checked mechanically. It can't tell whether a method is called outside its
 class, or which public item is the main one; review covers those.
+
+### Packages and ranks
+
+Every package under `src/alfred/` has a rank, and a module imports only from
+its own package or from the rows below it. `a | b` on one row are siblings
+that must not import each other; `a : b` may. Imports under `TYPE_CHECKING`
+count. `lint-imports` (run by `make lint`) checks this against the contract
+in `pyproject.toml`, which copies this table; a new top-level package or
+module must be added there.
+
+```
+ rank  name       packages / modules
+ ----  ---------  ---------------------------------------------------------
+  6    entry      app : cli : config : startup
+  5    adapters   telegram | http
+  4    runtime    turns
+                  agent
+  3    features   archive | facts | reminders | web | mcp | toolbox
+                  conversations
+                  attachments
+                  brains
+  2    kernel     kernel
+  1    infra      db | llm | backoff | times
+                  settings
+```
+
+The feature rows are ordered by the dependencies that are real, not by
+taste: `archive` and `facts` read conversation transcripts, `conversations`
+renders attachment handles, and `attachments` asks whether the current
+brain has vision. A feature may use the features below it, never above.
+When a lower package needs something from a higher one, it declares a
+protocol and `app` wires in the implementation (the attachment tools'
+conversation scope, the input requests' question editor).
+
+A feature package holds everything about its feature, one job per module:
+
+- **domain** types and rules (`reminders/when.py`);
+- the **store**, its persistence (`facts/store.py`, `conversations/store.py`);
+- the **tools** the model calls (`tools.py`, a `LocalToolset`);
+- background **jobs** run by `turns/background.py` (`archive/summary_job.py`);
+- its **config** section (`config.py`, built on `settings.Section`). Only
+  `alfred/config.py` composes the sections into `Config`, and nothing below
+  the entry rank imports it: `app` hands each part the section or values it
+  needs. A TOML table that feeds several packages (`[ai]`, `[memory]`) is
+  read through one class that extends each package's section;
+- its fixed user-facing text (`notices.py`).
+
+Tests mirror the packages: the tests of `alfred/facts/store.py` are in
+`tests/facts/test_store.py`.
+
+## Notices
+
+A notice is fixed text alfred sends a user without the model. It lives in
+the `notices.py` of the package that sends it. Every notice speaks in the
+butler's register and ends its first clause with the user's form of address
+(`User.address`), used exactly as configured; notices are not configurable,
+even with a custom persona.
 
 ## Commits
 

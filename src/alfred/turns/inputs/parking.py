@@ -121,7 +121,7 @@ class Parking:
 
 
 class _Requests(Protocol):
-    """Parked turns' input requests (:class:`alfred.inputs.store.InputRequests`)."""
+    """Parked turns' input requests (:class:`alfred.turns.inputs.store.InputRequests`)."""
 
     async def parked_items(self, user: str) -> set[int]: ...
 

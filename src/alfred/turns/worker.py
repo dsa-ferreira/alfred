@@ -11,13 +11,13 @@ queue. Replies and fixed notices go to that user, in their form of address;
 a brain fallback is also told to the admin.
 
 **Kinds.** What differs between chat, ``/ask`` and reminder turns (what is
-recorded, what is sent, what a failure sends) is in :mod:`alfred.kinds`.
+recorded, what is sent, what a failure sends) is in :mod:`alfred.turns.kinds`.
 A turn that asks to reset the conversation archives it afterwards; the
 memory sweeper summarises it in the background, so the next item never
 waits.
 
 **Parked turns.** A turn may park, waiting for its user's answer; parking
-and picking it up again are :class:`alfred.inputs.parking.Parking`'s. An
+and picking it up again are :class:`alfred.turns.inputs.parking.Parking`'s. An
 item whose answered call was running when alfred stopped fails with the
 partial notice and never runs again.
 """
