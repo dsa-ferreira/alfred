@@ -17,6 +17,7 @@ from alfred.memory.facts import FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
 from alfred.model import ModelReply, ModelUnreachable, _Usage
+from tests.fakes import QuietQueue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
 
@@ -352,6 +353,7 @@ async def test_backfill_of_archived_conversations_oldest_first(
         cfg,
         sessions,
         Summaries(cfg, sessions, summary_model, embedder),
+        queue=QuietQueue(),
         jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)],
     )
     task = asyncio.create_task(sweeper.run_forever())

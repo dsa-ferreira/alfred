@@ -131,19 +131,17 @@ def make_dispatcher(
     users: Users,
     queue: Queue,
     *,
-    intake: Intake | None = None,
+    intake: Intake | None,
+    memory: _MemoryAnswer,
+    on_tap: Callable[[CallbackQuery], Awaitable[None]],
     album_wait_s: float = 2,
-    memory: MemoryCommand | None = None,
-    on_tap: Callable[[CallbackQuery], Awaitable[None]] | None = None,
 ) -> Dispatcher:
     dispatcher = Dispatcher()
-    if on_tap is not None:
-        tap = on_tap
 
-        # A plain coroutine function: aiogram runs other callables in a thread.
-        @dispatcher.callback_query()
-        async def on_callback(callback: CallbackQuery) -> None:
-            await tap(callback)
+    # A plain coroutine function: aiogram runs other callables in a thread.
+    @dispatcher.callback_query()
+    async def on_callback(callback: CallbackQuery) -> None:
+        await on_tap(callback)
 
     def sender(message: Message) -> User | None:
         """The configured user who sent ``message`` in their private chat, if any."""
@@ -188,7 +186,7 @@ def make_dispatcher(
             return
         if message.text is not None:
             command = _MEMORY_COMMAND.fullmatch(message.text.strip())
-            if memory is not None and command is not None:
+            if command is not None:
                 # Not queued and not recorded: it never reaches the conversation.
                 for text in await memory.answer(user, command.group(1)):
                     await message.answer(text, parse_mode=None)
@@ -299,6 +297,12 @@ def _incoming_file(message: Message) -> IncomingFile | None:
     return None
 
 
+class _MemoryAnswer(Protocol):
+    """Answers ``/memory`` (:class:`MemoryCommand`)."""
+
+    async def answer(self, user: User, arguments: str | None) -> list[str]: ...
+
+
 class _Fact(Protocol):
     id: int
     text: str
@@ -340,7 +344,7 @@ class _AlbumCollector:
         self._timers[group] = asyncio.create_task(self._later(group), name=f"album {group}")
 
     async def _drain(self) -> None:
-        """Wait for every album collected so far to be received (for tests)."""
+        """Wait for every album collected so far to be received."""
         while self._timers:
             await asyncio.gather(*self._timers.values(), return_exceptions=True)
 

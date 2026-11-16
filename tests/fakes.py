@@ -7,11 +7,15 @@ reached raise, so a test that unexpectedly needs the real thing fails loudly.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import math
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 from typing import Any
+
+from aiogram.types import CallbackQuery
 
 from alfred.agent.prompts import KnownFact
 from alfred.config import User
@@ -53,6 +57,16 @@ class NoInputRequests:
         raise AssertionError("no request to cancel")
 
 
+class QuietQueue:
+    """A queue with nothing in it that has been quiet forever: the sweeper never waits."""
+
+    def __init__(self) -> None:
+        self.activity = _QuietActivity()
+
+    async def has_pending(self) -> bool:
+        return False
+
+
 class NoQuestions:
     """A question outbox that is never used."""
 
@@ -74,6 +88,18 @@ class NoFacts:
         return []
 
 
+class NoMemoryCommand:
+    """A ``/memory`` command nobody sends."""
+
+    async def answer(self, user: User, arguments: str | None) -> list[str]:
+        raise AssertionError("this test never sends /memory")
+
+
+async def no_taps(callback: CallbackQuery) -> None:
+    """Button taps nobody makes."""
+    raise AssertionError("this test never taps a button")
+
+
 def no_typing(user: User) -> AbstractAsyncContextManager[None]:
     """A typing indicator that shows nothing."""
     return contextlib.nullcontext()
@@ -81,3 +107,12 @@ def no_typing(user: User) -> AbstractAsyncContextManager[None]:
 
 def ignore() -> None:
     """A signal nobody listens to (the memory sweeper's nudge)."""
+
+
+class _QuietActivity:
+    def __init__(self) -> None:
+        self.arrived = asyncio.Event()
+        self.changed = asyncio.Event()
+
+    def quiet_for(self) -> float:
+        return math.inf

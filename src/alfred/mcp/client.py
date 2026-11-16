@@ -30,7 +30,7 @@ Connector = Callable[[McpServer, float], AbstractAsyncContextManager[Client]]
 
 
 def http_connector(transport: httpx2.AsyncBaseTransport | None = None) -> Connector:
-    """The production connector. ``transport`` is for tests (e.g. ASGI)."""
+    """Connects over Streamable HTTP; ``transport`` replaces the network (an ASGI app's)."""
 
     @asynccontextmanager
     async def connect(server: McpServer, http_timeout_s: float) -> AsyncIterator[Client]:
@@ -59,7 +59,7 @@ async def _refuse_elicitation(
 
 
 def _new_client(target: Any) -> Client:
-    """A client for ``target`` (a transport, or an in-process server in tests).
+    """A client for ``target``: a transport, or an ``MCPServer`` to connect to in process.
 
     ``cache=None``: tool lists are looked up fresh every turn.
     """

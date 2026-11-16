@@ -17,7 +17,7 @@ from alfred.memory.sweeper import Sweeper
 from alfred.model import ModelReply, ModelUnreachable
 from alfred.queue import Queue
 from alfred.worker import Worker
-from tests.fakes import NoInputRequests, NoQuestions, NoReminders, no_typing
+from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text
 from tests.memory.test_summarise import REPLY, archived, row
 
@@ -42,8 +42,14 @@ def memory(
 ) -> Sweeper:
     cfg = make_config(queue=queue or {"retry_initial_s": 30, "retry_max_s": 900})
     if clock is None:
-        return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder))
-    return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder, now=clock), now=clock)
+        return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder), queue=QuietQueue())
+    return Sweeper(
+        cfg,
+        sessions,
+        Summaries(cfg, sessions, model, embedder, now=clock),
+        queue=QuietQueue(),
+        now=clock,
+    )
 
 
 async def stop(*tasks: asyncio.Task[None]) -> None:
@@ -521,7 +527,7 @@ def fact_sweeper(
     facts = FactStore(cfg, sessions, embedder)
     summaries = Summaries(cfg, sessions, FakeModel(), embedder)
     jobs = [FactEmbeddingJob(facts), FactDuplicateJob(facts, model or FakeModel())]
-    return Sweeper(cfg, sessions, summaries, queue=queue, jobs=jobs), facts
+    return Sweeper(cfg, sessions, summaries, queue=queue or QuietQueue(), jobs=jobs), facts
 
 
 async def _fact_row(sessions: async_sessionmaker[AsyncSession], fact_id: int) -> Fact:

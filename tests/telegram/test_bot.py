@@ -31,7 +31,15 @@ from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatc
 from alfred.tools.base import Option, Question, _confirm_question
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
-from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
+from tests.fakes import (
+    NoInputRequests,
+    NoMemoryCommand,
+    NoQuestions,
+    NoReminders,
+    ignore,
+    no_taps,
+    no_typing,
+)
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore, add_queue_item
 from tests.telegram.fake_bot import OWNER, TOKEN, callback_update, make_bot, message_update
 
@@ -49,7 +57,9 @@ async def queued(sessions: async_sessionmaker[AsyncSession]) -> list[QueueItem]:
 
 async def test_owner_message_is_queued(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     update = message_update(text="what's downloading?")
     await dispatcher.feed_update(bot, update)
     (item,) = await queued(sessions)
@@ -66,7 +76,9 @@ async def test_stranger_ignored(
     sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     with caplog.at_level(logging.INFO):
         await dispatcher.feed_update(bot, message_update(user_id=999, text="secret plans"))
     assert await queued(sessions) == []
@@ -77,7 +89,9 @@ async def test_stranger_ignored(
 
 async def test_group_chat_ignored(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(bot, message_update(chat_type="group", text="hello bot"))
     assert await queued(sessions) == []
     assert session.requests == []
@@ -88,7 +102,9 @@ async def test_group_chat_ignored(sessions: async_sessionmaker[AsyncSession]) ->
 
 async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSession]) -> None:
     bot, _ = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(
         bot,
         message_update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}]),
@@ -111,7 +127,9 @@ async def test_slash_text_queued_as_written(sessions: async_sessionmaker[AsyncSe
 )  # fmt: skip
 async def test_text_only(sessions: async_sessionmaker[AsyncSession], content: dict) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(bot, message_update(**content))
     assert await queued(sessions) == []
     (sent,) = session.sent()
@@ -123,7 +141,11 @@ async def test_text_only_uses_configured_address(
 ) -> None:
     bot, session = make_bot()
     dispatcher = make_dispatcher(
-        Users((dataclasses.replace(DIOGO, address="Mr. Ferreira"),)), Queue(sessions)
+        Users((dataclasses.replace(DIOGO, address="Mr. Ferreira"),)),
+        Queue(sessions),
+        intake=None,
+        memory=NoMemoryCommand(),
+        on_tap=no_taps,
     )
     photo = [{"file_id": "p", "file_unique_id": "p", "width": 1, "height": 1}]
     await dispatcher.feed_update(bot, message_update(photo=photo))
@@ -143,7 +165,14 @@ def files_dispatcher(
         Queue(sessions),
         FakeDownloader(files),
     )
-    return make_dispatcher(USERS, Queue(sessions), intake=intake, album_wait_s=0.05)
+    return make_dispatcher(
+        USERS,
+        Queue(sessions),
+        intake=intake,
+        album_wait_s=0.05,
+        memory=NoMemoryCommand(),
+        on_tap=no_taps,
+    )
 
 
 async def attachments_of(sessions: async_sessionmaker[AsyncSession]) -> list[Attachment]:
@@ -373,7 +402,9 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
 
     bot, session = make_bot()
     queue = Queue(sessions)
-    dispatcher = make_dispatcher(USERS, queue)
+    dispatcher = make_dispatcher(
+        USERS, queue, intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     model = FakeModel(
         [text("All good."), ModelFailed("model server answered HTTP 400: token=abc Traceback")]
     )
@@ -475,7 +506,9 @@ async def test_second_user_message_is_queued_as_hers(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, text="what's for dinner?"))
     (item,) = await queued(sessions)
     assert (item.kind, item.user_name, item.text) == ("user", "ana", "what's for dinner?")
@@ -486,7 +519,9 @@ async def test_second_user_in_a_group_is_ignored(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, chat_type="group", text="x"))
     assert await queued(sessions) == [] and session.requests == []
 
@@ -495,7 +530,9 @@ async def test_text_only_notice_in_her_chat_and_address(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     bot, session = make_bot()
-    dispatcher = make_dispatcher(USERS, Queue(sessions))
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     sticker = {"file_id": "s", "file_unique_id": "s", "type": "regular"}
     sticker |= {"width": 1, "height": 1, "is_animated": False, "is_video": False}
     await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, sticker=sticker))
@@ -559,7 +596,9 @@ def memory_dispatcher(
 
     store = FactStore(make_config(), sessions, FakeEmbedder(default=[1.0]))
     memory = MemoryCommand(store, ZoneInfo("Europe/Lisbon"))
-    return make_dispatcher(USERS, Queue(sessions), memory=memory), store
+    return make_dispatcher(
+        USERS, Queue(sessions), memory=memory, intake=None, on_tap=no_taps
+    ), store
 
 
 async def memory_texts(
@@ -824,7 +863,9 @@ async def tap_setup(
     requests = InputRequests(sessions, History(sessions), USERS)
     wakes = Wakes()
     taps = Taps(USERS, requests, TelegramOutbox(bot), wakes)
-    dispatcher = make_dispatcher(USERS, Queue(sessions), on_tap=taps)
+    dispatcher = make_dispatcher(
+        USERS, Queue(sessions), on_tap=taps, intake=None, memory=NoMemoryCommand()
+    )
     item = await add_queue_item(sessions, "user", "add Dune", user="ana")
     request = await requests.park(
         item, "ana", tool="mcparr_add_media", arguments={"title": "Dune"},
@@ -942,7 +983,9 @@ async def test_text_message_cancels_the_waiting_turn(
 ) -> None:
     bot, session = make_bot()
     queue, _, item = await waiting_for_diogo(sessions, bot)
-    dispatcher = make_dispatcher(USERS, queue)
+    dispatcher = make_dispatcher(
+        USERS, queue, intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(bot, message_update(text="never mind"))
     assert await item_status(sessions, item) == "cancelled"
     (edit,) = edits(session)
@@ -962,7 +1005,9 @@ async def test_attachment_message_cancels_the_waiting_turn(
         queue,
         FakeDownloader({"p1": image_bytes(800, 600)}),
     )
-    dispatcher = make_dispatcher(USERS, queue, intake=intake)
+    dispatcher = make_dispatcher(
+        USERS, queue, intake=intake, memory=NoMemoryCommand(), on_tap=no_taps
+    )
     await dispatcher.feed_update(bot, message_update(**photo("p1", caption="this instead")))
     assert await item_status(sessions, item) == "cancelled"
 
@@ -979,7 +1024,11 @@ async def test_memory_command_leaves_the_turn_waiting(
     queue, requests, item = await waiting_for_diogo(sessions, bot)
     store = FactStore(make_config(), sessions, FakeEmbedder(default=[1.0]))
     dispatcher = make_dispatcher(
-        USERS, queue, memory=MemoryCommand(store, ZoneInfo("Europe/Lisbon"))
+        USERS,
+        queue,
+        memory=MemoryCommand(store, ZoneInfo("Europe/Lisbon")),
+        intake=None,
+        on_tap=no_taps,
     )
     await dispatcher.feed_update(bot, message_update(text="/memory"))
     assert await item_status(sessions, item) == "waiting"
@@ -991,7 +1040,7 @@ async def test_another_users_message_leaves_the_turn_waiting(
 ) -> None:
     bot, _ = make_bot()
     queue, _, item = await waiting_for_diogo(sessions, bot)
-    await make_dispatcher(USERS, queue).feed_update(
-        bot, message_update(user_id=ANA_ID, text="hello")
-    )
+    await make_dispatcher(
+        USERS, queue, intake=None, memory=NoMemoryCommand(), on_tap=no_taps
+    ).feed_update(bot, message_update(user_id=ANA_ID, text="hello"))
     assert await item_status(sessions, item) == "waiting"

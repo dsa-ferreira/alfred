@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.db.models import Conversation, Entry, QueueItem
 from alfred.history import History
 from alfred.idle import IdleCloser
+from tests.fakes import QuietQueue, ignore
 from tests.helpers import add_queue_item
 
 SIX_HOURS = timedelta(hours=6)
@@ -45,7 +46,7 @@ def closer(
     return IdleCloser(
         History(sessions),
         SIX_HOURS,
-        nudge=(lambda: nudges.append(1)) if nudges is not None else None,
+        nudge=(lambda: nudges.append(1)) if nudges is not None else ignore,
         now=clock,
     )
 
@@ -139,7 +140,7 @@ async def test_run_forever_sleeps_as_told(sessions: async_sessionmaker[AsyncSess
         clock.now += timedelta(seconds=seconds)
 
     cid = await wrote(sessions, "diogo", clock.now - timedelta(hours=2))
-    idle = IdleCloser(History(sessions), SIX_HOURS, now=clock, sleep=sleep)
+    idle = IdleCloser(History(sessions), SIX_HOURS, nudge=ignore, now=clock, sleep=sleep)
     with pytest.raises(Stop):
         await asyncio.wait_for(idle.run_forever(), 5)
     assert sleeps == [pytest.approx(4 * 3600), SIX_HOURS.total_seconds()]
@@ -186,7 +187,11 @@ async def test_unattended_conversation_is_summarised_without_fact_requests(
     summaries = Summaries(cfg, sessions, summary_model, embedder)
     facts = FactStore(cfg, sessions, embedder)
     sweeper = Sweeper(
-        cfg, sessions, summaries, jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)]
+        cfg,
+        sessions,
+        summaries,
+        queue=QuietQueue(),
+        jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)],
     )
     history = History(sessions, idle_after=SIX_HOURS, on_archive=summaries.changed.set)
     old = await wrote(sessions, "diogo", datetime.now(UTC) - timedelta(hours=25), kind="reminder")

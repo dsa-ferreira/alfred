@@ -41,7 +41,7 @@ class IdleCloser:
         history: History,
         after: timedelta,
         *,
-        nudge: Callable[[], None] | None = None,
+        nudge: Callable[[], None],
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
     ) -> None:
@@ -88,8 +88,7 @@ class IdleCloser:
                 last.at.isoformat(timespec="seconds"),
                 reset.new_id,
             )
-            if self._nudge is not None:
-                self._nudge()
+            self._nudge()
         wait = (
             (soonest - now).total_seconds() if soonest is not None else self._after.total_seconds()
         )

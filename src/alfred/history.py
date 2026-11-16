@@ -74,12 +74,13 @@ class History:
         sessions: async_sessionmaker[AsyncSession],
         *,
         idle_after: timedelta | None = None,
-        on_archive: Callable[[], None] | None = None,
+        on_archive: Callable[[], None] = lambda: None,
     ) -> None:
         self._sessions = sessions
         # ``[history] idle_close_after_h``; None: unattended conversations stay.
         self._idle_after = idle_after
-        # Called after a conversation is archived as unattended (the sweeper nudge).
+        # Called after a conversation is archived as unattended (the sweeper nudge);
+        # by default nobody is told.
         self._on_archive = on_archive
 
     async def current_conversation_id(self, user: str) -> int:
@@ -157,7 +158,7 @@ class History:
                     .where(Attachment.queue_item_id == queue_item_id, Attachment.entry_id.is_(None))
                     .values(entry_id=entry_id)
                 )
-        if archived and self._on_archive is not None:
+        if archived:
             self._on_archive()
         return entry_id
 

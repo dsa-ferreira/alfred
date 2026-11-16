@@ -49,13 +49,12 @@ class Sweeper:
         sessions: async_sessionmaker[AsyncSession],
         summaries: Summaries,
         *,
-        queue: _QueueState | None = None,
+        queue: _QueueState,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         jobs: Sequence[_Job] = (),
     ) -> None:
         self._config = config
         self.summaries = summaries
-        # None: no queue to give way to (tests), so always quiet.
         self._queue = queue
         # In priority order: summaries feed search, which users see.
         self.jobs: list[_Job] = [_ConversationSummaryJob(config, sessions, summaries, now), *jobs]
@@ -68,13 +67,11 @@ class Sweeper:
             # Cleared before reading, so a nudge or an arrival is never missed.
             for job in self.jobs:
                 job.changed.clear()
-            arrived = None
-            if self._queue is not None:
-                self._queue.activity.changed.clear()
-                # Before the quiet check: an item that arrives after this sets
-                # it again, and one queued before is seen as pending.
-                self._queue.activity.arrived.clear()
-                arrived = self._queue.activity.arrived
+            self._queue.activity.changed.clear()
+            # Before the quiet check: an item that arrives after this sets it
+            # again, and one queued before is seen as pending.
+            self._queue.activity.arrived.clear()
+            arrived = self._queue.activity.arrived
             quiet_in = await self._quiet_in()
             model_allowed = quiet_in == 0
 
@@ -113,9 +110,7 @@ class Sweeper:
             if not stuck and quiet_in is not None and quiet_in > 0:
                 wait = min(wait, quiet_in)
             last = {}
-            events = [job.changed for job in self.jobs]
-            if self._queue is not None:
-                events.append(self._queue.activity.changed)
+            events = [*(job.changed for job in self.jobs), self._queue.activity.changed]
             await _wait_any(events, wait)
 
     async def _sweep_once(self) -> float | None:
@@ -133,8 +128,6 @@ class Sweeper:
 
     async def _quiet_in(self) -> float | None:
         """Seconds until a model request may start: 0 now, ``None`` while an item is pending."""
-        if self._queue is None:
-            return 0.0
         if await self._queue.has_pending():
             return None
         left = self._config.memory.summary_quiet_s - self._queue.activity.quiet_for()

@@ -16,6 +16,7 @@ from alfred.db.models import Conversation, Entry, QueueItem, Reminder
 from alfred.history import History, HistoryEntry
 from alfred.reminders.store import Reminders
 from alfred.tools.base import ModelImage
+from tests.fakes import ignore
 from tests.helpers import add_queue_item, image_file, owner_with_files, pdf_file
 
 
@@ -674,7 +675,7 @@ def unattended_history(
     return History(
         sessions,
         idle_after=SIX,
-        on_archive=(lambda: archives.append(1)) if archives is not None else None,
+        on_archive=(lambda: archives.append(1)) if archives is not None else ignore,
     )
 
 

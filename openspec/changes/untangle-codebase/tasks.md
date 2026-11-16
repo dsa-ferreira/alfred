@@ -34,7 +34,7 @@ commit(s). No task changes what a test asserts.
 - [x] 4.1 Add the fakes the worker and agent tests need to `tests/fakes.py` (input requests, question outbox, reminder lookup, typing, facts, inline attachments); verify existing tests still pass unchanged
 - [x] 4.2 Make `Worker`'s collaborators required (design D6) and delete the branches for missing ones (like "not wired (only in tests)"); verify `make test` is green and `grep -n "is None\|is not None" src/alfred/worker.py` shows no collaborator checks
 - [x] 4.3 Make `Agent`'s collaborators required (`brains`, `attachments`, `facts`) the same way; verify `make test` is green
-- [ ] 4.4 Look for other `| None = None` collaborators that exist only for tests (`grep -rn "in tests" src/alfred`) and make them required; verify the grep finds no such comments
+- [x] 4.4 Look for other `| None = None` collaborators that exist only for tests (`grep -rn "in tests" src/alfred`) and make them required; verify the grep finds no such comments
 
 ## 5. Parked turns
 

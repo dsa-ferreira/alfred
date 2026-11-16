@@ -163,7 +163,7 @@ def tool_result(model: FakeModel, request: int) -> str:
 def web_tools(http: httpx.AsyncClient, *, page_chars: int = 8000) -> WebTools:
     search = SearxngClient(http, SEARXNG, results=5, timeout_s=5, max_chars=4000)
     fetcher = Fetcher(http, timeout_s=5, max_bytes=5_000_000, resolver=Resolver())
-    return WebTools(search, fetcher, page_chars=page_chars)
+    return WebTools(search, fetcher, page_chars=page_chars, close=http.aclose)
 
 
 def fetch_call(url: str, **extra: object) -> ModelReply:

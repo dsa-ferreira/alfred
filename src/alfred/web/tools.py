@@ -113,7 +113,7 @@ class WebTools:
         fetcher: Fetcher,
         *,
         page_chars: int,
-        close: Callable[[], Awaitable[None]] | None = None,
+        close: Callable[[], Awaitable[None]],
     ) -> None:
         self._search = search
         self._fetcher = fetcher
@@ -137,8 +137,7 @@ class WebTools:
         return cls(search, fetcher, page_chars=web.fetch_page_chars, close=http.aclose)
 
     async def aclose(self) -> None:
-        if self._close is not None:
-            await self._close()
+        await self._close()
 
     async def open(self, turn: TurnInput) -> _OpenWebTools:
         return _OpenWebTools(self)

@@ -45,7 +45,7 @@ async def http() -> AsyncIterator[httpx.AsyncClient]:
 def tools(http: httpx.AsyncClient, *, page_chars: int = 8000, max_chars: int = 4000) -> WebTools:
     search = SearxngClient(http, SEARXNG, results=5, timeout_s=5, max_chars=max_chars)
     fetcher = Fetcher(http, timeout_s=5, max_bytes=5_000_000, resolver=Resolver())
-    return WebTools(search, fetcher, page_chars=page_chars)
+    return WebTools(search, fetcher, page_chars=page_chars, close=http.aclose)
 
 
 def args(**values: Any) -> str:

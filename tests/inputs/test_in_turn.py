@@ -28,7 +28,7 @@ from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from alfred.tools.base import AllowList
 from alfred.worker import Worker
 from tests.agent.turn_helpers import LISBON, tool_rows
-from tests.fakes import ignore, no_typing
+from tests.fakes import NoMemoryCommand, ignore, no_typing
 from tests.helpers import ANA, ANA_ID, DIOGO, OWNER, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_asking
@@ -97,6 +97,8 @@ class Alfred:
             users,
             self.queue,
             on_tap=Taps(users, self.requests, outbox, self.queue.activity.notify),
+            intake=None,
+            memory=NoMemoryCommand(),
         )
 
     async def drain(self) -> None:
