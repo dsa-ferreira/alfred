@@ -17,7 +17,8 @@ from pydantic import SecretStr
 
 import alfred.app
 from alfred.agent.inline import InlineAttachments
-from alfred.archive.search import ConversationSearch, MemoryTools
+from alfred.archive.search import ConversationSearch
+from alfred.archive.tools import MemoryTools
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper

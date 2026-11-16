@@ -33,6 +33,7 @@ from pydantic import (
     model_validator,
 )
 
+from alfred.archive.config import ArchiveConfig
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.brains.config import BrainsConfig
 from alfred.conversations.config import HistoryConfig
@@ -43,7 +44,6 @@ from alfred.settings import (
     ConfigError,
     HttpUrlStr,
     Name,
-    NonNegativeFloat,
     NonNegativeInt,
     PositiveFloat,
     PositiveInt,
@@ -77,22 +77,14 @@ class QueueConfig(Section):
         return self
 
 
-class MemoryConfig(Section):
-    """Summaries, search and recall of archived conversations."""
+class MemoryConfig(ArchiveConfig):
+    """``[memory]``: the archive's part comes from :class:`ArchiveConfig`."""
 
-    # None: the ``[ai]`` model (see :attr:`Config.summary_model`).
-    summary_model: Annotated[str, Field(min_length=1)] | None = None
     embedding_base_url: HttpUrlStr = "http://ragman.lan"
     embedding_model: Annotated[str, Field(min_length=1)] = "nomic-embed-text:v1.5"
     embedding_timeout_s: PositiveFloat = 30
     document_prefix: str = "search_document: "
     query_prefix: str = "search_query: "
-    recall_max_chars: PositiveInt = 32000
-    summary_input_max_chars: PositiveInt = 60000
-    search_results: PositiveInt = 5
-    # Seconds the queue must have been quiet before a summary request
-    # starts. 0: only an empty queue.
-    summary_quiet_s: NonNegativeFloat = 60
     # User facts. Off: facts are learned, remembered and listed by
     # /memory, but sent in no prompt.
     facts_in_context: bool = False

@@ -7,7 +7,7 @@ import json
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.archive.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
+from alfred.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.attachments.tools import _READ_DOCUMENT, _TEXT_ONLY_NOTE, _VIEW_ATTACHMENT, _VISION_NOTE
 from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains

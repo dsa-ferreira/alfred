@@ -16,8 +16,7 @@ from alfred.facts.duplicate_job import FactDuplicateJob
 from alfred.facts.store import FactEmbeddingJob, FactStore
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.queue import Queue
-from alfred.turns.background import Sweeper
-from tests.helpers import FakeEmbedder, FakeModel, make_config, text
+from tests.helpers import FakeEmbedder, FakeModel, make_config, make_sweeper, text
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
 CLOSE = [1.0, 0.0]  # every fact embedded the same: all are candidates
@@ -245,10 +244,10 @@ async def test_sweeper_checks_only_while_the_queue_is_quiet(
     embedder = FakeEmbedder(default=CLOSE)
     facts = FactStore(cfg, sessions, embedder)
     model = FakeModel([text("SAME 1")])
-    sweeper = Sweeper(
+    sweeper = make_sweeper(
         cfg,
         sessions,
-        Summaries(cfg, sessions, FakeModel(), embedder),
+        Summaries(cfg.memory, cfg.queue, sessions, FakeModel(), embedder),
         queue=queue,
         jobs=[FactEmbeddingJob(facts), FactDuplicateJob(facts, model)],
     )

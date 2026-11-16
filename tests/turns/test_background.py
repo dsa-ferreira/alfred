@@ -20,7 +20,7 @@ from alfred.turns.background import Sweeper
 from alfred.worker import Worker
 from tests.archive.test_summaries import REPLY, archived, row
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing
-from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text
+from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, make_sweeper, text
 
 FAST = {"retry_initial_s": 0.01, "retry_max_s": 0.04}
 
@@ -43,11 +43,16 @@ def memory(
 ) -> Sweeper:
     cfg = make_config(queue=queue or {"retry_initial_s": 30, "retry_max_s": 900})
     if clock is None:
-        return Sweeper(cfg, sessions, Summaries(cfg, sessions, model, embedder), queue=QuietQueue())
-    return Sweeper(
+        return make_sweeper(
+            cfg,
+            sessions,
+            Summaries(cfg.memory, cfg.queue, sessions, model, embedder),
+            queue=QuietQueue(),
+        )
+    return make_sweeper(
         cfg,
         sessions,
-        Summaries(cfg, sessions, model, embedder, now=clock),
+        Summaries(cfg.memory, cfg.queue, sessions, model, embedder, now=clock),
         queue=QuietQueue(),
         now=clock,
     )
@@ -171,9 +176,9 @@ async def test_reembeds_rows_from_another_model(
 async def test_nudged_after_reset(sessions: async_sessionmaker[AsyncSession]) -> None:
     mem = memory(sessions, FakeModel([text(REPLY)]), FakeEmbedder(default=[1.0]))
     cid = await archived(sessions, "chicken?", "Lemon.")
-    mem.summaries.changed.clear()
-    await mem.summaries.summarise(cid)
-    assert mem.summaries.changed.is_set()
+    mem.jobs[0].summaries.changed.clear()
+    await mem.jobs[0].summaries.summarise(cid)
+    assert mem.jobs[0].summaries.changed.is_set()
 
 
 async def test_owner_messages_answered_while_sweeper_fails(
@@ -200,7 +205,7 @@ async def test_owner_messages_answered_while_sweeper_fails(
         Outbox(),
         cfg.queue,
         users=cfg.users,
-        nudge=mem.summaries.changed.set,
+        nudge=mem.jobs[0].summaries.changed.set,
         parking=Parking(NoInputRequests(), NoQuestions()),
         reminders=NoReminders(),
         typing=no_typing,
@@ -280,8 +285,8 @@ def quiet_sweeper(
     cfg = make_config(memory={"summary_quiet_s": quiet_s})
     ticks = Ticks()
     queue = Queue(sessions, clock=ticks)
-    summaries = Summaries(cfg, sessions, model, embedder)  # type: ignore[arg-type]
-    return Sweeper(cfg, sessions, summaries, queue=queue), queue, ticks
+    summaries = Summaries(cfg.memory, cfg.queue, sessions, model, embedder)  # type: ignore[arg-type]
+    return make_sweeper(cfg, sessions, summaries, queue=queue), queue, ticks
 
 
 async def finish_all(sessions: async_sessionmaker[AsyncSession], queue: Queue) -> None:
@@ -324,11 +329,11 @@ async def test_no_summary_within_the_quiet_period(
     task = asyncio.create_task(mem.run_forever())
     try:
         ticks.now += 119
-        mem.summaries.changed.set()  # wake it: still within the period
+        mem.jobs[0].summaries.changed.set()  # wake it: still within the period
         await settle()
         assert model.requests == []
         ticks.now += 1
-        mem.summaries.changed.set()
+        mem.jobs[0].summaries.changed.set()
         await until(lambda: _summarised(sessions, cid))
     finally:
         await stop(task)
@@ -355,7 +360,7 @@ async def test_an_arriving_item_cancels_the_summary(
             await settle()
             assert model.started == cancelled
             ticks.now += 60
-            mem.summaries.changed.set()
+            mem.jobs[0].summaries.changed.set()
         await until(lambda: _summarised(sessions, cid))
         assert model.started == 3
         assert (await row(sessions, cid)).summary_attempts == 0
@@ -435,8 +440,8 @@ def job_sweeper(
     cfg = make_config(memory={"summary_quiet_s": quiet_s})
     ticks = Ticks()
     queue = Queue(sessions, clock=ticks)
-    summaries = Summaries(cfg, sessions, FakeModel(), FakeEmbedder())
-    return Sweeper(cfg, sessions, summaries, queue=queue, jobs=jobs), queue, ticks
+    summaries = Summaries(cfg.memory, cfg.queue, sessions, FakeModel(), FakeEmbedder())
+    return make_sweeper(cfg, sessions, summaries, queue=queue, jobs=jobs), queue, ticks
 
 
 async def test_first_due_job_runs_in_priority_order(
@@ -525,9 +530,9 @@ def fact_sweeper(
     """Fact embedding, then the duplicate check with ``model``, as ``serve`` runs them."""
     cfg = make_config(queue=FAST)
     facts = FactStore(cfg, sessions, embedder)
-    summaries = Summaries(cfg, sessions, FakeModel(), embedder)
+    summaries = Summaries(cfg.memory, cfg.queue, sessions, FakeModel(), embedder)
     jobs = [FactEmbeddingJob(facts), FactDuplicateJob(facts, model or FakeModel())]
-    return Sweeper(cfg, sessions, summaries, queue=queue or QuietQueue(), jobs=jobs), facts
+    return make_sweeper(cfg, sessions, summaries, queue=queue or QuietQueue(), jobs=jobs), facts
 
 
 async def _fact_row(sessions: async_sessionmaker[AsyncSession], fact_id: int) -> Fact:

@@ -1,6 +1,6 @@
 """Summaries of archived conversations: title, summary and embedding.
 
-``summarise`` runs in the background memory sweeper (``alfred.turns.background``)
+``summarise`` runs in the background job runner (``alfred.archive.summary_job``)
 only; ending a conversation just wakes it. It never raises: on any failure it
 schedules a retry on the conversation row and the sweeper picks it up later.
 
@@ -20,17 +20,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.backoff import backoff_s
-from alfred.config import Config
-from alfred.conversations.transcript import (
-    SummaryParseError,
-    TranscriptEntry,
-    cut_middle,
-    load_transcript,
-    parse_summary,
-    render,
-    summary_messages,
-)
+from alfred.archive.config import ArchiveConfig
+from alfred.archive.prompts import SummaryParseError, parse_summary, summary_messages
+from alfred.backoff import RetryDelays, backoff_s
+from alfred.conversations.transcript import TranscriptEntry, cut_middle, load_transcript, render
 from alfred.db.models import Conversation
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.embedding import EmbeddingError
@@ -53,15 +46,16 @@ _PREEMPTED = _Preempted()
 class Summaries:
     def __init__(
         self,
-        config: Config,
+        memory: ArchiveConfig,
+        retry: RetryDelays,
         sessions: async_sessionmaker[AsyncSession],
         model: ChatModel,
         embedder: Embedder,
         *,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        self._config = config
-        self._memory = config.memory
+        self._memory = memory
+        self._retry = retry
         self._sessions = sessions
         self._model = model
         self._embedder = embedder
@@ -178,9 +172,7 @@ class Summaries:
                 )
                 if attempts is None:
                     return
-                delay = backoff_s(
-                    attempts, self._config.queue.retry_initial_s, self._config.queue.retry_max_s
-                )
+                delay = backoff_s(attempts, self._retry.retry_initial_s, self._retry.retry_max_s)
                 await session.execute(
                     update(Conversation)
                     .where(Conversation.id == conversation_id)

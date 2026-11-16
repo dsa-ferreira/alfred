@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -65,7 +66,7 @@ def memory(
     **memory_config: object,
 ) -> ConversationSearch:
     cfg = make_config(memory=memory_config)  # type: ignore[arg-type]
-    return ConversationSearch(cfg, sessions, embedder)
+    return ConversationSearch(cfg.memory, ZoneInfo(cfg.ai.timezone), sessions, embedder)
 
 
 def ids(result_text: str) -> list[int]:
@@ -276,9 +277,9 @@ async def test_dates_shown_in_configured_timezone(
     await seed(sessions, 41, "Chat", "x", started=datetime(2026, 11, 2, 20, tzinfo=UTC))
     # 20:00 UTC on 2 Nov is 05:00 on 3 Nov in Tokyo.
     cfg = make_config(ai={"timezone": "Asia/Tokyo"})
-    result = await ConversationSearch(cfg, sessions, FakeEmbedder()).search(
-        "diogo", after="2026-11-03"
-    )
+    result = await ConversationSearch(
+        cfg.memory, ZoneInfo(cfg.ai.timezone), sessions, FakeEmbedder()
+    ).search("diogo", after="2026-11-03")
     assert "Tue 3 Nov 2026" in result.text
 
 

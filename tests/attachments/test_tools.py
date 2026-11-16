@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+from zoneinfo import ZoneInfo
 
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,6 +24,7 @@ from alfred.attachments.tools import (
 )
 from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
+from alfred.config import MemoryConfig
 from alfred.conversations.store import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
@@ -47,6 +49,9 @@ from tests.helpers import (
 
 SETTINGS = AttachmentsConfig(endpoint_url="http://garage.lan:3900", bucket="alfred")
 PAGES = [f"Invoice page {n}: lines and amounts for the plumbing work." for n in range(1, 13)]
+
+
+LISBON = ZoneInfo("Europe/Lisbon")
 
 
 def brains(vision: bool = True) -> Brains:
@@ -236,7 +241,7 @@ async def archived_with_invoice(
 async def test_from_a_recalled_conversation(sessions: async_sessionmaker[AsyncSession]) -> None:
     store = FakeStore()
     archived = await archived_with_invoice(sessions, store)
-    recall = await ConversationSearch(make_config(), sessions, FakeEmbedder()).recall(
+    recall = await ConversationSearch(MemoryConfig(), LISBON, sessions, FakeEmbedder()).recall(
         "diogo", archived
     )
     assert recall.ok and "[attachment #1: PDF" in recall.text
@@ -259,7 +264,7 @@ async def test_recalled_inside_a_recalled_conversation_is_not_reachable(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     store = FakeStore()
-    search = ConversationSearch(make_config(), sessions, FakeEmbedder())
+    search = ConversationSearch(MemoryConfig(), LISBON, sessions, FakeEmbedder())
     first = await archived_with_invoice(sessions, store)  # #1 has the invoice
     assert (await search.recall("diogo", first)).ok  # recalled into #2
     second = (await History(sessions).reset("diogo")).archived_id

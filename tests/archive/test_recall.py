@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -20,7 +22,7 @@ def memory(
     sessions: async_sessionmaker[AsyncSession], **memory_config: object
 ) -> ConversationSearch:
     cfg = make_config(memory=memory_config)  # type: ignore[arg-type]
-    return ConversationSearch(cfg, sessions, FakeEmbedder())
+    return ConversationSearch(cfg.memory, ZoneInfo(cfg.ai.timezone), sessions, FakeEmbedder())
 
 
 async def seed_41(sessions: async_sessionmaker[AsyncSession]) -> None:

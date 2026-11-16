@@ -14,7 +14,7 @@ from alfred import notices
 from alfred.agent.messages import _STAMP
 from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
-from alfred.archive.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
+from alfred.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
 from alfred.conversations.store import History

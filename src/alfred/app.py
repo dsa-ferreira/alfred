@@ -29,8 +29,10 @@ from aiogram import Bot, Dispatcher
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent
 from alfred.api import create_app
-from alfred.archive.search import ConversationSearch, MemoryTools, Searcher
+from alfred.archive.search import ConversationSearch
 from alfred.archive.summaries import Summaries
+from alfred.archive.summary_job import SummaryJob
+from alfred.archive.tools import MemoryTools, Searcher
 from alfred.attachments.intake import Intake
 from alfred.attachments.store import S3Store
 from alfred.attachments.sweeper import OrphanSweeper
@@ -220,7 +222,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         query_prefix=config.memory.query_prefix,
     )
     stack.push_async_callback(embedder.aclose)
-    summaries = Summaries(config, sessions, summary_model, embedder)
+    summaries = Summaries(config.memory, config.queue, sessions, summary_model, embedder)
     # A conversation with no user message is archived when something new arrives
     # after the idle close time; the sweeper then summarises it.
     idle_after = (
@@ -237,18 +239,19 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     # needs no quiet queue, then the duplicate check.
     facts = FactStore(config, sessions, embedder)
     sweeper = Sweeper(
-        config,
-        sessions,
-        summaries,
-        queue=queue,
-        jobs=[
+        [
+            # Summaries feed search, which users see: first.
+            SummaryJob(sessions, summaries),
             FactExtractionJob(config, sessions, summary_model, facts),
             FactEmbeddingJob(facts),
             # Needs the model, so only while the queue is quiet.
             FactDuplicateJob(facts, summary_model),
         ],
+        queue=queue,
+        quiet_s=config.memory.summary_quiet_s,
+        retry=config.queue,
     )
-    search = ConversationSearch(config, sessions, embedder)
+    search = ConversationSearch(config.memory, ZoneInfo(config.ai.timezone), sessions, embedder)
     # Turns pass the current brain's tag per request; summaries never do, so
     # they stay on the summary model.
     brains = Brains.from_config(config.ai)

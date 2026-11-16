@@ -16,9 +16,8 @@ from alfred.db.models import Conversation, Fact
 from alfred.facts.extraction_job import FactExtractionJob
 from alfred.facts.store import FactStore
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
-from alfred.turns.background import Sweeper
 from tests.fakes import QuietQueue
-from tests.helpers import FakeEmbedder, FakeModel, make_config, text
+from tests.helpers import FakeEmbedder, FakeModel, make_config, make_sweeper, text
 
 
 class Clock:
@@ -349,10 +348,10 @@ async def test_backfill_of_archived_conversations_oldest_first(
     fact_model = FakeModel([text("NONE")] * 5)
     embedder = FakeEmbedder(default=[1.0])
     facts = FactStore(cfg, sessions, embedder)
-    sweeper = Sweeper(
+    sweeper = make_sweeper(
         cfg,
         sessions,
-        Summaries(cfg, sessions, summary_model, embedder),
+        Summaries(cfg.memory, cfg.queue, sessions, summary_model, embedder),
         queue=QuietQueue(),
         jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)],
     )

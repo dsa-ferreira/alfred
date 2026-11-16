@@ -9,9 +9,9 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.prompts import _SUMMARY_PROMPT
 from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
-from alfred.conversations.transcript import _SUMMARY_PROMPT
 from alfred.db.models import Conversation
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.llm.embedding import _EmbeddingUnreachable
@@ -31,7 +31,7 @@ def memory(
         queue={"retry_initial_s": 30, "retry_max_s": 900},
         memory=memory_config,  # type: ignore[arg-type]
     )
-    return Summaries(cfg, sessions, model, embedder, now=lambda: NOW)
+    return Summaries(cfg.memory, cfg.queue, sessions, model, embedder, now=lambda: NOW)
 
 
 async def archived(sessions: async_sessionmaker[AsyncSession], *lines: str) -> int:

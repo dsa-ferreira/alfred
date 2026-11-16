@@ -5,10 +5,11 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
+from alfred.config import MemoryConfig, QueueConfig
 from alfred.conversations.store import History
 from alfred.conversations.transcript import TranscriptEntry, render
 from tests.archive.test_recall import memory
-from tests.helpers import FakeEmbedder, FakeModel, make_config, owner_with_files, pdf_file, text
+from tests.helpers import FakeEmbedder, FakeModel, owner_with_files, pdf_file, text
 
 SECRET_PAGE = "Account IBAN PT50 0002 0123 1234 5678 9015 4"
 
@@ -39,7 +40,9 @@ async def test_summary_transcript_has_no_pdf_text(
 ) -> None:
     cid = await archive_with_invoice(sessions)
     model = FakeModel([text("Title: Invoice filed\nSummary: An invoice was filed.")])
-    summaries = Summaries(make_config(), sessions, model, FakeEmbedder(default=[1.0]))
+    summaries = Summaries(
+        MemoryConfig(), QueueConfig(), sessions, model, FakeEmbedder(default=[1.0])
+    )
     assert await summaries.summarise(cid) == "Invoice filed"
     transcript = model.requests[0][0][1]["content"]
     assert 'User: file this [attachment #1: PDF "invoice.pdf", 2 pages, text]' in transcript

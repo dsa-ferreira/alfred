@@ -88,7 +88,8 @@ class Setup:
         self.memory = None
         if summary_model is not None:
             self.memory = Summaries(
-                cfg,
+                cfg.memory,
+                cfg.queue,
                 sessions,
                 summary_model,
                 FakeEmbedder(default=[1.0]),  # type: ignore[arg-type]

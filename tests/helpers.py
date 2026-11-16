@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent, _Model
 from alfred.app import _build_toolsets
-from alfred.archive.search import Searcher
+from alfred.archive.summaries import Summaries
+from alfred.archive.summary_job import SummaryJob
+from alfred.archive.tools import Searcher
 from alfred.attachments import NewAttachment
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.store import StoreError, _StoredObject
@@ -41,6 +43,7 @@ from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
 from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
+from alfred.turns.background import Sweeper
 from alfred.web.tools import WebTools
 from tests.fakes import NoFacts
 
@@ -299,3 +302,21 @@ async def owner_with_files(
     item = await Queue(sessions).enqueue_user(user, text_, None, files)
     entry = await History(sessions).append(user, "user", text_, queue_item_id=item)
     return item, entry
+
+
+def make_sweeper(
+    cfg: Config,
+    sessions: async_sessionmaker[AsyncSession],
+    summaries: Summaries,
+    *,
+    queue: Any,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    jobs: Sequence[Any] = (),
+) -> Sweeper:
+    """The background job runner as ``serve`` builds it: the summary job, then ``jobs``."""
+    return Sweeper(
+        [SummaryJob(sessions, summaries, now), *jobs],
+        queue=queue,
+        quiet_s=cfg.memory.summary_quiet_s,
+        retry=cfg.queue,
+    )

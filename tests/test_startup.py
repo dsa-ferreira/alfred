@@ -4,6 +4,7 @@ import dataclasses
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import SecretStr
@@ -83,7 +84,9 @@ async def test_every_offered_name_is_declared() -> None:
         lambda server: None,  # type: ignore[arg-type,return-value]
         brains=brains,
         web=WebTools.from_config(config),
-        memory=ConversationSearch(config, sessions, FakeEmbedder()),
+        memory=ConversationSearch(
+            config.memory, ZoneInfo(config.ai.timezone), sessions, FakeEmbedder()
+        ),
         facts=FactTools(FactStore(config, sessions, FakeEmbedder()), config.memory),
         reminders=ReminderTools.from_config(config, sessions),
         attachments=AttachmentTools(

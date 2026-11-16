@@ -14,7 +14,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.messages import strip_stamp
-from alfred.archive.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS, ConversationSearch
+from alfred.archive.search import ConversationSearch
+from alfred.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.inputs.parking import Parking
@@ -51,7 +52,9 @@ class House:
         self.queue = Queue(sessions)
         self.outbox = Outbox()
         self.reminders = Reminders(sessions)
-        self.search = ConversationSearch(cfg, sessions, FakeEmbedder(default=[1.0]))
+        self.search = ConversationSearch(
+            cfg.memory, ZoneInfo(cfg.ai.timezone), sessions, FakeEmbedder(default=[1.0])
+        )
         tools = ReminderTools(self.reminders, LISBON, "09:00", cfg.users, now=self.clock)
         connect = in_process({"mcparr": make_mcparr(), "cookbook": make_cookbook()})
         agent = make_agent(

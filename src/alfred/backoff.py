@@ -1,6 +1,18 @@
-"""Retry delays shared by the queue and the memory sweeper."""
+"""Retry delays shared by the queue and the background jobs."""
 
 from __future__ import annotations
+
+from typing import Protocol
+
+
+class RetryDelays(Protocol):
+    """The first retry delay and the most it doubles to (``[queue]``)."""
+
+    @property
+    def retry_initial_s(self) -> float: ...
+
+    @property
+    def retry_max_s(self) -> float: ...
 
 
 def backoff_s(attempts: int, initial_s: float, max_s: float) -> float:

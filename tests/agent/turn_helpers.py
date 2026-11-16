@@ -19,6 +19,7 @@ from alfred.agent.turn import Agent, TurnResult
 from alfred.archive.search import ConversationSearch
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
+from alfred.config import MemoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import TurnToolCall
 from alfred.facts.store import FactTools
@@ -115,7 +116,7 @@ def agent(
 def memory(
     sessions: async_sessionmaker[AsyncSession], embedder: FakeEmbedder
 ) -> ConversationSearch:
-    return ConversationSearch(make_config(), sessions, embedder)
+    return ConversationSearch(MemoryConfig(), LISBON, sessions, embedder)
 
 
 async def owner_turn(

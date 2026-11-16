@@ -13,7 +13,7 @@ from alfred.conversations.idle import IdleCloser
 from alfred.conversations.store import History
 from alfred.db.models import Conversation, Entry, QueueItem
 from tests.fakes import QuietQueue, ignore
-from tests.helpers import add_queue_item
+from tests.helpers import add_queue_item, make_sweeper
 
 SIX_HOURS = timedelta(hours=6)
 
@@ -176,7 +176,6 @@ async def test_unattended_conversation_is_summarised_without_fact_requests(
     from alfred.archive.summaries import Summaries
     from alfred.facts.extraction_job import FactExtractionJob
     from alfred.facts.store import FactStore
-    from alfred.turns.background import Sweeper
     from tests.helpers import FakeEmbedder, FakeModel, make_config, text
     from tests.turns.test_background import until
 
@@ -184,9 +183,9 @@ async def test_unattended_conversation_is_summarised_without_fact_requests(
     summary_model = FakeModel([text("Title: Morning briefing\nSummary: Sunny, Dune at 50%.")])
     fact_model = FakeModel()
     embedder = FakeEmbedder(default=[1.0])
-    summaries = Summaries(cfg, sessions, summary_model, embedder)
+    summaries = Summaries(cfg.memory, cfg.queue, sessions, summary_model, embedder)
     facts = FactStore(cfg, sessions, embedder)
-    sweeper = Sweeper(
+    sweeper = make_sweeper(
         cfg,
         sessions,
         summaries,
