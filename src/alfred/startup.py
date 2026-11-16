@@ -43,7 +43,7 @@ async def warn_unknown_users(
     """Log a warning for each stored user name that isn't configured; returns them.
 
     Rows name their user by its ``[[users]]`` name. A name the config doesn't
-    have (a typo in ``ALFRED_MIGRATE_ADMIN``, or a renamed user) leaves those
+    have (a renamed user, or a typo in a name) leaves those
     rows invisible to every user. The fix is a manual ``UPDATE`` of the name.
     """
     unknown = sorted((await _stored_user_names(sessions)) - set(configured))

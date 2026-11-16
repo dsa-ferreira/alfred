@@ -608,16 +608,12 @@ async def test_take_idle_marker_claims_older_ones_too(
     assert await history.take_idle_marker("diogo") is None
 
 
-async def test_no_idle_marker_after_a_user_reset_or_before_the_upgrade(
+async def test_no_idle_marker_after_a_user_reset(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     history = History(sessions)
     await history.append("diogo", "user", "we're done")
     await history.reset("diogo")
-    async with sessions.begin() as session:  # archived before 0006: no end reason
-        await session.execute(
-            insert(Conversation).values(user_name="diogo", ended_at=func.now(), end_reason=None)
-        )
     assert await history.take_idle_marker("diogo") is None
 
 
@@ -786,7 +782,7 @@ async def test_retried_reminder_stays_where_it_was_recorded(
 
 async def test_recent_up_to_an_entry(sessions: async_sessionmaker[AsyncSession]) -> None:
     history = History(sessions)
-    await history.append("ana", "user", "add Dune")
+    first = await history.append("ana", "user", "add Dune")
     upto = await history.append("ana", "assistant", "Shall I?")
     await history.append("ana", "notice", "backup done", source="backup")
     conversation_id = await history.current_conversation_id("ana")
@@ -795,7 +791,7 @@ async def test_recent_up_to_an_entry(sessions: async_sessionmaker[AsyncSession])
         30,
         conversation_id=conversation_id,
         upto_entry_id=upto,
-        entry_ids=None,
+        entry_ids=(first, upto),
     )
     assert [e.text for e in entries] == ["add Dune", "Shall I?"]
     assert {e.conversation_id for e in entries} == {conversation_id}
@@ -817,7 +813,7 @@ async def test_recent_reads_an_archived_conversation_by_id(
     window = {
         "conversation_id": conversation_id,
         "upto_entry_id": upto,
-        "entry_ids": None,
+        "entry_ids": (upto,),
     }
     entries = await history.parked_window("ana", 30, **window)
     assert [e.text for e in entries] == ["anything to add?"]

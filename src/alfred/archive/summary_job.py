@@ -1,10 +1,10 @@
 """The background job that summarises and embeds archived conversations.
 
 It finds archived conversations that lack a summary, or an embedding from
-the configured model, oldest first, and waits for each one's
-``summary_next_at``. This also backfills conversations from before the
-upgrade, re-embeds them after a model change, and makes the summary of
-every conversation that ends. A conversation that only needs its embedding
+the configured model, oldest first: those with no ``conversation_summaries``
+row, or one missing either. It waits for each one's ``next_at``. This
+re-embeds them after a model change and makes the summary of every
+conversation that ends. A conversation that only needs its embedding
 (another server) doesn't wait for a quiet queue.
 """
 

@@ -201,7 +201,7 @@ class History:
         *,
         conversation_id: int | None,
         upto_entry_id: int | None,
-        entry_ids: Sequence[int] | None,
+        entry_ids: Sequence[int],
         hidden_items: Collection[int] = (),
     ) -> list[HistoryEntry]:
         """The context a turn parked with, read again to resume it.
@@ -209,20 +209,18 @@ class History:
         ``conversation_id`` is read even if it has been archived since, and
         entries added after ``upto_entry_id`` are left out (``None``: the turn
         had no entries). ``entry_ids`` are exactly the entries it had, whatever
-        other parked turns did meanwhile; turns parked by 0.16.0 saved none
-        (``None``), and read their window up to ``upto_entry_id``.
-        ``hidden_items`` are left out, as in :meth:`recent`.
+        other parked turns did meanwhile. ``hidden_items`` are left out, as in
+        :meth:`recent`.
         """
         where = [
             Conversation.ended_at.is_(None)
             if conversation_id is None
             else Conversation.id == conversation_id,
             Entry.id <= (upto_entry_id or 0),
+            Entry.id.in_(entry_ids),
         ]
         if hidden_items:
             where.append(_not_from(hidden_items))
-        if entry_ids is not None:
-            where.append(Entry.id.in_(entry_ids))
         return await self._read(user, limit, where)
 
     async def reset(self, user: str) -> _Reset:

@@ -18,7 +18,7 @@ class Checkpoint:
     results so far); ``requests_used`` and ``seq`` the model requests and tool
     calls so far; ``conversation_id`` and ``upto_entry_id`` (``None`` for no
     entries) where the context came from, and ``entry_ids`` exactly which
-    entries. Turns parked by 0.16.0 saved no ids: ``None``.
+    entries.
     """
 
     call: ToolCall
@@ -30,12 +30,11 @@ class Checkpoint:
     conversation_id: int | None
     upto_entry_id: int | None
     reset: bool = False
-    entry_ids: tuple[int, ...] | None = ()
+    entry_ids: tuple[int, ...] = ()
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Checkpoint:
-        """Read what :meth:`to_json` wrote, or what 0.16.0 wrote (no ``entry_ids``)."""
-        entry_ids = data.get("entry_ids")
+        """Read what :meth:`to_json` wrote."""
         return cls(
             call=_call_of(data["call"]),
             call_index=data["call_index"],
@@ -45,13 +44,13 @@ class Checkpoint:
             seq=data["seq"],
             conversation_id=data["conversation_id"],
             upto_entry_id=data["upto_entry_id"],
-            reset=bool(data.get("reset")),
-            entry_ids=None if entry_ids is None else tuple(entry_ids),
+            reset=data["reset"],
+            entry_ids=tuple(data["entry_ids"]),
         )
 
     def to_json(self) -> dict[str, Any]:
-        """What is stored to resume the turn; the same keys 0.16.1 stores."""
-        data = {
+        """What is stored to resume the turn."""
+        return {
             "call": _call_json(self.call),
             "call_index": self.call_index,
             "remaining": [_call_json(c) for c in self.remaining],
@@ -61,10 +60,8 @@ class Checkpoint:
             "conversation_id": self.conversation_id,
             "upto_entry_id": self.upto_entry_id,
             "reset": self.reset,
+            "entry_ids": list(self.entry_ids),
         }
-        if self.entry_ids is not None:
-            data["entry_ids"] = list(self.entry_ids)
-        return data
 
 
 def _call_json(call: ToolCall) -> dict[str, Any]:

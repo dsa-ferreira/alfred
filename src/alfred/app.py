@@ -208,7 +208,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     engine = make_engine(config.database_url.get_secret_value())
     stack.push_async_callback(engine.dispose)
     sessions = make_session_factory(engine)
-    # A misspelt ALFRED_MIGRATE_ADMIN or a renamed user shows up here.
+    # A renamed user shows up here.
     await warn_unknown_users(sessions, config.users.names)
     queue = Queue(sessions)
     bot = Bot(config.telegram_bot_token.get_secret_value())
