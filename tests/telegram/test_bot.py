@@ -23,6 +23,7 @@ from alfred.history import History
 from alfred.inputs import render
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message
+from alfred.inputs.parking import Parking
 from alfred.inputs.store import InputRequests
 from alfred.memory.facts import FactStore
 from alfred.queue import Queue
@@ -418,8 +419,7 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
         TelegramOutbox(bot),
         cfg.queue,
         users=cfg.users,
-        inputs=NoInputRequests(),
-        questions=NoQuestions(),
+        parking=Parking(NoInputRequests(), NoQuestions()),
         reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,

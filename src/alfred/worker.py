@@ -21,24 +21,21 @@ reminder notice. The exception is a quiet reminder (``quiet_ok``) answered
 ``NO_REPLY``: nothing is sent or recorded. A quiet reminder whose turn fails
 still gets the notice, so a broken AI doesn't look like "nothing to report".
 
-**Parked turns.** A turn may park, waiting for its user's answer. Its item
-becomes ``waiting`` and the question goes to the user; a question that
-can't be sent ends the request at once. Once the user taps an answer, the
-worker marks the request ``running`` before the turn resumes, so a crash
-never runs the call twice: an item whose request is already ``running``
-fails with the partial notice.
+**Parked turns.** A turn may park, waiting for its user's answer; parking
+and picking it up again are :class:`alfred.inputs.parking.Parking`'s. An
+item whose answered call was running when alfred stopped fails with the
+partial notice and never runs again.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from alfred import notices
@@ -48,12 +45,12 @@ from alfred.backoff import backoff_s
 from alfred.config import QueueConfig, User, Users
 from alfred.db.models import QueueItem
 from alfred.history import History
-from alfred.inputs.render import reminder_label, title
-from alfred.inputs.store import EndReason, RequestRow
+from alfred.inputs.parking import Parking
+from alfred.inputs.store import RequestRow
 from alfred.outbox import Outbox
 from alfred.queue import Queue
 from alfred.reminders.store import ReminderRow
-from alfred.tools.base import Question, Resume, TurnInput, parse_arguments
+from alfred.tools.base import TurnInput
 
 log = logging.getLogger(__name__)
 
@@ -68,20 +65,16 @@ class Worker:
         config: QueueConfig,
         *,
         users: Users,
-        inputs: _Inputs,
-        questions: _QuestionOutbox,
+        parking: Parking,
         reminders: _ReminderLookup,
         typing: Callable[[User], AbstractAsyncContextManager[None]],
         nudge: Callable[[], None],
         zone: ZoneInfo | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
-        expire_after: timedelta = timedelta(minutes=60),
     ) -> None:
         self._queue = queue
-        # Parked turns' requests and their question messages.
-        self._inputs = inputs
-        self._questions = questions
-        self._expire_after = expire_after
+        # Turns that wait for their user's answer, and their questions.
+        self._parking = parking
         # Shown in a user's chat while their own chat turn runs.
         self._typing = typing
         # Wakes the memory sweeper after a reset.
@@ -126,10 +119,19 @@ class Worker:
             log.error("queue item %s (%s): %s; marked failed", item.id, item.kind, reason)
             await self._queue.finish(item.id, "failed", reason)
             return
-        request: RequestRow | None = None
-        if await self._resumed_before(item, user):
+        if await self._parking.stopped_mid_call(item.id, user.name):
+            await self._turn_failed(
+                item,
+                await self._turn_input(item, user),
+                TurnFailed(
+                    "stopped while an answered call was running; not run again",
+                    notices.failed(user.address, True),
+                    retryable=False,
+                    side_effects_possible=True,
+                ),
+            )
             return
-        request = await self._inputs.take_answered(item.id, user.name)
+        request = await self._parking.take_answer(item.id, user.name)
         if item.kind == "user" and request is None:
             # A conversation closed for inactivity is told before the reply. Claimed before it
             # is sent, so a retried turn doesn't send it again.
@@ -141,10 +143,7 @@ class Worker:
             await self._history.append(user.name, "user", item.text, queue_item_id=item.id)
         turn = await self._turn_input(item, user)
         if request is not None:
-            log.info("queue item %s: resuming with %s's answer", item.id, user.name)
-            turn = dataclasses.replace(
-                turn, resume=Resume(request.turn, request.state, request.answer)
-            )
+            turn = self._parking.resumed(turn, request)
         indicator = self._typing(user) if item.kind == "user" else contextlib.nullcontext()
         try:
             async with indicator:
@@ -166,7 +165,8 @@ class Worker:
             )
             return
         if result.waiting is not None:
-            await self._park(item, turn, result)
+            await self._tell_fallback(item, user, result.fallback)
+            await self._parking.park(item, turn, result.waiting)
             return
         await self._complete(item, turn, result)
 
@@ -180,77 +180,7 @@ class Worker:
             return await self._agent.run(turn)
         finally:
             if request is not None:
-                await self._inputs.finish(request.id, request.user_name)
-
-    async def _resumed_before(self, item: QueueItem, user: User) -> bool:
-        """Whether alfred stopped while this item's answered call was running.
-
-        Then the call may have run: the item fails with the partial notice
-        and is never run again.
-        """
-        stuck = await self._inputs.running_for(item.id, user.name)
-        if stuck is None:
-            return False
-        log.error(
-            "queue item %s: alfred stopped while %s's answered call %s was running; not run again",
-            item.id,
-            user.name,
-            stuck.tool,
-        )
-        await self._inputs.finish(stuck.id, user.name)
-        turn = await self._turn_input(item, user)
-        await self._turn_failed(
-            item,
-            turn,
-            TurnFailed(
-                "stopped while an answered call was running; not run again",
-                notices.failed(user.address, True),
-                retryable=False,
-                side_effects_possible=True,
-            ),
-        )
-        return True
-
-    async def _park(self, item: QueueItem, turn: TurnInput, result: TurnResult) -> None:
-        """The turn waits for its user: store the request, then send the question."""
-        waiting = result.waiting
-        assert waiting is not None
-        user = turn.user
-        await self._tell_fallback(item, user, result.fallback)
-        question = dataclasses.replace(waiting.need.question, title=self._title(item, turn))
-        arguments = parse_arguments(waiting.checkpoint.call.arguments)
-        request_id = await self._inputs.park(
-            item.id,
-            user.name,
-            tool=waiting.checkpoint.call.name,
-            arguments=arguments
-            if isinstance(arguments, dict)
-            else {"_raw": waiting.checkpoint.call.arguments},
-            question=question,
-            state=waiting.need.state,
-            turn=waiting.checkpoint.to_json(),
-            expires_at=self._expire_after,
-        )
-        try:
-            message_id = await self._questions.send_question(user, request_id, question)
-        except Exception:
-            # The user can't answer what they never saw.
-            log.exception("queue item %s: could not send question %s", item.id, request_id)
-            await self._inputs.cancel(request_id, user.name, "not_delivered")
-            return
-        await self._inputs.set_message(request_id, user.name, message_id)
-        log.info(
-            "queue item %s: waiting for %s's answer to request %s (%s)",
-            item.id,
-            user.name,
-            request_id,
-            waiting.checkpoint.call.name,
-        )
-
-    def _title(self, item: QueueItem, turn: TurnInput) -> str:
-        if item.kind == "reminder":
-            return title("reminder", reminder=reminder_label(turn.reminder_id, turn.text))
-        return title(item.kind, source=item.source)
+                await self._parking.finish(request)
 
     async def _turn_input(self, item: QueueItem, user: User) -> TurnInput:
         if item.kind == "reminder":
@@ -409,39 +339,6 @@ class Worker:
         except Exception:
             # The turn already ran; re-running it would repeat tool actions.
             log.exception("queue item %s: could not deliver a message to %s", item.id, user.name)
-
-
-class _Inputs(Protocol):
-    """Parked turns' input requests (``alfred.inputs.store.InputRequests``)."""
-
-    async def running_for(self, item_id: int, user: str) -> RequestRow | None: ...
-
-    async def take_answered(self, item_id: int, user: str) -> RequestRow | None: ...
-
-    async def finish(self, request_id: int, user: str) -> None: ...
-
-    async def park(
-        self,
-        item_id: int,
-        user: str,
-        *,
-        tool: str,
-        arguments: dict[str, Any],
-        question: Question,
-        state: dict[str, Any],
-        turn: dict[str, Any],
-        expires_at: datetime | timedelta,
-    ) -> int: ...
-
-    async def set_message(self, request_id: int, user: str, message_id: int) -> None: ...
-
-    async def cancel(self, request_id: int, user: str, reason: EndReason) -> object: ...
-
-
-class _QuestionOutbox(Protocol):
-    """Sends a question with its buttons, returning its message ID; raises if not delivered."""
-
-    async def send_question(self, user: User, request_id: int, question: Question) -> int: ...
 
 
 class _TurnRunner(Protocol):

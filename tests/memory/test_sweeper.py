@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.history import History
+from alfred.inputs.parking import Parking
 from alfred.memory.duplicates import FactDuplicateJob
 from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.facts import FactEmbeddingJob, FactStore
@@ -200,8 +201,7 @@ async def test_owner_messages_answered_while_sweeper_fails(
         cfg.queue,
         users=cfg.users,
         nudge=mem.summaries.changed.set,
-        inputs=NoInputRequests(),
-        questions=NoQuestions(),
+        parking=Parking(NoInputRequests(), NoQuestions()),
         reminders=NoReminders(),
         typing=no_typing,
     )

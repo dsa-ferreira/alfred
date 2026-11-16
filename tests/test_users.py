@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.messages import strip_stamp
 from alfred.config import User
 from alfred.history import History
+from alfred.inputs.parking import Parking
 from alfred.memory.search import (
     RECALL_CONVERSATION,
     SEARCH_CONVERSATIONS,
@@ -76,8 +77,7 @@ class House:
             users=cfg.users,
             reminders=self.reminders,
             zone=LISBON,
-            inputs=NoInputRequests(),
-            questions=NoQuestions(),
+            parking=Parking(NoInputRequests(), NoQuestions()),
             typing=no_typing,
             nudge=ignore,
         )

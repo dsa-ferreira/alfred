@@ -16,6 +16,7 @@ from alfred.api import create_app
 from alfred.config import Service, Users
 from alfred.db.models import QueueItem
 from alfred.history import History
+from alfred.inputs.parking import Parking
 from alfred.queue import Queue
 from alfred.telegram.bot import TelegramOutbox
 from alfred.worker import Worker
@@ -139,8 +140,7 @@ async def test_notify_while_ai_busy(env: Env) -> None:
         env.outbox,
         make_config().queue,
         users=USERS,
-        inputs=NoInputRequests(),
-        questions=NoQuestions(),
+        parking=Parking(NoInputRequests(), NoQuestions()),
         reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,
@@ -205,8 +205,7 @@ async def run_ask(env: Env, answer: str) -> None:
         env.outbox,
         cfg.queue,
         users=USERS,
-        inputs=NoInputRequests(),
-        questions=NoQuestions(),
+        parking=Parking(NoInputRequests(), NoQuestions()),
         reminders=NoReminders(),
         typing=no_typing,
         nudge=ignore,

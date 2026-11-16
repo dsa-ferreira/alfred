@@ -12,6 +12,7 @@ from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMIND
 from alfred.agent.turn import TurnFailed
 from alfred.config import Users
 from alfred.history import History
+from alfred.inputs.parking import Parking
 from alfred.model import ModelUnreachable
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
@@ -257,8 +258,7 @@ async def test_morning_briefing_uses_the_tools(
         users=cfg.users,
         reminders=store,
         zone=LISBON,
-        inputs=NoInputRequests(),
-        questions=NoQuestions(),
+        parking=Parking(NoInputRequests(), NoQuestions()),
         typing=no_typing,
         nudge=ignore,
     )

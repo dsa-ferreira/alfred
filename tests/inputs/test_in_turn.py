@@ -20,6 +20,7 @@ from alfred.config import QueueConfig, User, Users
 from alfred.history import History
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message
+from alfred.inputs.parking import Parking
 from alfred.inputs.store import InputRequests
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
@@ -88,8 +89,7 @@ class Alfred:
             users=users,
             reminders=self.reminders,
             zone=LISBON,
-            inputs=self.requests,
-            questions=outbox,
+            parking=Parking(self.requests, outbox),
             typing=no_typing,
             nudge=ignore,
         )

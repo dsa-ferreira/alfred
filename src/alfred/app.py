@@ -40,6 +40,7 @@ from alfred.history import History
 from alfred.idle import IdleCloser
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
+from alfred.inputs.parking import Parking
 from alfred.inputs.store import InputRequests
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
@@ -188,9 +189,11 @@ async def serve(config: Config) -> None:
         typing=outbox.typing,
         reminders=reminders.store,
         zone=ZoneInfo(config.ai.timezone),
-        inputs=inputs,
-        questions=outbox,
-        expire_after=timedelta(minutes=config.input_requests.expire_after_min),
+        parking=Parking(
+            inputs,
+            outbox,
+            expire_after=timedelta(minutes=config.input_requests.expire_after_min),
+        ),
     )
     dispatcher = make_dispatcher(
         config.users,
