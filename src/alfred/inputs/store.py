@@ -33,6 +33,7 @@ from alfred import notices
 from alfred.config import Users
 from alfred.db.models import InputRequest, QueueItem
 from alfred.history import History
+from alfred.queue import turn_kind
 from alfred.tools.base import Question
 
 log = logging.getLogger(__name__)
@@ -296,23 +297,26 @@ class InputRequests:
             name,
             request.cancel_reason,
         )
-        if item.kind == "user":
-            await history.append(name, "assistant", text, queue_item_id=item.id)
-        elif item.kind == "ask":
-            await history.append(
-                name, "ask_prompt", item.text, source=item.source, queue_item_id=item.id
-            )
-            await history.append(name, "ask_reply", text, source=item.source, queue_item_id=item.id)
-        elif item.kind == "reminder":
-            for kind, entry_text in (("reminder", item.text), ("reminder_reply", text)):
+        match turn_kind(item):
+            case "chat":
+                await history.append(name, "assistant", text, queue_item_id=item.id)
+            case "ask":
                 await history.append(
-                    name,
-                    kind,  # type: ignore[arg-type]
-                    entry_text,
-                    queue_item_id=item.id,
-                    reminder_id=item.reminder_id,
-                    reminder_due_at=item.reminder_due_at,
+                    name, "ask_prompt", item.text, source=item.source, queue_item_id=item.id
                 )
+                await history.append(
+                    name, "ask_reply", text, source=item.source, queue_item_id=item.id
+                )
+            case "reminder":
+                for kind, entry_text in (("reminder", item.text), ("reminder_reply", text)):
+                    await history.append(
+                        name,
+                        kind,  # type: ignore[arg-type]
+                        entry_text,
+                        queue_item_id=item.id,
+                        reminder_id=item.reminder_id,
+                        reminder_due_at=item.reminder_due_at,
+                    )
 
 
 @dataclass(frozen=True)

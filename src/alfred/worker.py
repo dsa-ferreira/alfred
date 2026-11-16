@@ -43,7 +43,7 @@ from alfred.inputs.parking import Parking
 from alfred.inputs.store import RequestRow
 from alfred.kinds import AskKind, ChatKind, Kind, ReminderKind, ReminderLookup
 from alfred.outbox import Outbox
-from alfred.queue import Queue
+from alfred.queue import Queue, TurnKind, turn_kind
 from alfred.tools.base import TurnInput
 
 log = logging.getLogger(__name__)
@@ -79,9 +79,8 @@ class Worker:
         self._config = config
         self._users = users
         self._now = now
-        # By the queue item's stored kind.
-        self._kinds: dict[str, Kind] = {
-            "user": ChatKind(history, self._send),
+        self._kinds: dict[TurnKind, Kind] = {
+            "chat": ChatKind(history, self._send),
             "ask": AskKind(history, self._send),
             "reminder": ReminderKind(history, self._send, reminders, zone or ZoneInfo("UTC"), now),
         }
@@ -114,10 +113,10 @@ class Worker:
         if user is None:
             # Not retried: the config, not the AI, has to change.
             reason = f"user {item.user_name!r} is not configured"
-            log.error("queue item %s (%s): %s; marked failed", item.id, item.kind, reason)
+            log.error("queue item %s (%s): %s; marked failed", item.id, turn_kind(item), reason)
             await self._queue.finish(item.id, "failed", reason)
             return
-        kind = self._kinds[item.kind]
+        kind = self._kinds[turn_kind(item)]
         if await self._parking.stopped_mid_call(item.id, user.name):
             await self._turn_failed(
                 item,
@@ -198,18 +197,18 @@ class Worker:
                 item.id, attempts, self._now() + timedelta(seconds=delay), failure.reason
             )
             return
-        log.error("queue item %s (%s) failed: %s", item.id, item.kind, failure.reason)
+        log.error("queue item %s (%s) failed: %s", item.id, turn_kind(item), failure.reason)
 
         async def finish() -> None:
             await self._queue.finish(item.id, "failed", failure.reason)
 
-        await self._kinds[item.kind].fail(item, turn, failure, finish)
+        await self._kinds[turn_kind(item)].fail(item, turn, failure, finish)
 
     async def _complete(self, item: QueueItem, turn: TurnInput, result: TurnResult) -> None:
         # The brain choice changed, so it is told even when an /ask ends in NO_REPLY.
         await self._tell_fallback(item, turn.user, result.fallback)
         user = turn.user
-        await self._kinds[item.kind].deliver(item, turn, result.reply)
+        await self._kinds[turn_kind(item)].deliver(item, turn, result.reply)
         await self._queue.finish(item.id, "done")
 
         if result.reset_requested:

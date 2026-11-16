@@ -19,6 +19,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from typing import Literal, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +28,12 @@ from alfred.attachments import NewAttachment
 from alfred.db.models import Attachment, AttachmentPage, QueueItem
 
 log = logging.getLogger(__name__)
+
+TurnKind = Literal["chat", "ask", "reminder"]
+
+# How queue_items.kind stores a chat message: "user", its name from before
+# turns had kinds. Only this module knows; the rest of alfred says "chat".
+_STORED_CHAT = "user"
 
 
 class QueueActivity:
@@ -102,7 +109,10 @@ class Queue:
             await self.before_user_message(user)
         async with self._sessions.begin() as session:
             item = QueueItem(
-                kind="user", user_name=user, text=text, telegram_message_id=telegram_message_id
+                kind=_STORED_CHAT,
+                user_name=user,
+                text=text,
+                telegram_message_id=telegram_message_id,
             )
             session.add(item)
             await session.flush()
@@ -167,3 +177,8 @@ class Queue:
             item_id = item.id
         self.activity.notify()
         return item_id
+
+
+def turn_kind(item: QueueItem) -> TurnKind:
+    """The kind of turn ``item`` asks for."""
+    return "chat" if item.kind == _STORED_CHAT else cast(TurnKind, item.kind)
