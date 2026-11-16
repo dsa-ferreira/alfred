@@ -10,7 +10,6 @@ from typing import Any
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.brains import Brains
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.model import ModelReply, ToolCall
 from alfred.agent.turn import Agent, _Model
@@ -18,6 +17,7 @@ from alfred.app import _build_toolsets
 from alfred.attachments import NewAttachment
 from alfred.attachments.store import StoreError, _StoredObject
 from alfred.attachments.tools import AttachmentTools
+from alfred.brains import Brains
 from alfred.config import (
     AIConfig,
     AttachmentsConfig,

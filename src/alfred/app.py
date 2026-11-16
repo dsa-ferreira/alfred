@@ -25,7 +25,6 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from aiogram import Bot
 
-from alfred.agent.brains import Brains
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.model import ModelClient
 from alfred.agent.turn import Agent
@@ -34,6 +33,7 @@ from alfred.attachments.intake import Intake
 from alfred.attachments.store import S3Store
 from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
+from alfred.brains import Brains
 from alfred.config import Config
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.users import warn_unknown_users

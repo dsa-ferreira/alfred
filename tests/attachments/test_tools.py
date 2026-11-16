@@ -9,7 +9,6 @@ import json
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.brains import Brains
 from alfred.agent.turn import Agent
 from alfred.attachments.tools import (
     _READ_ONLY_NOTE,
@@ -20,6 +19,7 @@ from alfred.attachments.tools import (
     VIEW_ATTACHMENT,
     AttachmentTools,
 )
+from alfred.brains import Brains
 from alfred.config import AttachmentsConfig, BrainEntry, User
 from alfred.history import History
 from alfred.memory.search import ConversationSearch

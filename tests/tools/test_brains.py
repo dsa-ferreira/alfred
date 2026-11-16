@@ -9,8 +9,8 @@ import logging
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.brains import Brains
 from alfred.agent.prompts import _NO_REPLY, brain_line
+from alfred.brains import Brains
 from alfred.tools.base import AllowList, AttemptContext, ToolOutcome, TurnInput
 from alfred.tools.brains import SET_MODEL, BrainTools
 from tests.agent.turn_helpers import (

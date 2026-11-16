@@ -14,12 +14,12 @@ from sqlalchemy import text as sql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
-from alfred.agent.brains import Brains
 from alfred.agent.messages import strip_stamp
 from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import _NO_REPLY
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
+from alfred.brains import Brains
 from alfred.config import QueueConfig, User, Users
 from alfred.db.models import Attachment, Entry, InputRequest, QueueItem
 from alfred.history import History

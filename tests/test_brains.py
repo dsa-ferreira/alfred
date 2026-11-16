@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from alfred.agent.brains import Brains
+from alfred.brains import Brains
 from alfred.config import AIConfig, BrainEntry
 
 GEMMA = "gemma4:26b-a4b-it-qat"
