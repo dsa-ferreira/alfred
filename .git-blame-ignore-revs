@@ -19,3 +19,5 @@ cc15c2847caed588fd170be7eef87878d7134cc4
 ba28570ed51627cc68e62dc4f2f563635dfa68d9
 # refactor: move the queue, worker and input requests into turns
 1d2f77b894ee73fc4b893e83f7c1edc5dc216ea5
+# refactor(db): move each table into its slice's tables.py
+acc68cc4cc35682468e4d6940f9c7aaae17626d0
