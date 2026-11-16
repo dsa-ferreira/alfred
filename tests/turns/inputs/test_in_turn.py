@@ -16,7 +16,6 @@ from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from mcp.server import MCPServer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.config import QueueConfig
 from alfred.conversations.store import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
@@ -24,6 +23,7 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from alfred.telegram.taps import Taps
+from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests

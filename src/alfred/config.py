@@ -21,13 +21,12 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from pydantic import (
     Field,
     SecretStr,
     ValidationError,
-    model_validator,
 )
 
 from alfred.archive.config import ArchiveConfig
@@ -35,6 +34,7 @@ from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.brains.config import BrainsConfig
 from alfred.conversations.config import HistoryConfig
 from alfred.facts.config import FactsConfig
+from alfred.http.config import ServerConfig, Service
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.config import EmbeddingConfig
@@ -51,6 +51,7 @@ from alfred.settings import (
     TimeZoneName,
     TokenEnv,
 )
+from alfred.turns.config import InputRequestsConfig, QueueConfig
 from alfred.web.config import WebConfig
 
 log = logging.getLogger(__name__)
@@ -64,36 +65,6 @@ _S3_SECRET_ACCESS_KEY_ENV = "ALFRED_S3_SECRET_ACCESS_KEY"
 
 _RESERVED_SERVER_NAME = "alfred"
 _ALL_TOOLS = "*"
-
-
-class QueueConfig(Section):
-    retry_initial_s: PositiveFloat = 30
-    retry_max_s: PositiveFloat = 900
-
-    @model_validator(mode="after")
-    def _max_not_below_initial(self) -> QueueConfig:
-        if self.retry_max_s < self.retry_initial_s:
-            raise ValueError("retry_max_s must not be smaller than retry_initial_s")
-        return self
-
-
-@dataclass(frozen=True)
-class Service:
-    name: str
-    token: SecretStr
-
-
-class _InputRequestsConfig(Section):
-    """Turns waiting for their user's answer."""
-
-    # Counted from when the question was sent.
-    expire_after_min: PositiveFloat = 60
-
-
-class _ServerConfig(Section):
-    host: Annotated[str, Field(min_length=1)] = "0.0.0.0"
-    port: Annotated[int, Field(ge=1, le=65535)] = 8080
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
 class _AIConfig(BrainsConfig):
@@ -121,7 +92,7 @@ class Config:
     history: HistoryConfig
     queue: QueueConfig
     mcp: McpConfig
-    server: _ServerConfig
+    server: ServerConfig
     services: tuple[Service, ...]
     mcp_servers: tuple[McpServer, ...]
     telegram_bot_token: SecretStr
@@ -129,7 +100,7 @@ class Config:
     memory: _MemoryConfig = _MemoryConfig()
     web: WebConfig = WebConfig()
     reminders: RemindersConfig = RemindersConfig()
-    input_requests: _InputRequestsConfig = _InputRequestsConfig()
+    input_requests: InputRequestsConfig = InputRequestsConfig()
     attachments: AttachmentsConfig | None = None
     # Set exactly when ``attachments`` is.
     s3_key: S3Key | None = None
@@ -301,11 +272,11 @@ class _FileConfig(Section):
     memory: _MemoryConfig = _MemoryConfig()
     web: WebConfig = WebConfig()
     reminders: RemindersConfig = RemindersConfig()
-    input_requests: _InputRequestsConfig = _InputRequestsConfig()
+    input_requests: InputRequestsConfig = InputRequestsConfig()
     # None: attachments are off and alfred reads text only.
     attachments: AttachmentsConfig | None = None
     mcp: McpConfig = McpConfig()
-    server: _ServerConfig = _ServerConfig()
+    server: ServerConfig = ServerConfig()
     services: list[_ServiceEntry] = []
     mcp_servers: list[_McpServerEntry] = []
 

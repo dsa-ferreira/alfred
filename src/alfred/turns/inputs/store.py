@@ -29,11 +29,11 @@ from typing import Any, Literal
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
 from alfred.conversations.store import History
 from alfred.db.models import InputRequest, QueueItem
 from alfred.kernel.questions import Question
 from alfred.kernel.users import Users
+from alfred.turns.inputs import notices
 from alfred.turns.queue import turn_kind
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 # A request in these statuses keeps its turn parked.
 _LIVE_STATUSES = ("open", "answered", "running")
 _Answered = Literal["answered", "not_open", "not_yours"]
-# Why a request ended unanswered (``notices.NOT_DONE_REASONS``).
+# Why a request ended unanswered (``alfred.turns.inputs.notices``).
 EndReason = Literal["new_message", "expired", "not_delivered"]
 
 

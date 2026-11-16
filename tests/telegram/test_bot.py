@@ -15,11 +15,11 @@ from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendChatAction
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
+from alfred.agent import notices as agent_notices
 from alfred.attachments import notices as attachments_notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, Intake
-from alfred.config import QueueConfig, _MemoryConfig
+from alfred.config import _MemoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import Attachment, QueueItem
 from alfred.facts import notices as facts_notices
@@ -28,12 +28,15 @@ from alfred.kernel.access import _confirm_question
 from alfred.kernel.questions import Option, Question
 from alfred.kernel.users import Users
 from alfred.telegram import bot as bot_module
+from alfred.telegram import notices as telegram_notices
 from alfred.telegram import questions as render
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
 from alfred.telegram.taps import Taps
+from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
+from alfred.turns.inputs.titles import title
 from alfred.turns.queue import Queue
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
@@ -139,7 +142,7 @@ async def test_text_only(sessions: async_sessionmaker[AsyncSession], content: di
     await dispatcher.feed_update(bot, message_update(**content))
     assert await queued(sessions) == []
     (sent,) = session.sent()
-    assert sent.text == notices.text_only("sir") and sent.chat_id == OWNER
+    assert sent.text == telegram_notices.text_only("sir") and sent.chat_id == OWNER
 
 
 async def test_text_only_uses_configured_address(
@@ -233,7 +236,7 @@ async def test_unsupported_with_attachments(
     assert await queued(sessions) == []
     assert store.objects == {}
     (sent,) = session.sent()
-    assert sent.text == notices.unsupported("sir")
+    assert sent.text == telegram_notices.unsupported("sir")
 
 
 async def test_photo_with_caption_is_queued(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -437,7 +440,7 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
 
     first, second = session.sent()
     assert first.text == "All good." and first.chat_id == OWNER
-    assert second.text == notices.failed("sir")
+    assert second.text == agent_notices.failed("sir")
     assert "400" not in second.text and "token" not in second.text
 
 
@@ -542,7 +545,7 @@ async def test_text_only_notice_in_her_chat_and_address(
     sticker |= {"width": 1, "height": 1, "is_animated": False, "is_video": False}
     await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, sticker=sticker))
     (sent,) = session.sent()
-    assert sent.chat_id == ANA_ID and sent.text == notices.text_only("madam")
+    assert sent.chat_id == ANA_ID and sent.text == telegram_notices.text_only("madam")
 
 
 async def test_second_user_photo_and_album_are_hers(
@@ -569,7 +572,7 @@ async def test_refusal_notice_uses_her_address(sessions: async_sessionmaker[Asyn
     voice = {"file_id": "v", "file_unique_id": "v", "duration": 1}
     await dispatcher.feed_update(bot, message_update(user_id=ANA_ID, voice=voice))
     (sent,) = session.sent()
-    assert sent.chat_id == ANA_ID and sent.text == notices.unsupported("madam")
+    assert sent.chat_id == ANA_ID and sent.text == telegram_notices.unsupported("madam")
 
 
 async def test_outbox_sends_to_the_users_chat() -> None:
@@ -788,16 +791,9 @@ async def test_confirmation_shows_the_real_call() -> None:
     ]
 
 
-def test_titles_say_what_asked() -> None:
-    assert render.title("user") == "For your request:"
-    assert render.title("ask", source="jellyfin") == "For a request from jellyfin:"
-    label = render.reminder_label(12, "call mum")
-    assert render.title("reminder", reminder=label) == "For reminder #12 (call mum):"
-
-
 async def test_request_from_a_service() -> None:
     bot, session = make_bot()
-    question = titled(DUNE, render.title("ask", source="jellyfin"))
+    question = titled(DUNE, title("ask", source="jellyfin"))
     await TelegramOutbox(bot).send_question(DIOGO, 3, question)
     assert "jellyfin" in session.sent()[0].text
 

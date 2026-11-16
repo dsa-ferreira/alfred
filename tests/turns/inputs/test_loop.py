@@ -8,13 +8,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.kernel.access import _confirm_question
 from alfred.kernel.users import User, Users
+from alfred.telegram.questions import ended_html
+from alfred.turns.inputs import notices
 from alfred.turns.inputs.loop import _expire_once, run_expiry_loop
-from alfred.turns.inputs.store import InputRequests
+from alfred.turns.inputs.store import InputRequests, RequestRow
 from tests.helpers import ANA, DIOGO, add_queue_item
 
 USERS = Users((DIOGO, ANA))
@@ -27,6 +28,13 @@ class Edits:
 
     async def edit_question(self, user: User, message_id: int, html: str) -> None:
         self.edits.append((user.name, message_id, html))
+
+    async def ended(self, user: User, request: RequestRow, reason: str | None) -> None:
+        """As the Telegram outbox renders it."""
+        assert request.telegram_message_id is not None
+        await self.edit_question(
+            user, request.telegram_message_id, ended_html(request.question, reason)
+        )
 
 
 async def waiting(

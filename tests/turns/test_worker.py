@@ -13,14 +13,13 @@ from sqlalchemy import select
 from sqlalchemy import text as sql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
+from alfred.agent import notices as agent_notices
 from alfred.agent.messages import strip_stamp
 from alfred.agent.prompts import _NO_REPLY
 from alfred.archive.summaries import Summaries
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.brains.registry import Brains
-from alfred.config import QueueConfig
 from alfred.conversations.notices import reset_marker
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
@@ -31,6 +30,8 @@ from alfred.llm.chat import ModelFailed, ModelUnreachable
 from alfred.reminders import notices as reminders_notices
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
+from alfred.turns import notices as turns_notices
+from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.queue import Queue
 from alfred.turns.worker import Worker
@@ -306,7 +307,7 @@ async def test_ai_drops_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     first, second = await s.items()
     assert first.status == "failed" and first.attempts == 0
     assert "not retried" in (first.failure_reason or "")
-    assert s.outbox.sent[0] == notices.unreachable_mid("sir")
+    assert s.outbox.sent[0] == agent_notices.unreachable_mid("sir")
     assert second.status == "done"
 
 
@@ -321,7 +322,7 @@ async def test_model_rejects_request(sessions: async_sessionmaker[AsyncSession])
     first, second = await s.items()
     assert first.status == "failed" and "HTTP 400" in (first.failure_reason or "")
     assert first.finished_at is not None
-    assert s.outbox.sent == [notices.failed("sir"), "ok"]
+    assert s.outbox.sent == [agent_notices.failed("sir"), "ok"]
     assert second.status == "done"
 
 
@@ -351,7 +352,7 @@ async def test_unexpected_error_fails_item(sessions: async_sessionmaker[AsyncSes
     await s.drain()
     (item,) = await s.items()
     assert item.status == "failed"
-    assert s.outbox.sent == [notices.failed("Mr. Ferreira")]
+    assert s.outbox.sent == [agent_notices.failed("Mr. Ferreira")]
 
 
 # --- Ask turns in the conversation --------------------------------------------
@@ -584,13 +585,13 @@ async def test_typing_stops_before_failure_notice(
     await s.queue.enqueue_user("diogo", "status?")
     while await worker._step():
         pass
-    assert events == ["typing on", "typing off", f"send {notices.failed('sir')}"]
+    assert events == ["typing on", "typing off", f"send {agent_notices.failed('sir')}"]
 
 
 # --- Brain fallback notice -------------------------------------------------------
 
 BAD_MODEL = ModelFailed("model server answered HTTP 400: model does not support tools")
-FELL_BACK = notices.fell_back("sir", "bonsai", "gemma")
+FELL_BACK = turns_notices.fell_back("sir", "bonsai", "gemma")
 
 
 def on_bonsai() -> Brains:
@@ -617,7 +618,7 @@ async def test_fallback_before_the_failure_notice(
     s = Setup(sessions, model, brains=on_bonsai())
     await s.queue.enqueue_user("diogo", "downloads?")
     await s.drain()
-    assert s.outbox.sent == [FELL_BACK, notices.failed("sir", True)]
+    assert s.outbox.sent == [FELL_BACK, agent_notices.failed("sir", True)]
 
 
 async def test_fallback_on_a_no_reply_ask(
@@ -933,7 +934,7 @@ async def test_failure_reaches_only_its_user(sessions: async_sessionmaker[AsyncS
     s = Setup(sessions, FakeModel([ModelFailed("HTTP 400")]), users=(DIOGO, ANA))
     await s.queue.enqueue_user("ana", "hi")
     await s.drain()
-    assert s.outbox.sent_to == [("ana", notices.failed("madam"))]
+    assert s.outbox.sent_to == [("ana", agent_notices.failed("madam"))]
     assert s.outbox.sent[0].endswith(", madam.")
 
 
@@ -957,8 +958,8 @@ async def test_fallback_on_another_users_turn_reaches_the_admin(
     await s.queue.enqueue_user("ana", "hi")
     await s.drain()
     assert s.outbox.sent_to == [
-        ("ana", notices.fell_back("madam", "bonsai", "gemma")),
-        ("diogo", notices.fell_back("sir", "bonsai", "gemma")),
+        ("ana", turns_notices.fell_back("madam", "bonsai", "gemma")),
+        ("diogo", turns_notices.fell_back("sir", "bonsai", "gemma")),
         ("ana", "gemma's answer"),
     ]
     # Not recorded for the admin: the next prompt names the brain.

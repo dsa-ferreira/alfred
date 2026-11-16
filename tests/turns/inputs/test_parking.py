@@ -5,17 +5,19 @@ import dataclasses
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
+from alfred.agent import notices as agent_notices
 from alfred.agent.prompts import _NO_REPLY
-from alfred.config import QueueConfig
 from alfred.db.models import InputRequest
 from alfred.kernel.access import AllowList
 from alfred.kernel.questions import Question
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed
+from alfred.telegram.questions import ended_html
+from alfred.turns.config import QueueConfig
+from alfred.turns.inputs import notices as inputs_notices
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
-from alfred.turns.inputs.store import InputRequests
+from alfred.turns.inputs.store import InputRequests, RequestRow
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import tool_rows
 from tests.fakes import ignore, no_typing
@@ -57,6 +59,13 @@ class FakeQuestions:
 
     async def edit_question(self, user: User, message_id: int, html: str) -> None:
         self.edits.append((user.name, message_id, html))
+
+    async def ended(self, user: User, request: RequestRow, reason: str | None) -> None:
+        """As the Telegram outbox renders it."""
+        assert request.telegram_message_id is not None
+        await self.edit_question(
+            user, request.telegram_message_id, ended_html(request.question, reason)
+        )
 
 
 class Waits(Setup):
@@ -207,7 +216,7 @@ async def test_crash_during_the_confirmed_call(
     restarted = Waits(sessions, FakeModel())  # no reply scripted: the model must not be asked
     await restarted.drain()
     assert await restarted.statuses() == ["failed"]
-    assert restarted.outbox.sent == [notices.failed("sir", partial=True)]
+    assert restarted.outbox.sent == [agent_notices.failed("sir", partial=True)]
     assert [r.ok for r in await tool_rows(sessions)] == [False]  # only the park
     async with sessions() as session:
         assert (await session.scalar(select(InputRequest.status))) == "done"
@@ -266,7 +275,9 @@ async def test_question_not_delivered_cancels_at_once(
     assert await s.statuses() == ["cancelled"]
     assert s.outbox.sent == []
     entries = await s.history.recent("diogo", 30)
-    assert entries[-1].text == notices.input_not_done("sir", "mcparr_add_media", "not_delivered")
+    assert entries[-1].text == inputs_notices.input_not_done(
+        "sir", "mcparr_add_media", "not_delivered"
+    )
 
 
 async def test_user_moves_on(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -283,7 +294,7 @@ async def test_user_moves_on(sessions: async_sessionmaker[AsyncSession]) -> None
     assert html.endswith("<i>Cancelled: you sent a new message.</i>")
     # The new turn saw that the film was not added.
     seen = user_messages(s.model, 1)
-    not_done = notices.input_not_done("sir", "mcparr_add_media", "new_message")
+    not_done = inputs_notices.input_not_done("sir", "mcparr_add_media", "new_message")
     assert seen[-2:] == [not_done, "never mind, what's downloading?"]
 
 

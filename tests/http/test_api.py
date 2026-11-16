@@ -12,10 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
 from alfred.agent.turn import TurnResult
-from alfred.config import Service
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.http.api import create_app
+from alfred.http.config import Service
 from alfred.kernel.users import Users
 from alfred.telegram.bot import TelegramOutbox
 from alfred.turns.inputs.parking import Parking

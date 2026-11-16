@@ -29,8 +29,8 @@ from alfred.kernel.toolset import parse_arguments
 from alfred.kernel.turn import AskTurn, ReminderTurn, Resume, TurnInput
 from alfred.kernel.users import User
 from alfred.llm.chat import ToolCall
-from alfred.telegram.questions import reminder_label, title
 from alfred.turns.inputs.store import EndReason, RequestRow
+from alfred.turns.inputs.titles import reminder_label, title
 
 log = logging.getLogger(__name__)
 

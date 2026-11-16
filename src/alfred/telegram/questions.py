@@ -1,10 +1,9 @@
-"""Question messages: their title, Telegram HTML and buttons, and their outcome.
+"""Question messages: their Telegram HTML and buttons, and their outcome.
 
-Written by alfred, never by the model. The title says what asked: the user's
-own request, the service of an ``/ask``, or the reminder by number and text.
-``detail`` (a call's arguments as JSON) is preformatted and cut, with a
-marker, so the whole message fits one Telegram message with its buttons and
-the outcome line added later.
+Written by alfred, never by the model; the title is already on the question
+(``alfred.turns.inputs.titles``). ``detail`` (a call's arguments as JSON) is
+preformatted and cut, with a marker, so the whole message fits one Telegram
+message with its buttons and the outcome line added later.
 
 Each button's ``callback_data`` is ``ir:<request id>:<option index>``, well
 under Telegram's 64 bytes.
@@ -25,30 +24,12 @@ _OUTCOME_RESERVE = 200
 _MAX_BODY_CHARS = 1000
 _BUTTONS_PER_ROW = 2
 _CALLBACK = re.compile(r"ir:(\d+):(\d+)")
-
-
-ENDED_LINES = {
+# Why a question ended unanswered, by its request's cancel reason.
+_ENDED_LINES = {
     "new_message": "Cancelled: you sent a new message.",
     "expired": "Expired: no answer in time.",
     "not_delivered": "Cancelled.",
 }
-
-
-def title(kind: str, *, source: str | None = None, reminder: str | None = None) -> str:
-    """What asked, by the turn's kind: ``chat``, ``ask`` or ``reminder``.
-
-    ``reminder`` is ``#12 (call mum)``.
-    """
-    if kind == "ask":
-        return f"For a request from {source}:"
-    if kind == "reminder":
-        return f"For reminder {reminder}:"
-    return "For your request:"
-
-
-def reminder_label(reminder_id: int | None, text: str) -> str:
-    short = text if len(text) <= 60 else text[:59] + "…"
-    return f"#{reminder_id} ({short})"
 
 
 def question_html(question: Question) -> str:
@@ -83,6 +64,11 @@ def answered_line(label: str) -> str:
     if label == CANCEL:
         return "Cancelled."
     return f"Answered: {label}"
+
+
+def ended_html(question: Question, reason: str | None) -> str:
+    """The message of a question that ended unanswered, saying why (a cancel reason)."""
+    return outcome_html(question, _ENDED_LINES.get(reason or "", "Cancelled."))
 
 
 def outcome_html(question: Question, line: str) -> str:

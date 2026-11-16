@@ -21,11 +21,12 @@ from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.store import StoreError, _StoredObject
 from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
-from alfred.config import Config, QueueConfig, Service, _AIConfig, _MemoryConfig, _ServerConfig
+from alfred.config import Config, _AIConfig, _MemoryConfig
 from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.facts.tools import FactTools
+from alfred.http.config import ServerConfig, Service
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall
@@ -34,6 +35,7 @@ from alfred.mcp.config import McpConfig, McpServer
 from alfred.reminders.config import RemindersConfig
 from alfred.reminders.tools import ReminderTools
 from alfred.turns.background import Sweeper
+from alfred.turns.config import QueueConfig
 from alfred.turns.queue import Queue
 from alfred.web.config import WebConfig
 from alfred.web.tools import WebTools
@@ -71,7 +73,7 @@ def make_config(
         history=HistoryConfig(**(history or {})),
         queue=QueueConfig(**(queue or {})),
         mcp=McpConfig(list_timeout_s=5, call_timeout_s=5),
-        server=_ServerConfig(),
+        server=ServerConfig(),
         services=tuple(services),
         mcp_servers=tuple(mcp_servers),
         telegram_bot_token=SecretStr("123:test"),
@@ -312,3 +314,12 @@ def make_sweeper(
         quiet_s=cfg.memory.summary_quiet_s,
         retry=cfg.queue,
     )
+
+
+ADDRESSES = ("sir", "Mr. Ferreira", "madam")
+
+
+def assert_addressed(text: str, address: str, *, after: str = "") -> None:
+    """A fixed notice ends its first clause, before ``after``, with ``address``, once."""
+    assert text.removesuffix(after).endswith(f", {address}.")
+    assert text.count(address) == 1

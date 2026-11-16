@@ -1,4 +1,9 @@
-"""Fixed notices about a user's file, sent without the model (see ``alfred.notices``)."""
+"""Fixed notices about a user's file, sent without the model.
+
+Like every notice, they speak in the butler's register and end their first
+clause with the user's form of address, used exactly as configured; they are
+not configurable, even with a custom persona (AGENTS.md, "Notices").
+"""
 
 from __future__ import annotations
 

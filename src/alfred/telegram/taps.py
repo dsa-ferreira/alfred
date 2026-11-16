@@ -20,7 +20,7 @@ from aiogram.enums import ChatType
 from aiogram.types import CallbackQuery
 
 from alfred.kernel.users import User, Users
-from alfred.telegram.questions import ENDED_LINES, answered_line, outcome_html, parse_callback
+from alfred.telegram.questions import answered_line, ended_html, outcome_html, parse_callback
 from alfred.turns.inputs.store import InputRequests
 
 log = logging.getLogger(__name__)
@@ -29,16 +29,12 @@ _NO_LONGER_OPEN = "That question is no longer open."
 _NOT_YOURS = "That question isn't yours to answer."
 
 
-class QuestionEditor(Protocol):
-    async def edit_question(self, user: User, message_id: int, html: str) -> None: ...
-
-
 class Taps:
     def __init__(
         self,
         users: Users,
         requests: InputRequests,
-        outbox: QuestionEditor,
+        outbox: _QuestionEditor,
         notify: Callable[[], None],
     ) -> None:
         self._users = users
@@ -68,7 +64,7 @@ class Taps:
             await self._acknowledge(callback, _NO_LONGER_OPEN)
             ended = result.request
             if result.expired and ended is not None and ended.telegram_message_id is not None:
-                html = outcome_html(ended.question, ENDED_LINES["expired"])
+                html = ended_html(ended.question, "expired")
                 await self._outbox.edit_question(user, ended.telegram_message_id, html)
             return
         assert result.request is not None and result.label is not None
@@ -94,3 +90,7 @@ class Taps:
             await callback.answer(text)
         except Exception as exc:
             log.warning("could not answer a button tap: %s", type(exc).__name__)
+
+
+class _QuestionEditor(Protocol):
+    async def edit_question(self, user: User, message_id: int, html: str) -> None: ...

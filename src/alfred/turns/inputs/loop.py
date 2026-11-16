@@ -18,10 +18,9 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from typing import Protocol
 
-from alfred.kernel.users import Users
-from alfred.telegram.questions import ENDED_LINES, outcome_html
-from alfred.telegram.taps import QuestionEditor
+from alfred.kernel.users import User, Users
 from alfred.times import seconds_to_next_check
 from alfred.turns.inputs.store import InputRequests, RequestRow
 
@@ -29,7 +28,7 @@ log = logging.getLogger(__name__)
 
 
 def cancel_on_new_message(
-    requests: InputRequests, outbox: QuestionEditor, users: Users
+    requests: InputRequests, outbox: _QuestionEditor, users: Users
 ) -> Callable[[str], Awaitable[None]]:
     """The queue's ``before_user_message``: a user's new message cancels their waiting turns."""
 
@@ -44,7 +43,7 @@ def cancel_on_new_message(
 
 async def run_expiry_loop(
     requests: InputRequests,
-    outbox: QuestionEditor,
+    outbox: _QuestionEditor,
     users: Users,
     interval_s: float,
     *,
@@ -61,22 +60,29 @@ async def run_expiry_loop(
         await sleep(seconds_to_next_check(now(), interval_s))
 
 
-async def _edit_ended(outbox: QuestionEditor, users: Users, ended: Sequence[RequestRow]) -> None:
+async def _edit_ended(outbox: _QuestionEditor, users: Users, ended: Sequence[RequestRow]) -> None:
     """Edit each ended request's question message to say why it ended, without buttons."""
     for request in ended:
         user = users.get(request.user_name)
         if user is None or request.telegram_message_id is None:
             continue
-        line = ENDED_LINES.get(request.cancel_reason or "", "Cancelled.")
-        html = outcome_html(request.question, line)
-        await outbox.edit_question(user, request.telegram_message_id, html)
+        await outbox.ended(user, request, request.cancel_reason)
 
 
 async def _expire_once(
-    requests: InputRequests, outbox: QuestionEditor, users: Users
+    requests: InputRequests, outbox: _QuestionEditor, users: Users
 ) -> list[RequestRow]:
     ended = await requests.expire_due()
     if ended:
         log.info("%d input request(s) expired: %s", len(ended), [r.id for r in ended])
         await _edit_ended(outbox, users, ended)
     return ended
+
+
+class _QuestionEditor(Protocol):
+    """Where question messages are shown (Telegram)."""
+
+    async def ended(self, user: User, request: RequestRow, reason: str | None) -> None:
+        """Edit the request's question message to say it ended for ``reason``, without
+        its buttons. Failures are only logged."""
+        ...

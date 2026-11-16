@@ -39,13 +39,14 @@ from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BotCommand, CallbackQuery, Message
 
-from alfred import notices
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
 from alfred.facts import notices as facts_notices
 from alfred.kernel.questions import Question
 from alfred.kernel.users import User, Users
+from alfred.telegram import notices as telegram_notices
 from alfred.telegram.formatting import split_for_telegram, split_markdown
-from alfred.telegram.questions import keyboard, question_html
+from alfred.telegram.questions import ended_html, keyboard, question_html
+from alfred.turns.inputs.store import RequestRow
 from alfred.turns.queue import Queue
 
 log = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ def make_dispatcher(
             else:
                 files.append(file)
         caption = next((p.caption for p in parts if p.caption), "")
-        texts = [notices.unsupported(user.address)] * refused
+        texts = [telegram_notices.unsupported(user.address)] * refused
         if files:
             received = await intake.receive(user, caption, files, parts[0].message_id)
             texts += received.notices
@@ -198,7 +199,7 @@ def make_dispatcher(
             log.info("queued %s's message %s as item %s", user.name, message.message_id, item_id)
             return
         if intake is None:
-            await message.answer(notices.text_only(user.address), parse_mode=None)
+            await message.answer(telegram_notices.text_only(user.address), parse_mode=None)
             return
         if message.media_group_id is not None:
             albums.add(message)
@@ -238,6 +239,13 @@ class TelegramOutbox:
             reply_markup=keyboard(request_id, question),
         )
         return sent.message_id
+
+    async def ended(self, user: User, request: RequestRow, reason: str | None) -> None:
+        """Edit an unanswered question's message to say why it ended (the expiry loop's)."""
+        if request.telegram_message_id is not None:
+            await self.edit_question(
+                user, request.telegram_message_id, ended_html(request.question, reason)
+            )
 
     async def edit_question(self, user: User, message_id: int, html: str) -> None:
         """Replace a question message's text and remove its buttons. Failures are only logged."""

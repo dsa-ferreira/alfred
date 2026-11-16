@@ -10,7 +10,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
+from alfred.agent import notices
 from alfred.agent.messages import _STAMP
 from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult

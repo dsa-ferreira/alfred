@@ -58,7 +58,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred import notices
+from alfred.agent import notices
 from alfred.agent.context import context_sizes, largest_tools
 from alfred.agent.inline import ImageCache, InlineAttachments
 from alfred.agent.messages import stamped, strip_stamp, to_messages

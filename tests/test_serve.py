@@ -25,10 +25,10 @@ from alfred.attachments.sweeper import OrphanSweeper
 from alfred.attachments.tools import AttachmentTools
 from alfred.brains.config import BrainEntry
 from alfred.brains.tools import BrainTools
-from alfred.config import _ServerConfig
 from alfred.conversations.idle import IdleCloser
 from alfred.conversations.tools import ConversationTools
 from alfred.facts.tools import FactTools
+from alfred.http.config import ServerConfig
 from alfred.mcp.toolset import McpTools
 from alfred.reminders.tools import ReminderTools
 from alfred.toolbox.calculator import CalculatorTools
@@ -93,7 +93,7 @@ def serve_config(database_url: str, port: int):  # type: ignore[no-untyped-def]
     return type(base)(
         **{
             **base.__dict__,
-            "server": _ServerConfig(host="127.0.0.1", port=port),
+            "server": ServerConfig(host="127.0.0.1", port=port),
             "database_url": SecretStr(database_url),
         }
     )

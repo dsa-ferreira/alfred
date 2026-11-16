@@ -5,9 +5,10 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
-from alfred.config import QueueConfig, _MemoryConfig
+from alfred.config import _MemoryConfig
 from alfred.conversations.store import History
 from alfred.conversations.transcript import TranscriptEntry, render
+from alfred.turns.config import QueueConfig
 from tests.archive.test_recall import memory
 from tests.helpers import FakeEmbedder, FakeModel, owner_with_files, pdf_file, text
 

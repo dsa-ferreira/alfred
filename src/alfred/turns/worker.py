@@ -33,16 +33,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
-from alfred import notices
+from alfred.agent import notices as agent_notices
 from alfred.agent.turn import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
-from alfred.config import QueueConfig
 from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.kernel.outbox import Outbox
 from alfred.kernel.turn import TurnInput
 from alfred.kernel.users import User, Users
+from alfred.turns import notices as turns_notices
+from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import RequestRow
 from alfred.turns.kinds import AskKind, ChatKind, Kind, ReminderKind, ReminderLookup
@@ -125,7 +126,7 @@ class Worker:
                 await kind.turn(item, user),
                 TurnFailed(
                     "stopped while an answered call was running; not run again",
-                    notices.failed(user.address, True),
+                    agent_notices.failed(user.address, True),
                     retryable=False,
                     side_effects_possible=True,
                 ),
@@ -151,7 +152,7 @@ class Worker:
                 turn,
                 TurnFailed(
                     f"internal error: {type(exc).__name__}",
-                    notices.failed(user.address, request is not None),
+                    agent_notices.failed(user.address, request is not None),
                     retryable=False,
                     side_effects_possible=True,
                 ),
@@ -185,7 +186,7 @@ class Worker:
             return
         admin = self._users.admin
         for recipient in (user,) if admin.name == user.name else (user, admin):
-            notice = notices.fell_back(recipient.address, fallback.failed, fallback.default)
+            notice = turns_notices.fell_back(recipient.address, fallback.failed, fallback.default)
             await self._send(item, recipient, notice)
 
     async def _turn_failed(self, item: QueueItem, turn: TurnInput, failure: TurnFailed) -> None:
