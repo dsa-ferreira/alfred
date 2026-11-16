@@ -30,8 +30,8 @@ from zoneinfo import ZoneInfo
 from alfred import notices
 from alfred.agent.prompts import is_no_reply
 from alfred.agent.turn import TurnFailed
+from alfred.conversations.store import History
 from alfred.db.models import QueueItem
-from alfred.history import History
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.kernel.users import User
 from alfred.reminders.store import ReminderRow

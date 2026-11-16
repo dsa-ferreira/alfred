@@ -17,7 +17,7 @@ from mcp.server import MCPServer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.config import QueueConfig
-from alfred.history import History
+from alfred.conversations.store import History
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message
 from alfred.inputs.parking import Parking

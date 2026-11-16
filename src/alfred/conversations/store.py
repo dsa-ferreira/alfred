@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.attachments.handles import AttachmentRef, refs_by_entry
-from alfred.db.conversations import current_id
+from alfred.conversations.current import current_id
 from alfred.db.models import (
     Attachment,
     Conversation,

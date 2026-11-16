@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from alfred.memory.transcript import (
+from alfred.conversations.transcript import (
     _SUMMARY_PROMPT,
     SummaryParseError,
     TranscriptEntry,

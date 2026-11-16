@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.history import History
+from alfred.conversations.store import History
+from alfred.conversations.transcript import TranscriptEntry, render
 from alfred.memory.summaries import Summaries
-from alfred.memory.transcript import TranscriptEntry, render
 from tests.helpers import FakeEmbedder, FakeModel, make_config, owner_with_files, pdf_file, text
 from tests.memory.test_recall import memory
 

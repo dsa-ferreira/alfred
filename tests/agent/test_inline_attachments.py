@@ -16,7 +16,7 @@ from alfred.agent.turn import Agent
 from alfred.attachments.config import AttachmentsConfig
 from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
-from alfred.history import History
+from alfred.conversations.store import History
 from alfred.kernel.turn import AskTurn, ChatTurn
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf

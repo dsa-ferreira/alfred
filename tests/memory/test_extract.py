@@ -10,8 +10,8 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.conversations.store import History
 from alfred.db.models import Conversation, Fact
-from alfred.history import History
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.memory.extract import FactExtractionJob
 from alfred.memory.facts import FactStore

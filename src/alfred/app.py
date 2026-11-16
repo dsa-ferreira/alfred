@@ -36,9 +36,10 @@ from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
 from alfred.brains.tools import BrainTools
 from alfred.config import Config
+from alfred.conversations.idle import IdleCloser
+from alfred.conversations.store import History
+from alfred.conversations.tools import ConversationTools
 from alfred.db.engine import make_engine, make_session_factory
-from alfred.history import History
-from alfred.idle import IdleCloser
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
 from alfred.inputs.parking import Parking
@@ -68,7 +69,6 @@ from alfred.telegram.bot import (
 )
 from alfred.toolbox.calculator import CalculatorTools
 from alfred.toolbox.dates import DateTools
-from alfred.tools.conversation import ConversationTools
 from alfred.web.tools import WebTools
 from alfred.worker import Worker
 

@@ -18,8 +18,8 @@ from alfred.agent.prompts import _CALCULATE, _DATE, _operating_rules
 from alfred.agent.turn import Agent, TurnResult
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
+from alfred.conversations.store import History
 from alfred.db.models import TurnToolCall
-from alfred.history import History
 from alfred.kernel.turn import ChatTurn, ReminderTurn, Resume, TurnInput
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelReply

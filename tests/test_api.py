@@ -14,8 +14,8 @@ from alfred.agent.prompts import _NO_REPLY
 from alfred.agent.turn import TurnResult
 from alfred.api import create_app
 from alfred.config import Service
+from alfred.conversations.store import History
 from alfred.db.models import QueueItem
-from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.kernel.users import Users
 from alfred.queue import Queue

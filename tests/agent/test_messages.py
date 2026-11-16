@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from alfred.agent.messages import strip_stamp, to_messages
-from alfred.history import HistoryEntry
+from alfred.conversations.store import HistoryEntry
 
 LISBON = ZoneInfo("Europe/Lisbon")
 AT = datetime(2026, 11, 9, 14, 5, tzinfo=UTC)  # 14:05 in Lisbon (WET)

@@ -30,8 +30,8 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
+from alfred.conversations.store import History
 from alfred.db.models import InputRequest, QueueItem
-from alfred.history import History
 from alfred.kernel.questions import Question
 from alfred.kernel.users import Users
 from alfred.queue import turn_kind

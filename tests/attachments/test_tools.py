@@ -22,7 +22,7 @@ from alfred.attachments.tools import (
 )
 from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
-from alfred.history import History
+from alfred.conversations.store import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput

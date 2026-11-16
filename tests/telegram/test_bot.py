@@ -19,8 +19,8 @@ from alfred import notices
 from alfred.attachments import notices as attachments_notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, Intake
+from alfred.conversations.store import History
 from alfred.db.models import Attachment, QueueItem
-from alfred.history import History
 from alfred.inputs import render
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message
@@ -398,7 +398,7 @@ async def test_long_replies_are_split() -> None:
 
 
 async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSession]) -> None:
-    from alfred.history import History
+    from alfred.conversations.store import History
     from alfred.llm.chat import ModelFailed
     from alfred.worker import Worker
     from tests.helpers import FakeModel, make_agent, make_config, text

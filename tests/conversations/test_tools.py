@@ -3,10 +3,10 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
-from alfred.history import History
+from alfred.conversations.store import History
+from alfred.conversations.tools import _END_CONVERSATION, ConversationTools
 from alfred.kernel.toolset import AttemptContext
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
-from alfred.tools.conversation import _END_CONVERSATION, ConversationTools
 from tests.agent.turn_helpers import agent, owner_turn
 from tests.helpers import DIOGO, FakeModel, add_queue_item, calls, text
 

@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Protocol
 
-from alfred.memory.transcript import TranscriptEntry, clean
+from alfred.conversations.transcript import TranscriptEntry, clean
 
 # The entry kinds extraction reads.
 _EXTRACTION_KINDS = ("user", "assistant")

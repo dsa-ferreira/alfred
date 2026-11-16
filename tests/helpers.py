@@ -31,8 +31,8 @@ from alfred.config import (
     _ServerConfig,
     _WebConfig,
 )
+from alfred.conversations.store import History
 from alfred.db.models import QueueItem
-from alfred.history import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall

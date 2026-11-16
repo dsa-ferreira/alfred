@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.messages import _STAMP, Inline, strip_stamp, to_messages
 from alfred.attachments.handles import AttachmentRef, handle
+from alfred.conversations.store import History, HistoryEntry
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.db.models import Conversation, Entry, QueueItem, Reminder
-from alfred.history import History, HistoryEntry
 from alfred.kernel.content import ModelImage
 from alfred.reminders.store import Reminders
 from tests.fakes import ignore

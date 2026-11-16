@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from alfred.config import Service
-from alfred.history import History
+from alfred.conversations.store import History
 from alfred.kernel.outbox import Outbox
 from alfred.kernel.users import User, Users
 from alfred.queue import Queue

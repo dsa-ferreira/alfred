@@ -9,12 +9,12 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.conversations.store import History
+from alfred.conversations.transcript import _SUMMARY_PROMPT
 from alfred.db.models import Conversation
-from alfred.history import History
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.llm.embedding import _EmbeddingUnreachable
 from alfred.memory.summaries import Summaries
-from alfred.memory.transcript import _SUMMARY_PROMPT
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
@@ -210,7 +210,7 @@ async def test_summary_stored_without_token_counts(
 
 
 async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSession]) -> None:
-    from alfred.memory.transcript import render
+    from alfred.conversations.transcript import render
     from alfred.reminders.store import Reminders
 
     reminder_id = await Reminders(sessions).set("call mum", NOW, "diogo", ["diogo"])

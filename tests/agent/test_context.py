@@ -9,7 +9,7 @@ from dataclasses import replace
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.history import History
+from alfred.conversations.store import History
 from alfred.kernel.turn import TurnInput
 from alfred.llm.chat import _Usage
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, agent, owner_turn

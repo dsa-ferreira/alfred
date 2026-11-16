@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMINDER_RULE
 from alfred.agent.turn import TurnFailed
-from alfred.history import History
+from alfred.conversations.store import History
+from alfred.conversations.tools import _END_CONVERSATION
 from alfred.inputs.parking import Parking
 from alfred.kernel.turn import AskTurn
 from alfred.kernel.users import Users
@@ -19,7 +20,6 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.toolbox.calculator import _CALCULATE
 from alfred.toolbox.dates import _DATE
-from alfred.tools.conversation import _END_CONVERSATION
 from tests.agent.turn_helpers import (
     DUE,
     LISBON,

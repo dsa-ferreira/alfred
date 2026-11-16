@@ -16,7 +16,8 @@ from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_r
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
-from alfred.history import History
+from alfred.conversations.store import History
+from alfred.conversations.tools import _END_CONVERSATION
 from alfred.kernel.access import _DECLINED, AllowList
 from alfred.kernel.content import ModelImage
 from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome
@@ -27,7 +28,6 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET
 from alfred.toolbox.calculator import _CALCULATE
 from alfred.toolbox.dates import _DATE
-from alfred.tools.conversation import _END_CONVERSATION
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH
 from tests.agent.turn_helpers import (
     BAD_MODEL,

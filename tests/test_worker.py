@@ -20,8 +20,9 @@ from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
 from alfred.brains.registry import Brains
 from alfred.config import QueueConfig
+from alfred.conversations.store import History
+from alfred.conversations.tools import _END_CONVERSATION
 from alfred.db.models import Attachment, Entry, QueueItem
-from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
@@ -31,7 +32,6 @@ from alfred.notices import reset_marker
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
-from alfred.tools.conversation import _END_CONVERSATION
 from alfred.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import (

@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.conversations.store import History
 from alfred.db.models import Conversation, Fact, QueueItem
-from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.llm.chat import ModelReply, ModelUnreachable
 from alfred.llm.embedding import _EmbeddingUnreachable

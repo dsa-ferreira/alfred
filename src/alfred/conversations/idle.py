@@ -27,7 +27,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from alfred.history import History
+from alfred.conversations.store import History
 
 log = logging.getLogger(__name__)
 

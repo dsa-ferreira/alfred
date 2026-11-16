@@ -37,8 +37,8 @@ from alfred import notices
 from alfred.agent.turn import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
 from alfred.config import QueueConfig
+from alfred.conversations.store import History
 from alfred.db.models import QueueItem
-from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.inputs.store import RequestRow
 from alfred.kernel.outbox import Outbox

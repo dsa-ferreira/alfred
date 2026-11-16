@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.conversations.store import History
 from alfred.db.models import Entry
-from alfred.history import History
 from alfred.memory.search import _OMITTED, ConversationSearch
 from tests.helpers import FakeEmbedder, make_config
 from tests.memory.test_search import at, seed

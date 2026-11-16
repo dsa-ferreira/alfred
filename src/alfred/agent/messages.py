@@ -15,9 +15,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from alfred.attachments.handles import handle, with_handles
-from alfred.history import HistoryEntry
+from alfred.conversations.store import HistoryEntry
+from alfred.conversations.transcript import recall_label
 from alfred.kernel.content import ModelImage
-from alfred.memory.transcript import recall_label
 from alfred.times import format_when
 
 _UTC_ZONE = ZoneInfo("UTC")

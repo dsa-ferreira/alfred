@@ -25,12 +25,7 @@ from sqlalchemy.orm import aliased
 from alfred.attachments.handles import refs_by_entry
 from alfred.backoff import backoff_s
 from alfred.config import Config
-from alfred.db.models import Conversation, Entry
-from alfred.llm.chat import ModelError, token_counts
-from alfred.llm.embedding import EmbeddingError
-from alfred.llm.protocols import ChatModel, Embedder
-from alfred.llm.streaming import complete_unless_preempted
-from alfred.memory.transcript import (
+from alfred.conversations.transcript import (
     SummaryParseError,
     TranscriptEntry,
     cut_middle,
@@ -38,6 +33,11 @@ from alfred.memory.transcript import (
     render,
     summary_messages,
 )
+from alfred.db.models import Conversation, Entry
+from alfred.llm.chat import ModelError, token_counts
+from alfred.llm.embedding import EmbeddingError
+from alfred.llm.protocols import ChatModel, Embedder
+from alfred.llm.streaming import complete_unless_preempted
 
 log = logging.getLogger(__name__)
 

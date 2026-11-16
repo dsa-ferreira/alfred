@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.app import _TOOLSET_TYPES, _build_toolsets, serve
 from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
+from alfred.conversations.store import History
 from alfred.db.models import Conversation, QueueItem, Reminder, ReminderRecipient
-from alfred.history import History
 from alfred.kernel.access import AllowList
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
 from alfred.kernel.users import Users

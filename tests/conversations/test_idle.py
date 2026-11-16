@@ -9,9 +9,9 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.conversations.idle import IdleCloser
+from alfred.conversations.store import History
 from alfred.db.models import Conversation, Entry, QueueItem
-from alfred.history import History
-from alfred.idle import IdleCloser
 from tests.fakes import QuietQueue, ignore
 from tests.helpers import add_queue_item
 

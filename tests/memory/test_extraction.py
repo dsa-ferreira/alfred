@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from alfred.conversations.transcript import TranscriptEntry, render
 from alfred.memory.extraction import (
     DuplicateParseError,
     ExtractionParseError,
@@ -17,7 +18,6 @@ from alfred.memory.extraction import (
     parse_facts,
     quote_matches,
 )
-from alfred.memory.transcript import TranscriptEntry, render
 
 
 @dataclass(frozen=True)

@@ -22,7 +22,7 @@ from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.handles import AttachmentRef, handle
 from alfred.attachments.loading import load_image
 from alfred.attachments.store import ObjectStore, StoreError
-from alfred.history import HistoryEntry
+from alfred.conversations.store import HistoryEntry
 from alfred.kernel.content import ModelImage
 
 log = logging.getLogger(__name__)

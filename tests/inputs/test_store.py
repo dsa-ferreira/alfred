@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.messages import to_messages
+from alfred.conversations.store import History
 from alfred.db.models import InputRequest, QueueItem
-from alfred.history import History
 from alfred.inputs.store import InputRequests
 from alfred.kernel.questions import Option, Question
 from alfred.kernel.users import Users
