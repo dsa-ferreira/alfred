@@ -346,7 +346,7 @@ def test_resolved_config_repr_hides_secrets(tmp_path: Path) -> None:
 def test_memory_defaults(tmp_path: Path) -> None:
     config = load_config(env_for(write(tmp_path, MINIMAL)))
     memory = config.memory
-    assert config.summary_model == "some-model"  # the [ai] model
+    assert config.memory.summary_model_or(config.ai.model) == "some-model"  # the [ai] model
     assert memory.summary_model is None
     assert memory.embedding_base_url == "http://ragman.lan"
     assert memory.embedding_model == "nomic-embed-text:v1.5"
@@ -375,7 +375,7 @@ search_results = 3
     )
     config = load_config(env_for(write(tmp_path, text)))
     memory = config.memory
-    assert config.summary_model == "small-model"
+    assert config.memory.summary_model_or(config.ai.model) == "small-model"
     assert memory.embedding_base_url == "https://embed.example.com"
     assert memory.embedding_model == "bge-m3"
     assert memory.embedding_timeout_s == 5

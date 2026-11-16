@@ -11,7 +11,8 @@ from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
 from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.facts.duplicate_job import FactDuplicateJob
-from alfred.facts.store import FactEmbeddingJob, FactStore
+from alfred.facts.embedding_job import FactEmbeddingJob
+from alfred.facts.store import FactStore
 from alfred.inputs.parking import Parking
 from alfred.llm.chat import ModelReply, ModelUnreachable
 from alfred.llm.embedding import _EmbeddingUnreachable
@@ -529,7 +530,7 @@ def fact_sweeper(
 ) -> tuple[Sweeper, FactStore]:
     """Fact embedding, then the duplicate check with ``model``, as ``serve`` runs them."""
     cfg = make_config(queue=FAST)
-    facts = FactStore(cfg, sessions, embedder)
+    facts = FactStore(cfg.memory, cfg.queue, sessions, embedder)
     summaries = Summaries(cfg.memory, cfg.queue, sessions, FakeModel(), embedder)
     jobs = [FactEmbeddingJob(facts), FactDuplicateJob(facts, model or FakeModel())]
     return make_sweeper(cfg, sessions, summaries, queue=queue or QuietQueue(), jobs=jobs), facts

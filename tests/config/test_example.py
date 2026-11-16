@@ -10,7 +10,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from alfred.archive.config import ArchiveConfig
 from alfred.config import _FileConfig, _McpServerEntry, _ServiceEntry, _UserEntry, load_config
+from alfred.facts.config import FactsConfig
+from alfred.llm.config import EmbeddingConfig
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "alfred.toml.example"
@@ -148,3 +151,29 @@ def test_mcp_section_documents_server_fields() -> None:
     section = README.read_text().split("## MCP servers", 1)[1].split("\n## ", 1)[0]
     documented = set(re.findall(r"^\| `([a-z_]+)` \|", section, re.M))
     assert documented == set(_McpServerEntry.model_fields)
+
+
+def test_every_memory_key_lands_in_its_feature_section() -> None:
+    """``[memory]`` is one table read as three sections; each key belongs to exactly one."""
+    table = EXAMPLE.read_text().split("\n[memory]\n", 1)[1].split("\n[", 1)[0]
+    keys = {m.group(1) for m in re.finditer(r"^(?:# )?([a-z_]+) = ", table, re.MULTILINE)}
+    sections = (ArchiveConfig, FactsConfig, EmbeddingConfig)
+    for key in keys:
+        owners = [s.__name__ for s in sections if key in s.model_fields]
+        assert len(owners) == 1, (key, owners)
+    assert keys == {f for s in sections for f in s.model_fields}
+    memory = load_config(
+        {
+            "ALFRED_CONFIG": str(EXAMPLE),
+            "ALFRED_TELEGRAM_BOT_TOKEN": "t",
+            "ALFRED_DATABASE_URL": "postgresql://u:p@h/d",
+            "ALFRED_SERVICE_TOKEN_BACKUP": "a",
+            "ALFRED_MCP_TOKEN_MCPARR": "b",
+            "ALFRED_MCP_TOKEN_COOKBOOK": "c",
+            "ALFRED_MCP_TOKEN_MCPARR_ANA": "d",
+        }
+    ).memory
+    assert all(isinstance(memory, s) for s in sections)
+    written = tomllib.loads(EXAMPLE.read_text())["memory"]
+    for key, value in written.items():
+        assert getattr(memory, key) == value, key

@@ -45,8 +45,10 @@ from alfred.conversations.store import History
 from alfred.conversations.tools import ConversationTools
 from alfred.db.engine import make_engine, make_session_factory
 from alfred.facts.duplicate_job import FactDuplicateJob
+from alfred.facts.embedding_job import FactEmbeddingJob
 from alfred.facts.extraction_job import FactExtractionJob
-from alfred.facts.store import FactEmbeddingJob, FactStore, FactTools
+from alfred.facts.store import FactStore
+from alfred.facts.tools import FactTools
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
 from alfred.inputs.parking import Parking
@@ -207,10 +209,11 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     model = ModelClient(config.ai.base_url, config.ai.model, config.ai.request_timeout_s)
     stack.push_async_callback(model.aclose)
     # A second client only when summaries use another model.
+    summary_tag = config.memory.summary_model_or(config.ai.model)
     summary_model = (
         model
-        if config.summary_model == config.ai.model
-        else ModelClient(config.ai.base_url, config.summary_model, config.ai.request_timeout_s)
+        if summary_tag == config.ai.model
+        else ModelClient(config.ai.base_url, summary_tag, config.ai.request_timeout_s)
     )
     if summary_model is not model:
         stack.push_async_callback(summary_model.aclose)
@@ -237,12 +240,19 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
     queue.before_user_message = cancel_on_new_message(inputs, outbox, config.users)
     # User facts: extraction after the summaries, then embedding, which
     # needs no quiet queue, then the duplicate check.
-    facts = FactStore(config, sessions, embedder)
+    facts = FactStore(config.memory, config.queue, sessions, embedder)
     sweeper = Sweeper(
         [
             # Summaries feed search, which users see: first.
             SummaryJob(sessions, summaries),
-            FactExtractionJob(config, sessions, summary_model, facts),
+            FactExtractionJob(
+                config.memory,
+                config.queue,
+                sessions,
+                summary_model,
+                facts,
+                input_max_chars=config.memory.summary_input_max_chars,
+            ),
             FactEmbeddingJob(facts),
             # Needs the model, so only while the queue is quiet.
             FactDuplicateJob(facts, summary_model),
@@ -418,7 +428,7 @@ def _log_startup(config: Config, brains: Brains) -> None:
         brains.current.name,
         ", ".join(f"{b.name}={b.tag}" for b in brains.brains),
         config.ai.base_url,
-        config.summary_model,
+        config.memory.summary_model_or(config.ai.model),
         config.memory.embedding_model,
         config.memory.embedding_base_url,
         config.web.searxng_url,

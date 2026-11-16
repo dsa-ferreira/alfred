@@ -6,7 +6,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.facts.store import _FORGET, _REMEMBER, FactStore, FactTools
+from alfred.facts.store import FactStore
+from alfred.facts.tools import _FORGET, _REMEMBER, FactTools
 from alfred.kernel.turn import AskTurn, TurnInput
 from tests.agent.turn_helpers import agent, owner_turn, reminder_turn
 from tests.helpers import (
@@ -25,7 +26,9 @@ SHELLFISH = "[1] allergic to shellfish (told)"
 
 def tools(sessions: async_sessionmaker[AsyncSession], **memory: object) -> FactTools:
     cfg = make_config(memory=memory)  # type: ignore[arg-type]
-    return FactTools(FactStore(cfg, sessions, FakeEmbedder(default=[1.0, 0.0])), cfg.memory)
+    return FactTools(
+        FactStore(cfg.memory, cfg.queue, sessions, FakeEmbedder(default=[1.0, 0.0])), cfg.memory
+    )
 
 
 def system(model: FakeModel, request: int = 0) -> str:

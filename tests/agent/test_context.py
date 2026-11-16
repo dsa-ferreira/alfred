@@ -194,11 +194,12 @@ async def _facts_turn(
     count: int,
     budget: int = 3000,
 ) -> tuple[TurnInput, FakeModel]:
-    from alfred.facts.store import FactStore, FactTools
+    from alfred.facts.store import FactStore
+    from alfred.facts.tools import FactTools
     from tests.helpers import FakeEmbedder
 
     cfg = make_config(memory={"facts_in_context": True})
-    store = FactStore(cfg, sessions, FakeEmbedder(default=[1.0]))
+    store = FactStore(cfg.memory, cfg.queue, sessions, FakeEmbedder(default=[1.0]))
     for i in range(count):
         await store.add("diogo", f"secret fact {i:02}", "learned")
     model = FakeModel([text("ok")])

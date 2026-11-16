@@ -41,6 +41,7 @@ from aiogram.types import BotCommand, CallbackQuery, Message
 
 from alfred import notices
 from alfred.attachments.intake import DownloadFailed, IncomingFile, Intake
+from alfred.facts import notices as facts_notices
 from alfred.inputs.render import keyboard, question_html
 from alfred.kernel.questions import Question
 from alfred.kernel.users import User, Users
@@ -108,17 +109,19 @@ class MemoryCommand:
             facts = await self._facts.list(user.name)
             log.info("listed %s's facts (%d)", user.name, len(facts))
             if not facts:
-                return [notices.memory_none(user.address)]
-            text = "\n".join([notices.memory_list(user.address), *map(self._line, facts)])
+                return [facts_notices.memory_none(user.address)]
+            text = "\n".join([facts_notices.memory_list(user.address), *map(self._line, facts)])
             return split_markdown(text)
         ids = [_fact_id(w) for w in words[1:]]
         if words[0].lower() != "forget" or not ids or None in ids:
-            return [notices.memory_usage(user.address)]
+            return [facts_notices.memory_usage(user.address)]
         removed, missing = await self._facts.forget(user.name, [i for i in ids if i is not None])
         log.info(
             "%s forgot %d fact(s) with /memory, %d not found", user.name, len(removed), len(missing)
         )
-        text = notices.memory_forgot(user.address, [self._line(f) for f in removed], list(missing))
+        text = facts_notices.memory_forgot(
+            user.address, [self._line(f) for f in removed], list(missing)
+        )
         return split_markdown(text)
 
     def _line(self, fact: _Fact) -> str:

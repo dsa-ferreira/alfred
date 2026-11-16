@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Fact
-from alfred.facts.store import _DUPLICATE_CANDIDATES, FactStore, _DuplicateCheck, _FactsNotFound
+from alfred.facts.store import _DUPLICATE_CANDIDATES, FactsNotFound, FactStore, _DuplicateCheck
 from alfred.llm.embedding import _EmbeddingUnreachable
 from tests.helpers import FakeEmbedder, make_config
 
@@ -26,7 +26,13 @@ def store(
         queue={"retry_initial_s": 30, "retry_max_s": 900},
         memory=memory,  # type: ignore[arg-type]
     )
-    return FactStore(cfg, sessions, embedder or FakeEmbedder(default=[1.0, 0.0]), now=lambda: NOW)
+    return FactStore(
+        cfg.memory,
+        cfg.queue,
+        sessions,
+        embedder or FakeEmbedder(default=[1.0, 0.0]),
+        now=lambda: NOW,
+    )
 
 
 async def fact(sessions: async_sessionmaker[AsyncSession], fact_id: int) -> Fact:
@@ -88,7 +94,7 @@ async def test_add_with_foreign_or_unknown_replaces_changes_nothing(
     facts = store(sessions)
     mine, _ = await facts.add("ana", "likes tea", "told")
     theirs, _ = await facts.add("diogo", "lives in Lisbon", "told")
-    with pytest.raises(_FactsNotFound) as exc:
+    with pytest.raises(FactsNotFound) as exc:
         await facts.add("ana", "likes coffee", "told", replaces=[mine, theirs, 999])
     assert exc.value.ids == [theirs, 999]
     assert [f.text for f in await facts.list("ana")] == ["likes tea"]

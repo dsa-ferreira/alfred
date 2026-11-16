@@ -19,8 +19,10 @@ from alfred import notices
 from alfred.attachments import notices as attachments_notices
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, Intake
+from alfred.config import QueueConfig, _MemoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import Attachment, QueueItem
+from alfred.facts import notices as facts_notices
 from alfred.facts.store import FactStore
 from alfred.inputs import render
 from alfred.inputs.callbacks import Taps
@@ -595,9 +597,9 @@ def memory_dispatcher(
     from zoneinfo import ZoneInfo
 
     from alfred.telegram.bot import MemoryCommand
-    from tests.helpers import FakeEmbedder, make_config
+    from tests.helpers import FakeEmbedder
 
-    store = FactStore(make_config(), sessions, FakeEmbedder(default=[1.0]))
+    store = FactStore(_MemoryConfig(), QueueConfig(), sessions, FakeEmbedder(default=[1.0]))
     memory = MemoryCommand(store, ZoneInfo("Europe/Lisbon"))
     return make_dispatcher(
         USERS, Queue(sessions), memory=memory, intake=None, on_tap=no_taps
@@ -628,7 +630,7 @@ async def test_memory_lists_the_users_facts(
     await store.add("ana", "likes tea", "told")
     [text] = await memory_texts(sessions, dispatcher, command)
     lines = text.splitlines()
-    assert lines[0] == notices.memory_list("sir")
+    assert lines[0] == facts_notices.memory_list("sir")
     assert [line.rsplit(", ", 1)[0] for line in lines[1:]] == [
         "[1] allergic to shellfish (told",
         "[2] runs a homelab (learned",
@@ -703,7 +705,7 @@ async def test_memory_forget_some_not_found(sessions: async_sessionmaker[AsyncSe
 async def test_memory_usage(sessions: async_sessionmaker[AsyncSession], text: str) -> None:
     dispatcher, store = memory_dispatcher(sessions)
     await store.add("diogo", "allergic to shellfish", "told")
-    assert await memory_texts(sessions, dispatcher, text) == [notices.memory_usage("sir")]
+    assert await memory_texts(sessions, dispatcher, text) == [facts_notices.memory_usage("sir")]
     assert len(await store.list("diogo")) == 1
 
 
@@ -1021,11 +1023,11 @@ async def test_memory_command_leaves_the_turn_waiting(
     from zoneinfo import ZoneInfo
 
     from alfred.telegram.bot import MemoryCommand
-    from tests.helpers import FakeEmbedder, make_config
+    from tests.helpers import FakeEmbedder
 
     bot, session = make_bot()
     queue, requests, item = await waiting_for_diogo(sessions, bot)
-    store = FactStore(make_config(), sessions, FakeEmbedder(default=[1.0]))
+    store = FactStore(_MemoryConfig(), QueueConfig(), sessions, FakeEmbedder(default=[1.0]))
     dispatcher = make_dispatcher(
         USERS,
         queue,

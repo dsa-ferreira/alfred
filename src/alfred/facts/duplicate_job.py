@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from alfred.facts.extraction_prompt import DuplicateParseError, duplicate_messages, parse_duplicates
+from alfred.facts.duplicate_prompt import DuplicateParseError, duplicate_messages, parse_duplicates
 from alfred.facts.store import FactStore
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.protocols import ChatModel

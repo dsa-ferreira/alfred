@@ -7,7 +7,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.config import load_config
-from alfred.facts.store import _FORGET, _REMEMBER, FactStore, FactTools
+from alfred.facts.store import FactStore
+from alfred.facts.tools import _FORGET, _REMEMBER, FactTools
 from alfred.kernel.access import AllowList, Gated
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
@@ -25,7 +26,7 @@ def fact_tools(
     **memory: object,
 ) -> FactTools:
     cfg = make_config(memory=memory)  # type: ignore[arg-type]
-    store = FactStore(cfg, sessions, embedder or FakeEmbedder(default=[1.0, 0.0]))
+    store = FactStore(cfg.memory, cfg.queue, sessions, embedder or FakeEmbedder(default=[1.0, 0.0]))
     return FactTools(store, cfg.memory)
 
 

@@ -37,14 +37,15 @@ from alfred.archive.config import ArchiveConfig
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.brains.config import BrainsConfig
 from alfred.conversations.config import HistoryConfig
+from alfred.facts.config import FactsConfig
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
+from alfred.llm.config import EmbeddingConfig
 from alfred.settings import (
     TOKEN_ENV,
     ConfigError,
     HttpUrlStr,
     Name,
-    NonNegativeInt,
     PositiveFloat,
     PositiveInt,
     Section,
@@ -75,28 +76,6 @@ class QueueConfig(Section):
         if self.retry_max_s < self.retry_initial_s:
             raise ValueError("retry_max_s must not be smaller than retry_initial_s")
         return self
-
-
-class MemoryConfig(ArchiveConfig):
-    """``[memory]``: the archive's part comes from :class:`ArchiveConfig`."""
-
-    embedding_base_url: HttpUrlStr = "http://ragman.lan"
-    embedding_model: Annotated[str, Field(min_length=1)] = "nomic-embed-text:v1.5"
-    embedding_timeout_s: PositiveFloat = 30
-    document_prefix: str = "search_document: "
-    query_prefix: str = "search_query: "
-    # User facts. Off: facts are learned, remembered and listed by
-    # /memory, but sent in no prompt.
-    facts_in_context: bool = False
-    # Most characters of facts in one system prompt.
-    facts_context_max_chars: PositiveInt = 3000
-    # Longest fact; longer learned facts are cut, longer remembered ones refused.
-    fact_max_chars: PositiveInt = 300
-    # Failed extractions of one conversation before giving up. 0: never.
-    facts_extraction_max_attempts: NonNegativeInt = 0
-    # Cosine distance within which a user's facts are checked for duplicates by
-    # the model. Distance alone decides nothing.
-    facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
 @dataclass(frozen=True)
@@ -171,6 +150,10 @@ class _AIConfig(BrainsConfig):
     timezone: TimeZoneName = "Europe/Lisbon"
 
 
+class _MemoryConfig(ArchiveConfig, FactsConfig, EmbeddingConfig):
+    """``[memory]``: one table, read as the archive's, the facts' and the embedding's sections."""
+
+
 @dataclass(frozen=True)
 class Config:
     """The validated configuration with its secrets resolved."""
@@ -185,18 +168,13 @@ class Config:
     mcp_servers: tuple[McpServer, ...]
     telegram_bot_token: SecretStr
     database_url: SecretStr
-    memory: MemoryConfig = MemoryConfig()
+    memory: _MemoryConfig = _MemoryConfig()
     web: _WebConfig = _WebConfig()
     reminders: _RemindersConfig = _RemindersConfig()
     input_requests: _InputRequestsConfig = _InputRequestsConfig()
     attachments: AttachmentsConfig | None = None
     # Set exactly when ``attachments`` is.
     s3_key: S3Key | None = None
-
-    @property
-    def summary_model(self) -> str:
-        """The model that summarises ended conversations: ``[memory]``'s, else ``[ai]``'s."""
-        return self.memory.summary_model or self.ai.model
 
     def servers_for(self, user: User) -> tuple[McpServer, ...]:
         """The MCP servers with the token to use on ``user``'s turns."""
@@ -371,7 +349,7 @@ class _FileConfig(Section):
     ai: _AIConfig = _AIConfig()
     history: HistoryConfig = HistoryConfig()
     queue: QueueConfig = QueueConfig()
-    memory: MemoryConfig = MemoryConfig()
+    memory: _MemoryConfig = _MemoryConfig()
     web: _WebConfig = _WebConfig()
     reminders: _RemindersConfig = _RemindersConfig()
     input_requests: _InputRequestsConfig = _InputRequestsConfig()

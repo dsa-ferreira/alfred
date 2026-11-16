@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.archive.summaries import Summaries
-from alfred.config import MemoryConfig, QueueConfig
+from alfred.config import QueueConfig, _MemoryConfig
 from alfred.conversations.store import History
 from alfred.conversations.transcript import TranscriptEntry, render
 from tests.archive.test_recall import memory
@@ -41,7 +41,7 @@ async def test_summary_transcript_has_no_pdf_text(
     cid = await archive_with_invoice(sessions)
     model = FakeModel([text("Title: Invoice filed\nSummary: An invoice was filed.")])
     summaries = Summaries(
-        MemoryConfig(), QueueConfig(), sessions, model, FakeEmbedder(default=[1.0])
+        _MemoryConfig(), QueueConfig(), sessions, model, FakeEmbedder(default=[1.0])
     )
     assert await summaries.summarise(cid) == "Invoice filed"
     transcript = model.requests[0][0][1]["content"]

@@ -30,10 +30,10 @@ from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.backoff import backoff_s
-from alfred.config import Config
+from alfred.backoff import RetryDelays, backoff_s
 from alfred.conversations.transcript import cut_middle, load_transcript, render
 from alfred.db.models import Conversation
+from alfred.facts.config import FactsConfig
 from alfred.facts.extraction_prompt import (
     ExtractionParseError,
     NewFact,
@@ -55,15 +55,19 @@ class FactExtractionJob:
 
     def __init__(
         self,
-        config: Config,
+        memory: FactsConfig,
+        retry: RetryDelays,
         sessions: async_sessionmaker[AsyncSession],
         model: ChatModel,
         facts: FactStore,
         *,
+        input_max_chars: int,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        self._config = config
-        self._memory = config.memory
+        self._memory = memory
+        self._retry = retry
+        # The longest transcript sent, as for a summary.
+        self._input_max_chars = input_max_chars
         self._sessions = sessions
         self._model = model
         self._facts = facts
@@ -125,7 +129,7 @@ class FactExtractionJob:
             log.info("conversation %s facts: no message from its user", conversation_id)
             return
 
-        transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
+        transcript = cut_middle(render(entries), self._input_max_chars)
         known = await self._facts.list(user)
         messages = extraction_messages(user, known, transcript)
         try:
@@ -242,9 +246,7 @@ class FactExtractionJob:
                         attempts,
                     )
                     return
-                delay = backoff_s(
-                    attempts, self._config.queue.retry_initial_s, self._config.queue.retry_max_s
-                )
+                delay = backoff_s(attempts, self._retry.retry_initial_s, self._retry.retry_max_s)
                 await session.execute(
                     update(Conversation)
                     .where(Conversation.id == conversation_id)

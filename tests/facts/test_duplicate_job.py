@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.archive.summaries import Summaries
 from alfred.db.models import Fact
 from alfred.facts.duplicate_job import FactDuplicateJob
-from alfred.facts.store import FactEmbeddingJob, FactStore
+from alfred.facts.embedding_job import FactEmbeddingJob
+from alfred.facts.store import FactStore
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.queue import Queue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, make_sweeper, text
@@ -37,7 +38,13 @@ def job(
     clock: Clock | None = None,
 ) -> tuple[FactDuplicateJob, FactStore]:
     cfg = make_config(queue={"retry_initial_s": 30, "retry_max_s": 900})
-    facts = FactStore(cfg, sessions, embedder or FakeEmbedder(default=CLOSE), now=clock or Clock())
+    facts = FactStore(
+        cfg.memory,
+        cfg.queue,
+        sessions,
+        embedder or FakeEmbedder(default=CLOSE),
+        now=clock or Clock(),
+    )
     return FactDuplicateJob(facts, model), facts
 
 
@@ -242,7 +249,7 @@ async def test_sweeper_checks_only_while_the_queue_is_quiet(
     cfg = make_config(memory={"summary_quiet_s": 0})
     queue = Queue(sessions)
     embedder = FakeEmbedder(default=CLOSE)
-    facts = FactStore(cfg, sessions, embedder)
+    facts = FactStore(cfg.memory, cfg.queue, sessions, embedder)
     model = FakeModel([text("SAME 1")])
     sweeper = make_sweeper(
         cfg,

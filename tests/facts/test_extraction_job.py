@@ -40,8 +40,16 @@ def job(
         memory=memory,  # type: ignore[arg-type]
     )
     now = clock or Clock()
-    facts = FactStore(cfg, sessions, FakeEmbedder(default=[1.0, 0.0]), now=now)
-    return FactExtractionJob(cfg, sessions, model, facts, now=now), facts
+    facts = FactStore(cfg.memory, cfg.queue, sessions, FakeEmbedder(default=[1.0, 0.0]), now=now)
+    return FactExtractionJob(
+        cfg.memory,
+        cfg.queue,
+        sessions,
+        model,
+        facts,
+        now=now,
+        input_max_chars=cfg.memory.summary_input_max_chars,
+    ), facts
 
 
 async def archived(
@@ -347,13 +355,22 @@ async def test_backfill_of_archived_conversations_oldest_first(
     summary_model = FakeModel([text("Title: x\nSummary: y")] * 5)
     fact_model = FakeModel([text("NONE")] * 5)
     embedder = FakeEmbedder(default=[1.0])
-    facts = FactStore(cfg, sessions, embedder)
+    facts = FactStore(cfg.memory, cfg.queue, sessions, embedder)
     sweeper = make_sweeper(
         cfg,
         sessions,
         Summaries(cfg.memory, cfg.queue, sessions, summary_model, embedder),
         queue=QuietQueue(),
-        jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)],
+        jobs=[
+            FactExtractionJob(
+                cfg.memory,
+                cfg.queue,
+                sessions,
+                fact_model,
+                facts,
+                input_max_chars=cfg.memory.summary_input_max_chars,
+            )
+        ],
     )
     task = asyncio.create_task(sweeper.run_forever())
     try:

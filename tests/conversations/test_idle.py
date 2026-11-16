@@ -184,13 +184,22 @@ async def test_unattended_conversation_is_summarised_without_fact_requests(
     fact_model = FakeModel()
     embedder = FakeEmbedder(default=[1.0])
     summaries = Summaries(cfg.memory, cfg.queue, sessions, summary_model, embedder)
-    facts = FactStore(cfg, sessions, embedder)
+    facts = FactStore(cfg.memory, cfg.queue, sessions, embedder)
     sweeper = make_sweeper(
         cfg,
         sessions,
         summaries,
         queue=QuietQueue(),
-        jobs=[FactExtractionJob(cfg, sessions, fact_model, facts)],
+        jobs=[
+            FactExtractionJob(
+                cfg.memory,
+                cfg.queue,
+                sessions,
+                fact_model,
+                facts,
+                input_max_chars=cfg.memory.summary_input_max_chars,
+            )
+        ],
     )
     history = History(sessions, idle_after=SIX_HOURS, on_archive=summaries.changed.set)
     old = await wrote(sessions, "diogo", datetime.now(UTC) - timedelta(hours=25), kind="reminder")

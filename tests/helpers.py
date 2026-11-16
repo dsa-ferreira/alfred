@@ -24,11 +24,11 @@ from alfred.brains.registry import Brains
 from alfred.config import (
     Config,
     McpServer,
-    MemoryConfig,
     QueueConfig,
     Service,
     _AIConfig,
     _MCPConfig,
+    _MemoryConfig,
     _RemindersConfig,
     _ServerConfig,
     _WebConfig,
@@ -36,7 +36,7 @@ from alfred.config import (
 from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
-from alfred.facts.store import FactTools
+from alfred.facts.tools import FactTools
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall
@@ -84,7 +84,7 @@ def make_config(
         mcp_servers=tuple(mcp_servers),
         telegram_bot_token=SecretStr("123:test"),
         database_url=SecretStr("postgresql+psycopg://unused"),
-        memory=MemoryConfig(**(memory or {})),
+        memory=_MemoryConfig(**(memory or {})),
         web=_WebConfig(**(web or {})),
         reminders=_RemindersConfig(**(reminders or {})),
         attachments=AttachmentsConfig(**attachments) if attachments is not None else None,

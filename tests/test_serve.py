@@ -28,7 +28,7 @@ from alfred.brains.tools import BrainTools
 from alfred.config import _ServerConfig
 from alfred.conversations.idle import IdleCloser
 from alfred.conversations.tools import ConversationTools
-from alfred.facts.store import FactTools
+from alfred.facts.tools import FactTools
 from alfred.mcp.toolset import McpTools
 from alfred.reminders.tools import ReminderTools
 from alfred.toolbox.calculator import CalculatorTools

@@ -16,7 +16,8 @@ from alfred.attachments.tools import AttachmentTools
 from alfred.brains.registry import Brains
 from alfred.conversations.store import History
 from alfred.db.models import Conversation, QueueItem, Reminder, ReminderRecipient
-from alfred.facts.store import FactStore, FactTools
+from alfred.facts.store import FactStore
+from alfred.facts.tools import FactTools
 from alfred.kernel.access import AllowList
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
 from alfred.kernel.users import Users
@@ -87,7 +88,9 @@ async def test_every_offered_name_is_declared() -> None:
         memory=ConversationSearch(
             config.memory, ZoneInfo(config.ai.timezone), sessions, FakeEmbedder()
         ),
-        facts=FactTools(FactStore(config, sessions, FakeEmbedder()), config.memory),
+        facts=FactTools(
+            FactStore(config.memory, config.queue, sessions, FakeEmbedder()), config.memory
+        ),
         reminders=ReminderTools.from_config(config, sessions),
         attachments=AttachmentTools(
             FakeStore(), sessions, brains, config.attachments, History(sessions)
