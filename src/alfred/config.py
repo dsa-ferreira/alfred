@@ -29,6 +29,7 @@ from pydantic import (
     ValidationError,
 )
 
+from alfred.agent.config import AgentConfig
 from alfred.archive.config import ArchiveConfig
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.brains.config import BrainsConfig
@@ -37,7 +38,7 @@ from alfred.facts.config import FactsConfig
 from alfred.http.config import ServerConfig, Service
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
-from alfred.llm.config import EmbeddingConfig
+from alfred.llm.config import ChatConfig, EmbeddingConfig
 from alfred.mcp.config import McpConfig, McpServer
 from alfred.reminders.config import RemindersConfig
 from alfred.settings import (
@@ -45,10 +46,8 @@ from alfred.settings import (
     ConfigError,
     HttpUrlStr,
     Name,
-    PositiveFloat,
     PositiveInt,
     Section,
-    TimeZoneName,
     TokenEnv,
 )
 from alfred.turns.config import InputRequestsConfig, QueueConfig
@@ -67,16 +66,8 @@ _RESERVED_SERVER_NAME = "alfred"
 _ALL_TOOLS = "*"
 
 
-class _AIConfig(BrainsConfig):
-    """``[ai]``: the brains' part comes from :class:`BrainsConfig`."""
-
-    base_url: HttpUrlStr = "http://ai.lan"
-    request_timeout_s: PositiveFloat = 300
-    max_requests_per_turn: PositiveInt = 12
-    tool_result_max_chars: PositiveInt = 4000
-    persona: Annotated[str, Field(min_length=1)] | None = None
-    # alfred's timezone: today's date in the prompt, reminders and search dates.
-    timezone: TimeZoneName = "Europe/Lisbon"
+class _AIConfig(BrainsConfig, ChatConfig, AgentConfig):
+    """``[ai]``: one table, read as the brains', the chat model's and the agent's sections."""
 
 
 class _MemoryConfig(ArchiveConfig, FactsConfig, EmbeddingConfig):

@@ -28,7 +28,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from alfred.agent.prompts import is_no_reply
-from alfred.agent.turn import TurnFailed
+from alfred.agent.results import TurnFailed
 from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem

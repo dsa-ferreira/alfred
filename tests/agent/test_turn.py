@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent import notices
 from alfred.agent.messages import _STAMP
 from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
-from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
+from alfred.agent.results import Fallback, TurnFailed, TurnResult
+from alfred.agent.turn import Agent
 from alfred.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
@@ -57,6 +58,7 @@ from tests.helpers import (
     FakeEmbedder,
     FakeModel,
     add_queue_item,
+    agent_settings,
     calls,
     make_agent,
     make_config,
@@ -477,10 +479,10 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
     brains = two_brains("bonsai")
     model = FakeModel([BAD_MODEL, text("gemma's answer")])
     a = Agent(
-        make_config(),
         model,
         History(sessions),
         sessions,
+        **agent_settings(make_config()),
         toolsets=[recorder],
         brains=brains,
         attachments=None,
@@ -558,10 +560,10 @@ async def test_tool_result_with_images(
 ) -> None:
     model = FakeModel([calls(("snap", "{}")), text("A red square, sir.")])
     a = Agent(
-        make_config(),
         model,
         History(sessions),
         sessions,
+        **agent_settings(make_config()),
         toolsets=[Camera(count)],
         brains=Brains.from_config(make_config().ai),
         attachments=None,
@@ -584,10 +586,10 @@ async def test_tool_result_without_images_stays_text(
 ) -> None:
     model = FakeModel([calls(("snap", "{}")), text("Nothing there.")])
     a = Agent(
-        make_config(),
         model,
         History(sessions),
         sessions,
+        **agent_settings(make_config()),
         toolsets=[Camera(0)],
         brains=Brains.from_config(make_config().ai),
         attachments=None,
@@ -793,10 +795,10 @@ async def test_images_in_the_tail_are_replaced_by_a_note(
 
     config = make_config(mcp_servers=[MCPARR])
     alfred = Agent(
-        config,
         FakeModel([calls(("alfred_look", "{}"), ADD)]),
         History(sessions),
         sessions,
+        **agent_settings(config),
         toolsets=[
             Pictures(),
             *make_agent(

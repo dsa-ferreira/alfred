@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from alfred.agent.turn import _Checkpoint
+from alfred.agent.checkpoint import Checkpoint
 from alfred.llm.chat import ToolCall
 
 _TAIL = [
@@ -46,7 +46,7 @@ STORED_0_16_0 = {key: value for key, value in STORED_0_16_1.items() if key != "e
 
 
 def test_reads_what_0_16_1_stored() -> None:
-    checkpoint = _Checkpoint.from_json(STORED_0_16_1)
+    checkpoint = Checkpoint.from_json(STORED_0_16_1)
     assert checkpoint.call == ToolCall("c1", "mcparr_add_media", '{"title": "Dune"}')
     assert checkpoint.call_index == 1
     assert checkpoint.remaining == (ToolCall("c2", "alfred_remind_set", "{}"),)
@@ -58,22 +58,22 @@ def test_reads_what_0_16_1_stored() -> None:
 
 
 def test_reads_what_0_16_0_stored() -> None:
-    checkpoint = _Checkpoint.from_json(STORED_0_16_0)
+    checkpoint = Checkpoint.from_json(STORED_0_16_0)
     assert checkpoint.entry_ids is None  # resumed with its window up to the newest entry
     assert checkpoint.upto_entry_id == 41
 
 
 def test_writes_what_0_16_1_stored() -> None:
     # Same keys and values, so an image rolled back to 0.16.1 resumes it.
-    assert _Checkpoint.from_json(STORED_0_16_1).to_json() == STORED_0_16_1
+    assert Checkpoint.from_json(STORED_0_16_1).to_json() == STORED_0_16_1
 
 
 def test_a_0_16_0_checkpoint_keeps_its_shape() -> None:
-    assert _Checkpoint.from_json(STORED_0_16_0).to_json() == STORED_0_16_0
+    assert Checkpoint.from_json(STORED_0_16_0).to_json() == STORED_0_16_0
 
 
 def test_round_trip_through_json() -> None:
-    checkpoint = _Checkpoint(
+    checkpoint = Checkpoint(
         ToolCall("c0", "mcparr_add_media", "{}"),
         0,
         (),
@@ -87,4 +87,4 @@ def test_round_trip_through_json() -> None:
     )
     stored = json.loads(json.dumps(checkpoint.to_json()))
     assert set(stored) == set(STORED_0_16_1)
-    assert _Checkpoint.from_json(stored) == checkpoint
+    assert Checkpoint.from_json(stored) == checkpoint

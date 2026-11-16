@@ -25,6 +25,7 @@ from tests.helpers import (
     DIOGO,
     FakeModel,
     FakeStore,
+    agent_settings,
     image_file,
     make_config,
     owner_with_files,
@@ -58,10 +59,10 @@ def make(
 ) -> Agent:
     config = SETTINGS.model_copy(update=settings)
     return Agent(
-        make_config(),
         model,
         History(sessions),
         sessions,
+        **agent_settings(make_config()),
         brains=the_brains or brains(vision),
         attachments=InlineAttachments(store, config),
         facts=NoFacts(),

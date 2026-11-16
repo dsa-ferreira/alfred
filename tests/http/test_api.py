@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _NO_REPLY
-from alfred.agent.turn import TurnResult
+from alfred.agent.results import TurnResult
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
 from alfred.http.api import create_app

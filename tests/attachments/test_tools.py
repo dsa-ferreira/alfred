@@ -39,6 +39,7 @@ from tests.helpers import (
     FakeEmbedder,
     FakeModel,
     FakeStore,
+    agent_settings,
     calls,
     image_file,
     make_config,
@@ -371,10 +372,10 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     model = FakeModel([calls((_READ_DOCUMENT, '{"id": 1}')), text("Read.")])
     item = (await owner_with_files(sessions, "read it", []))[0]
     agent = Agent(
-        config,
         model,
         History(sessions),
         sessions,
+        **agent_settings(config),
         toolsets=[toolset],
         brains=the_brains,
         attachments=None,
@@ -401,10 +402,10 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     model = FakeModel([BAD_MODEL, calls((_VIEW_ATTACHMENT, '{"id": 1}')), text("Sorry, sir.")])
     item = (await owner_with_files(sessions, "what's on it?", []))[0]
     agent = Agent(
-        make_config(),
         model,
         History(sessions),
         sessions,
+        **agent_settings(make_config()),
         toolsets=[toolset],
         brains=the_brains,
         attachments=None,

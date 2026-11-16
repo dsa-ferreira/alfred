@@ -9,7 +9,7 @@ from mcp.server import MCPServer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMINDER_RULE
-from alfred.agent.turn import TurnFailed
+from alfred.agent.results import TurnFailed
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.kernel.turn import AskTurn

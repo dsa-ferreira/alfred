@@ -34,7 +34,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from alfred.agent import notices as agent_notices
-from alfred.agent.turn import Fallback, TurnFailed, TurnResult
+from alfred.agent.results import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
 from alfred.conversations import notices as conversations_notices
 from alfred.conversations.store import History

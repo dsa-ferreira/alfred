@@ -32,7 +32,7 @@ really is.
 
 **Fallback.** A non-retryable model error on a brain other than the startup
 one makes the startup brain current. If no tool had run, the turn runs again
-from the start on it; either way the result carries the :class:`Fallback`,
+from the start on it; either way the result carries the ``Fallback``,
 and the worker tells the user and the admin.
 
 **Waiting for the user.** When a call returns a need for its user's answer,
@@ -59,14 +59,18 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent import notices
+from alfred.agent.checkpoint import Checkpoint
+from alfred.agent.config import AgentConfig
 from alfred.agent.context import context_sizes, largest_tools
 from alfred.agent.inline import ImageCache, InlineAttachments
 from alfred.agent.messages import stamped, strip_stamp, to_messages
 from alfred.agent.prompts import FactsBlock, KnownFact, brain_line, facts_block, system_prompt
+from alfred.agent.results import Fallback, TurnFailed, TurnResult, Waiting
 from alfred.brains.registry import Brain, Brains
-from alfred.config import Config
+from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History, HistoryEntry
 from alfred.db.models import TurnToolCall
+from alfred.facts.config import FactsConfig
 from alfred.kernel.access import Confirmed, Gated
 from alfred.kernel.questions import InputNeed
 from alfred.kernel.toolset import (
@@ -79,7 +83,7 @@ from alfred.kernel.toolset import (
     parse_arguments,
 )
 from alfred.kernel.turn import ChatTurn, Resume, TurnInput
-from alfred.kernel.users import User
+from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.times import format_now, format_when
 
@@ -88,133 +92,27 @@ log = logging.getLogger(__name__)
 _EXCERPT_CHARS = 500
 
 
-@dataclass(frozen=True)
-class Fallback:
-    """The chosen brain failed and alfred went back to the startup brain."""
-
-    failed: str
-    default: str
-
-
-@dataclass(frozen=True)
-class _Checkpoint:
-    """Where a parked turn stopped, stored as JSON while it waits for its user's answer.
-
-    ``call`` is the call that asked, ``call_index`` its place in its model
-    reply and ``remaining`` the calls after it, not run yet; ``tail`` the
-    messages after the context (assistant messages with tool calls, and the
-    results so far); ``requests_used`` and ``seq`` the model requests and tool
-    calls so far; ``conversation_id`` and ``upto_entry_id`` (``None`` for no
-    entries) where the context came from, and ``entry_ids`` exactly which
-    entries. Turns parked by 0.16.0 saved no ids: ``None``.
-    """
-
-    call: ToolCall
-    call_index: int
-    remaining: tuple[ToolCall, ...]
-    tail: list[dict[str, Any]]
-    requests_used: int
-    seq: int
-    conversation_id: int | None
-    upto_entry_id: int | None
-    reset: bool = False
-    entry_ids: tuple[int, ...] | None = ()
-
-    @classmethod
-    def from_json(cls, data: dict[str, Any]) -> _Checkpoint:
-        """Read what :meth:`to_json` wrote, or what 0.16.0 wrote (no ``entry_ids``)."""
-        entry_ids = data.get("entry_ids")
-        return cls(
-            call=_call_of(data["call"]),
-            call_index=data["call_index"],
-            remaining=tuple(_call_of(c) for c in data["remaining"]),
-            tail=data["tail"],
-            requests_used=data["requests_used"],
-            seq=data["seq"],
-            conversation_id=data["conversation_id"],
-            upto_entry_id=data["upto_entry_id"],
-            reset=bool(data.get("reset")),
-            entry_ids=None if entry_ids is None else tuple(entry_ids),
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        """What is stored to resume the turn; the same keys 0.16.1 stores."""
-        data = {
-            "call": _call_json(self.call),
-            "call_index": self.call_index,
-            "remaining": [_call_json(c) for c in self.remaining],
-            "tail": self.tail,
-            "requests_used": self.requests_used,
-            "seq": self.seq,
-            "conversation_id": self.conversation_id,
-            "upto_entry_id": self.upto_entry_id,
-            "reset": self.reset,
-        }
-        if self.entry_ids is not None:
-            data["entry_ids"] = list(self.entry_ids)
-        return data
-
-
-@dataclass(frozen=True)
-class _Waiting:
-    """A turn parked at a call that needs its user's answer (``need``, stored apart)."""
-
-    need: InputNeed
-    checkpoint: _Checkpoint
-
-
-@dataclass(frozen=True)
-class TurnResult:
-    reply: str
-    reset_requested: bool
-    side_effects_possible: bool
-    # Told to the user (and the admin) before the reply: the brain fell back.
-    fallback: Fallback | None = None
-    # Set when the turn parked for its user's answer; ``reply`` is then empty.
-    waiting: _Waiting | None = None
-
-
-class TurnFailed(Exception):
-    """The turn produced no answer.
-
-    ``reason`` is for logs and the queue row; ``notice`` is the short text
-    the turn's user may be shown. ``retryable`` is true only when the AI was
-    unreachable and no tool had run yet. ``fallback``, when set, is told in
-    any case: the chosen brain failed in this turn.
-    """
-
-    def __init__(
-        self,
-        reason: str,
-        notice: str,
-        *,
-        retryable: bool,
-        side_effects_possible: bool,
-        fallback: Fallback | None = None,
-    ) -> None:
-        super().__init__(reason)
-        self.reason = reason
-        self.notice = notice
-        self.retryable = retryable
-        self.side_effects_possible = side_effects_possible
-        self.fallback = fallback
-
-
 class Agent:
     def __init__(
         self,
-        config: Config,
         model: _Model,
         history: History,
         sessions: async_sessionmaker[AsyncSession],
         *,
+        ai: AgentConfig,
+        window: HistoryConfig,
+        memory: FactsConfig,
+        users: Users,
         brains: Brains,
         attachments: InlineAttachments | None,
         facts: _Facts,
         toolsets: Sequence[Toolset] = (),
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        self._config = config
+        self._ai = ai
+        self._window = window
+        self._memory = memory
+        self._users = users
         self._facts = facts
         self._attachments = attachments
         self._brains = brains
@@ -223,7 +121,7 @@ class Agent:
         self._sessions = sessions
         self._toolsets = list(toolsets)
         self._now = now
-        self._zone = ZoneInfo(config.ai.timezone)
+        self._zone = ZoneInfo(ai.timezone)
         self._times = _Times(self._zone)
 
     async def run(self, turn: TurnInput, *, hidden_items: Collection[int] = ()) -> TurnResult:
@@ -281,7 +179,7 @@ class Agent:
 
     async def _facts_block(self, turn: TurnInput) -> FactsBlock | None:
         """The user's facts for every attempt of this turn, read once."""
-        memory = self._config.memory
+        memory = self._memory
         if not memory.facts_in_context:
             return None
         name = turn.user.name
@@ -298,7 +196,7 @@ class Agent:
 
     async def _attempt(self, this: _Turn, brain: Brain, *, can_fall_back: bool) -> TurnResult:
         resume = this.input.resume
-        checkpoint = _Checkpoint.from_json(resume.turn) if resume is not None else None
+        checkpoint = Checkpoint.from_json(resume.turn) if resume is not None else None
         state = await self._build_context(this, brain, checkpoint, can_fall_back=can_fall_back)
         if resume is not None and checkpoint is not None:
             parked = await self._go_on(this, state, checkpoint, resume)
@@ -307,7 +205,7 @@ class Agent:
         return await self._loop(this, state)
 
     async def _build_context(
-        self, this: _Turn, brain: Brain, checkpoint: _Checkpoint | None, *, can_fall_back: bool
+        self, this: _Turn, brain: Brain, checkpoint: Checkpoint | None, *, can_fall_back: bool
     ) -> _State:
         """The attempt's starting messages, and where they came from (for parking).
 
@@ -341,7 +239,7 @@ class Agent:
     async def _loop(self, this: _Turn, state: _State) -> TurnResult:
         """Ask the model and run its calls until it answers, a call waits, or steps run out."""
         turn = this.input
-        last = self._config.ai.max_requests_per_turn
+        last = self._ai.max_requests_per_turn
         for n in range(state.requests + 1, last + 1):
             reply = await self._ask_model(state, this.definitions)
             state.requests = n
@@ -364,9 +262,9 @@ class Agent:
         )
 
     async def _entries(
-        self, turn: TurnInput, checkpoint: _Checkpoint | None, hidden_items: frozenset[int]
+        self, turn: TurnInput, checkpoint: Checkpoint | None, hidden_items: frozenset[int]
     ) -> list[HistoryEntry]:
-        limit = self._config.history.max_entries
+        limit = self._window.max_entries
         if checkpoint is None:
             return await self._history.recent(turn.user.name, limit, hidden_items=hidden_items)
         # The entries the turn parked with, whatever was recorded since and
@@ -381,7 +279,6 @@ class Agent:
         )
 
     def _system_message(self, this: _Turn, brain: Brain, now: datetime) -> dict[str, Any]:
-        cfg = self._config
         turn = this.input
         user = turn.user
         others = [b.name for b in self._brains.brains if b != brain]
@@ -389,7 +286,7 @@ class Agent:
         return {
             "role": "system",
             "content": system_prompt(
-                cfg.ai.persona,
+                self._ai.persona,
                 name=user.name,
                 address=user.address,
                 ask=flags.ask,
@@ -397,7 +294,7 @@ class Agent:
                 reminder_quiet=flags.reminder_quiet,
                 today=now.astimezone(self._zone).date(),
                 tools=this.offered,
-                others=[u.name for u in cfg.users if u.name != user.name],
+                others=[u.name for u in self._users if u.name != user.name],
                 notes=this.notes,
                 brain=brain_line(brain.name, brain.tag, others, this.offered),
                 facts=this.facts.text if this.facts is not None else None,
@@ -409,7 +306,7 @@ class Agent:
         state: _State,
         user: User,
         entries: list[HistoryEntry],
-        checkpoint: _Checkpoint | None,
+        checkpoint: Checkpoint | None,
     ) -> None:
         """Remember which conversation and entries the context came from."""
         state.entry_ids = tuple(e.entry_id for e in entries if e.entry_id is not None)
@@ -435,8 +332,8 @@ class Agent:
             log.debug("turn %s largest tools: %s", turn_id, largest_tools(this.definitions))
 
     async def _go_on(
-        self, this: _Turn, state: _State, saved: _Checkpoint, resume: Resume
-    ) -> _Waiting | None:
+        self, this: _Turn, state: _State, saved: Checkpoint, resume: Resume
+    ) -> Waiting | None:
         """Pick a parked turn up where it stopped: the answered call, then the rest of its reply."""
         state.messages += saved.tail
         state.side_effects = True  # tools ran before it parked
@@ -458,7 +355,7 @@ class Agent:
 
     async def _run_calls(
         self, this: _Turn, state: _State, calls: Sequence[ToolCall], first_index: int
-    ) -> _Waiting | None:
+    ) -> Waiting | None:
         """Run a reply's calls in order; stop at the first that needs the user's answer."""
         for i, call in enumerate(calls):
             outcome = await self._run_tool(this, call, state)
@@ -474,10 +371,10 @@ class Agent:
         index: int,
         need: InputNeed,
         remaining: Sequence[ToolCall],
-    ) -> _Waiting:
-        return _Waiting(
+    ) -> Waiting:
+        return Waiting(
             need,
-            _Checkpoint(
+            Checkpoint(
                 call,
                 index,
                 tuple(remaining),
@@ -491,7 +388,7 @@ class Agent:
             ),
         )
 
-    def _parked(self, state: _State, waiting: _Waiting) -> TurnResult:
+    def _parked(self, state: _State, waiting: Waiting) -> TurnResult:
         log.info(
             "turn %s parked at tool call #%d %s: waiting for %s's answer",
             state.context.turn.queue_item_id,
@@ -576,14 +473,6 @@ class _Model(Protocol):
         *,
         model: str | None = None,
     ) -> ModelReply: ...
-
-
-def _call_json(call: ToolCall) -> dict[str, Any]:
-    return {"id": call.id, "name": call.name, "arguments": call.arguments}
-
-
-def _call_of(data: dict[str, Any]) -> ToolCall:
-    return ToolCall(data["id"], data["name"], data["arguments"])
 
 
 class _BrainFailed(Exception):

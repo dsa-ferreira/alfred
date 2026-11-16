@@ -220,10 +220,10 @@ def make_agent(
         now=now,
     )
     return Agent(
-        config,
         model,
         history,
         sessions,
+        **agent_settings(config),
         toolsets=toolsets,
         brains=brains,
         attachments=inline,
@@ -323,3 +323,8 @@ def assert_addressed(text: str, address: str, *, after: str = "") -> None:
     """A fixed notice ends its first clause, before ``after``, with ``address``, once."""
     assert text.removesuffix(after).endswith(f", {address}.")
     assert text.count(address) == 1
+
+
+def agent_settings(cfg: Config) -> dict[str, Any]:
+    """The config parts ``serve`` gives the agent."""
+    return {"ai": cfg.ai, "window": cfg.history, "memory": cfg.memory, "users": cfg.users}

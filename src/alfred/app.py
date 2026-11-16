@@ -290,10 +290,13 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         inline = InlineAttachments(store, config.attachments)
         orphans = OrphanSweeper(store, sessions)
     agent = Agent(
-        config,
         model,
         history,
         sessions,
+        ai=config.ai,
+        window=config.history,
+        memory=config.memory,
+        users=config.users,
         toolsets=_build_toolsets(
             config,
             http_connector(),

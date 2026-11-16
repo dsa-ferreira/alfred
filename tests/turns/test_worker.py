@@ -170,7 +170,7 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
             peak = max(peak, running)
             await asyncio.sleep(0.01)
             running -= 1
-            from alfred.agent.turn import TurnResult
+            from alfred.agent.results import TurnResult
 
             return TurnResult("ok", False, False)
 
@@ -538,7 +538,7 @@ async def test_typing_while_owner_turn_runs(sessions: async_sessionmaker[AsyncSe
     class Agent_:
         async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
             events.append("turn")
-            from alfred.agent.turn import TurnResult
+            from alfred.agent.results import TurnResult
 
             return TurnResult("Added Dune.", False, False)
 

@@ -1,4 +1,5 @@
-"""The embedding server's part of ``[memory]``."""
+"""The model servers' settings: the chat model's part of ``[ai]`` and the
+embedding server's part of ``[memory]``."""
 
 from __future__ import annotations
 
@@ -7,6 +8,11 @@ from typing import Annotated
 from pydantic import Field
 
 from alfred.settings import HttpUrlStr, PositiveFloat, Section
+
+
+class ChatConfig(Section):
+    base_url: HttpUrlStr = "http://ai.lan"
+    request_timeout_s: PositiveFloat = 300
 
 
 class EmbeddingConfig(Section):
