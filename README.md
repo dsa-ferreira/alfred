@@ -615,7 +615,9 @@ confirm list, and those whose MCP server asks the user something. The turn
 stops at that call, and alfred sends the user a question message with
 buttons. Other users' messages, `/ask` turns and reminders go ahead while it
 waits. When the user taps a button, the turn picks up from that call, and the
-model carries on and answers as usual.
+model carries on and answers as usual. Until it ends, the waiting turn's message is
+left out of the other turns' context, so an `/ask` or a reminder running
+meanwhile can't act on it.
 
 ### Confirm list
 

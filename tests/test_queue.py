@@ -1430,3 +1430,45 @@ async def test_tap_after_moving_on_is_refused(sessions: async_sessionmaker[Async
     await s.queue.enqueue_user("diogo", "hello")
     _, request_id, _ = s.questions.sent[0]
     assert (await s.requests.answer(request_id, 0, "diogo")).outcome == "not_open"
+
+
+async def test_an_ask_doesnt_act_on_a_waiting_turns_message(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """The 0.16.0 incident: an /ask ran while a chat turn waited, saw the user's
+    unanswered message, and asked to add the film as well (0.16.1)."""
+    s = Waits(
+        sessions,
+        FakeModel(
+            [
+                calls(ADD),  # the chat turn parks
+                calls(("mcparr_add_media", '{"title": "Alien"}')),  # the ask asks too
+                text("Dune is added, sir."),  # the chat turn, resumed
+                text("Sonarr needs a manual import, sir."),  # the ask, resumed
+                text("You're welcome."),  # a later message
+            ]
+        ),
+    )
+    await s.queue.enqueue_user("diogo", "can you try again pls")
+    await s.drain()
+    await s.queue.enqueue_ask("mcparr", "Sonarr needs manual intervention", "diogo")
+    await s.drain()
+    assert await s.statuses() == ["waiting", "waiting"]
+    # The ask turn never saw the waiting message.
+    assert not any("can you try again" in m for m in user_messages(s.model, 1))
+
+    await s.tap("diogo", 1, which=1)  # cancel the ask's question
+    await s.tap("diogo", 0, which=0)  # confirm the chat turn's
+    await s.drain()
+    assert s.outbox.sent_to == [
+        ("diogo", "Dune is added, sir."),
+        ("diogo", "[mcparr] Sonarr needs a manual import, sir."),
+    ]
+    # The ask resumed after the chat turn had ended, still without its message.
+    assert not any("can you try again" in m for m in user_messages(s.model, 3))
+    # A later turn sees the message with its reply.
+    await s.queue.enqueue_user("diogo", "thanks")
+    await s.drain()
+    seen = user_messages(s.model, 4)
+    at = seen.index("can you try again pls")
+    assert seen[at + 1] == "Dune is added, sir."

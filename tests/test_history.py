@@ -895,3 +895,58 @@ async def test_recent_reads_an_archived_conversation_by_id(
     assert [e.text for e in entries] == ["anything to add?"]
     # Never another user's conversation.
     assert await history.recent("diogo", 30, conversation_id=conversation_id) == []
+
+
+async def test_other_parked_turns_are_left_out(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """An entry of a turn waiting for its user's answer has no reply yet (0.16.1)."""
+    from alfred.config import Users
+    from alfred.inputs.store import InputRequests
+    from alfred.tools.base import Option, Question
+    from tests.helpers import ANA, DIOGO
+
+    history = History(sessions)
+    await history.append("ana", "user", "hello")
+    await history.append("ana", "assistant", "Good evening.")
+    parked = await add_queue_item(sessions, "user", "add Alien", user="ana")
+    await history.append("ana", "user", "add Alien", queue_item_id=parked)
+    requests = InputRequests(sessions, history, Users((DIOGO, ANA)))
+    request = await requests.park(
+        parked, "ana", tool="t", arguments={}, question=Question("?", (Option("Yes", True),)),
+        state={}, turn={}, expires_at=timedelta(hours=1),
+    )  # fmt: skip
+    ask = await add_queue_item(sessions, "ask", "Sonarr needs you", source="mcparr", user="ana")
+
+    def texts(entries: list[HistoryEntry]) -> list[str]:
+        return [e.text for e in entries]
+
+    # Another turn doesn't see it, and it doesn't count toward the window.
+    assert texts(await history.recent("ana", 2, turn_item_id=ask)) == ["hello", "Good evening."]
+    # The parked turn itself does.
+    assert texts(await history.recent("ana", 30, turn_item_id=parked))[-1] == "add Alien"
+    # Answered and running: still going on, still hidden.
+    await requests.answer(request, 0, "ana")
+    assert "add Alien" not in texts(await history.recent("ana", 30, turn_item_id=ask))
+    await requests.take_answered(parked, "ana")
+    assert "add Alien" not in texts(await history.recent("ana", 30, turn_item_id=ask))
+    # Once it has ended, everyone sees it with its reply.
+    await history.append("ana", "assistant", "Added Alien.", queue_item_id=parked)
+    await requests.finish(request, "ana")
+    assert texts(await history.recent("ana", 30, turn_item_id=ask))[-2:] == [
+        "add Alien",
+        "Added Alien.",
+    ]
+
+
+async def test_recent_by_entry_ids(sessions: async_sessionmaker[AsyncSession]) -> None:
+    history = History(sessions)
+    first = await history.append("ana", "user", "one")
+    await history.append("ana", "user", "two")
+    third = await history.append("ana", "user", "three")
+    conversation_id = await history.current_conversation_id("ana")
+    entries = await history.recent(
+        "ana", 30, conversation_id=conversation_id, entry_ids=[first, third]
+    )
+    assert [e.text for e in entries] == ["one", "three"]
+    assert await history.recent("ana", 30, conversation_id=conversation_id, entry_ids=[]) == []

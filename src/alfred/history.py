@@ -17,19 +17,26 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select, text, true, update
+from sqlalchemy import ColumnElement, func, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from alfred.attachments.handles import AttachmentRef, handle, refs_by_entry, with_handles
-from alfred.db.models import Attachment, Conversation, Entry, QueueItem, Reminder
+from alfred.db.models import (
+    Attachment,
+    Conversation,
+    Entry,
+    InputRequest,
+    QueueItem,
+    Reminder,
+)
 from alfred.memory.transcript import recall_label
 from alfred.reminders.when import format_when
 from alfred.tools.base import ModelImage
@@ -41,6 +48,8 @@ UTC_ZONE = ZoneInfo("UTC")
 # The first entry of something that arrives without the user: a new one may
 # close a conversation that has no user message (design D7). Never a reply.
 ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
+# An input request whose turn is still waiting or going on (a parked turn).
+LIVE_STATUSES = ("open", "answered", "running")
 
 
 @dataclass(frozen=True)
@@ -195,6 +204,8 @@ class History:
         *,
         conversation_id: int | None = None,
         upto_entry_id: int | None = None,
+        turn_item_id: int | None = None,
+        entry_ids: Sequence[int] | None = None,
     ) -> list[HistoryEntry]:
         """The newest ``limit`` entries of ``user``'s current conversation, oldest first.
 
@@ -204,6 +215,12 @@ class History:
         add-user-input-requests, design D3): ``conversation_id`` reads that
         conversation of ``user``'s even if it has been archived since, and
         ``upto_entry_id`` leaves out entries added after that one.
+
+        With ``turn_item_id`` (the queue item of the turn reading it), the
+        entries of other turns still waiting for their user's answer are
+        left out, before the limit: they have no reply yet, and this turn
+        must not act on them. ``entry_ids`` reads exactly those entries
+        (of ``conversation_id``): the context a turn parked with.
         """
         if conversation_id is None:
             which = Conversation.ended_at.is_(None)
@@ -226,6 +243,8 @@ class History:
                 .join(Conversation, Conversation.id == Entry.conversation_id)
                 .where(which, Conversation.user_name == user)
                 .where(Entry.id <= upto_entry_id if upto_entry_id is not None else true())
+                .where(_not_parked(turn_item_id) if turn_item_id is not None else true())
+                .where(Entry.id.in_(entry_ids) if entry_ids is not None else true())
                 .order_by(Entry.id.desc())
                 .limit(limit)
                 .subquery()
@@ -362,6 +381,20 @@ class History:
             if not ids:
                 return None
             return max(ids), await current_id(session, user, lock=False)
+
+
+def _not_parked(turn_item_id: int) -> ColumnElement[bool]:
+    """Not an entry of another queue item with a live input request (a parked turn)."""
+    live = (
+        select(InputRequest.id)
+        .where(
+            InputRequest.queue_item_id == Entry.queue_item_id,
+            InputRequest.queue_item_id != turn_item_id,
+            InputRequest.status.in_(LIVE_STATUSES),
+        )
+        .exists()
+    )
+    return ~live
 
 
 async def _unattended(session: AsyncSession, conversation_id: int, idle_after: timedelta) -> bool:

@@ -130,6 +130,8 @@ class Waiting:
     conversation_id: int | None
     upto_entry_id: int | None
     reset: bool = False
+    # The ids of the entries in its context, read again on resume.
+    entry_ids: tuple[int, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         """What is stored to resume it (without ``need``, which is stored apart)."""
@@ -143,6 +145,7 @@ class Waiting:
             "conversation_id": self.conversation_id,
             "upto_entry_id": self.upto_entry_id,
             "reset": self.reset,
+            "entry_ids": list(self.entry_ids),
         }
 
 
@@ -213,6 +216,7 @@ class _State:
     requests: int = 0
     conversation_id: int | None = None
     upto_entry_id: int | None = None
+    entry_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -337,14 +341,21 @@ class Agent:
         now = self._now()
         resume = turn.resume
         if resume is None:
-            entries = await self._history.recent(user.name, cfg.history.max_entries)
+            # Without other parked turns' entries: they have no reply yet.
+            entries = await self._history.recent(
+                user.name, cfg.history.max_entries, turn_item_id=turn.queue_item_id
+            )
         else:
-            # The context the turn parked with, whatever was recorded since.
+            # The entries the turn parked with, whatever was recorded since and
+            # whichever other parked turns ended meanwhile. Turns parked by
+            # 0.16.0 saved no ids: their window up to the newest entry.
             entries = await self._history.recent(
                 user.name,
                 cfg.history.max_entries,
                 conversation_id=resume.turn["conversation_id"],
                 upto_entry_id=resume.turn["upto_entry_id"] or 0,
+                turn_item_id=turn.queue_item_id,
+                entry_ids=resume.turn.get("entry_ids"),
             )
         state = _State(
             brain,
@@ -382,6 +393,7 @@ class Agent:
         for open_toolset in this.opened:
             open_toolset.new_attempt(state.context)
         state.context_len = len(state.messages)
+        state.entry_ids = tuple(e.entry_id for e in entries if e.entry_id is not None)
         if resume is not None:
             state.conversation_id = resume.turn["conversation_id"]
             state.upto_entry_id = resume.turn["upto_entry_id"]
@@ -486,6 +498,7 @@ class Agent:
             state.conversation_id,
             state.upto_entry_id,
             state.context.reset,
+            state.entry_ids,
         )
 
     def _parked(self, state: _State, waiting: Waiting) -> TurnResult:
