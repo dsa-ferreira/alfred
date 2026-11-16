@@ -41,9 +41,12 @@ turn loop in `agent/turn.py` names no tool. To add one:
   offer) and `definitions`, implement `call(name, raw_arguments, attempt)`,
   and override `offered` if it is not for every turn (`chat_only` for turns
   started by a user's chat message). A turn is a `ChatTurn`, `AskTurn` or
-  `ReminderTurn` (`TurnInput` is their union); tell them apart with
-  `isinstance`, never by a kind string. Override `open` / `new_attempt`
-  only for per-turn or per-attempt state (see `web/tools.py`).
+  `ReminderTurn` (`TurnInput` is their union, plain data in
+  `kernel/turn.py`); a toolset tells them apart with `isinstance` in
+  `offered`, `open` or `new_attempt`, never by a kind string. Everything
+  else about a kind is its `TurnKind`'s (see "Turn kinds"). Override
+  `open` / `new_attempt` only for per-turn or per-attempt state (see
+  `web/tools.py`).
 - Don't check the user's tool allow-list or confirm list yourself: `turn.py`
   wraps every opened toolset in `Confirmed(Gated(...))` (`alfred.kernel.access`).
   `Gated` hides and refuses the names the turn user's `AllowList` doesn't
@@ -67,6 +70,48 @@ turn loop in `agent/turn.py` names no tool. To add one:
   against the `names` of `_TOOLSET_TYPES`.
 - Exceptions from `call` become error results for the model (`_safe_call`).
 - Test the toolset alone, and a whole turn with `tests/agent/turn_helpers.py`.
+
+## Turn kinds
+
+A turn answers a user's chat message, a service's `/ask` prompt or a due
+reminder. Each kind is one module in `alfred/turns/kinds/` (`chat.py`,
+`ask.py`, `reminder.py`) holding its payload type (stored as
+`queue_items.payload`, with the kind's `tag` in `queue_items.kind`) and its
+`TurnKind` (`turns/kinds/base.py`). A kind only decides, purely:
+
+- `turn`: the kernel turn it builds from the queue item;
+- `opening`: what is recorded when the turn first starts, and whether a
+  pending idle-close marker is told first;
+- `framing`: the `Framing` the agent gets (`agent/framing.py`): turn rules
+  for the system prompt, inline attachments, the input line after the
+  history. The agent never branches on kind;
+- `question_title`: what asked, on a question the turn parks with;
+- `answer`: the text that ends the exchange for the model's reply, or
+  `None` for silence;
+- `on_failure`: an `Ending`: `Deliver(text)` (recorded and sent, like a
+  reply), `Tell(text)` (a notice, sent, not recorded) or `Silent()`;
+- `entries` and `message`: what the exchange records for a text, and what
+  the user is sent. A question that ends unanswered is recorded through
+  `entries` too (`turns/inputs/endings.py`).
+
+The worker does what the kinds decide, through `turns/exchange.py`'s
+`Exchange` (the only place that records and sends for a kind). The
+delivery rule: the exchange is recorded and sent **before** the queue item
+finishes, so a crash repeats it rather than losing it; a `Tell` is sent
+**after**, so a crash loses it rather than repeating it.
+
+`Kinds` (`turns/kinds/__init__.py`) is the registry, built once in `app`:
+by tag to decode an item, by turn type for everything after. Nothing
+outside `turns/kinds/` branches on kind, except toolsets choosing what to
+offer (see "Adding a tool group"). The set is closed; adding a kind takes:
+
+- a turn data class in `kernel/turn.py`, added to `TurnInput`;
+- a module in `turns/kinds/` with its payload and `TurnKind`, listed in
+  `_KIND_TYPES` and `Kinds.default`;
+- whatever queues it (like `turns/intake.py` or `turns/due_reminders.py`),
+  calling `Queue.add` with its payload;
+- the toolsets' decisions about offering their tools on it, and its tests
+  in `tests/turns/kinds/`.
 
 ## Code layout
 
