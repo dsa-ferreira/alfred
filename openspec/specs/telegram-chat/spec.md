@@ -59,7 +59,7 @@ alfred SHALL handle owner text messages, and, when attachments are configured, p
 - **THEN** alfred replies that it can read text, images and PDFs, and nothing is queued
 
 ### Requirement: Reply to every owner message
-For each user's message, alfred SHALL send the AI's final reply to that user's chat once the turn completes. If the turn fails without a reply, alfred SHALL send a short failure notice to that chat instead, so no message goes unanswered. Nothing from a user's turn SHALL be sent to another user's chat.
+For each user's message, alfred SHALL send the AI's final reply to that user's chat once the turn completes. If the turn fails without a reply, alfred SHALL send a short failure notice to that chat instead, so no message goes unanswered. Nothing from a user's turn SHALL be sent to another user's chat. A turn that waits for the user's answer (see `user-input-requests`) SHALL send its reply when it resumes and ends. A waiting turn cancelled by a new message or by expiry SHALL get no reply: its question message says what happened.
 
 #### Scenario: Normal reply
 - **WHEN** the AI turn for `ana`'s message produces a final answer
@@ -68,6 +68,14 @@ For each user's message, alfred SHALL send the AI's final reply to that user's c
 #### Scenario: Turn fails
 - **WHEN** an AI turn ends with an error that is not retried
 - **THEN** the user who sent the message receives a short message saying the request failed, without internal details such as stack traces or tokens
+
+#### Scenario: Reply after confirmation
+- **WHEN** `ana`'s turn waits for her confirmation and she taps **Do it**
+- **THEN** she gets the turn's reply after the tool has run
+
+#### Scenario: Cancelled while waiting
+- **WHEN** `ana`'s waiting turn is cancelled because she sent a new message
+- **THEN** no reply or failure notice is sent for it
 
 ### Requirement: Telegram formatting
 alfred SHALL convert the model's Markdown-style output into Telegram-supported formatting. If Telegram rejects the formatted message, alfred SHALL resend the same content as plain text.
@@ -88,7 +96,7 @@ A reply longer than Telegram's maximum message length SHALL be sent as several c
 - **THEN** it arrives as two or more messages in order, together containing the full reply
 
 ### Requirement: Typing indicator while an owner turn runs
-While the AI turn for a user's message is running, alfred SHALL show the typing indicator in that user's chat, renewing it so it stays visible for the whole turn, and SHALL stop renewing it when the turn ends. It SHALL NOT show the indicator for `/ask` turns, or while no turn is running (an item waiting in the queue or for a retry, or a summary being made after a reset).
+While the AI turn for a user's message is running, alfred SHALL show the typing indicator in that user's chat, renewing it so it stays visible for the whole turn, and SHALL stop renewing it when the turn ends. It SHALL NOT show the indicator for `/ask` turns, or while no turn is running (an item waiting in the queue, for a retry or for the user's answer, or a summary being made after a reset). A resumed turn started by a user's message SHALL show it again until it ends.
 
 #### Scenario: Owner turn running
 - **WHEN** `ana` sends "what's downloading?" and its AI turn runs for 20 seconds
@@ -110,6 +118,10 @@ While the AI turn for a user's message is running, alfred SHALL show the typing 
 - **WHEN** an `/ask` turn runs
 - **THEN** no typing indicator is sent to any chat
 
+#### Scenario: Waiting for the user's answer
+- **WHEN** `ana`'s turn waits for her confirmation
+- **THEN** no typing indicator is sent while it waits, and it is shown again from her tap until the turn's reply
+
 ### Requirement: Typing indicator failures don't affect the turn
 If Telegram does not accept the typing indicator, alfred SHALL log it and keep trying for the rest of the turn. The failure SHALL NOT fail, delay or retry the turn, and SHALL NOT change its reply.
 
@@ -120,3 +132,14 @@ If Telegram does not accept the typing indicator, alfred SHALL log it and keep t
 #### Scenario: Telegram recovers mid-turn
 - **WHEN** one typing indicator request fails and later requests in the same turn succeed
 - **THEN** the typing indicator is shown again for the rest of the turn
+
+### Requirement: Buttons
+alfred SHALL receive button taps (callback queries) on its own messages along with messages. Every tap SHALL be acknowledged to Telegram, so the client stops showing it as loading, with a short text when the tap had no effect. Taps from anyone other than a configured user in their private chat SHALL be ignored without effect and logged with the sender's user ID only.
+
+#### Scenario: Tap acknowledged
+- **WHEN** `ana` taps a button on alfred's question message
+- **THEN** Telegram is told the tap was received, and her client stops waiting
+
+#### Scenario: Tap from a stranger
+- **WHEN** a callback query arrives from a Telegram user who is not configured
+- **THEN** nothing happens, and a log entry records only that user's ID

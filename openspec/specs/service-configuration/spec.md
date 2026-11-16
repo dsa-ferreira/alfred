@@ -18,7 +18,7 @@ alfred SHALL read its non-secret configuration from a TOML file whose path is gi
 - **THEN** alfred exits with a non-zero status and an error naming the path
 
 ### Requirement: All tunables in the file
-Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, the idle close time, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, the number of search results, and the quiet period before summaries, and the user facts settings: whether facts are in the context, the facts budget, the fact size, the extraction attempts before giving up, and the distance within which facts are checked for duplicates, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait. Settings with defaults SHALL be optional.
+Every non-secret setting SHALL be settable in the config file, including the users (see `users`), model base URL and name, the brains the admin can switch between, request timeout, maximum model requests per turn, persona, the timezone, context window size, the idle close time, retry delays, listen host and port, log level, services and MCP servers, the conversation memory settings: summary model, embedding service URL, model and text prefixes, recall and summariser size caps, the number of search results, and the quiet period before summaries, and the user facts settings: whether facts are in the context, the facts budget, the fact size, the extraction attempts before giving up, and the distance within which facts are checked for duplicates, and the web settings: SearXNG URL, number of web search results, fetch chunk size, fetch timeout and fetch download cap, and the reminder settings: default time for a date without a clock time, and the due-reminder check interval, and the attachment settings: object store endpoint, bucket and region, file size limit, inline window, first-page text size, document read size, image size for the model, and album wait, and the input request settings: how long a request waits for its answer. Settings with defaults SHALL be optional.
 
 #### Scenario: Minimal file
 - **WHEN** the file sets only one user, the model, services and MCP servers
@@ -124,6 +124,14 @@ Every non-secret setting SHALL be settable in the config file, including the use
 - **WHEN** `[memory] facts_duplicate_max_distance` is set to 3
 - **THEN** alfred exits at startup with an error naming `memory.facts_duplicate_max_distance`
 
+#### Scenario: Input request default
+- **WHEN** the file has no `[input_requests]` section
+- **THEN** a request for the user's answer expires 60 minutes after its question was sent
+
+#### Scenario: Invalid expiry
+- **WHEN** `[input_requests] expire_after_min` is set to 0
+- **THEN** alfred exits at startup with an error naming `input_requests.expire_after_min`
+
 ### Requirement: Secrets only from the environment
 Secrets SHALL be accepted only from environment variables: the Telegram bot token (`ALFRED_TELEGRAM_BOT_TOKEN`), the database URL (`ALFRED_DATABASE_URL`), the object store key (`ALFRED_S3_ACCESS_KEY_ID` and `ALFRED_S3_SECRET_ACCESS_KEY`, required only when `[attachments]` is set), the tokens of services and MCP servers, and users' MCP tokens. Services and MCP servers SHALL name their secret's variable with `token_env`, and a user SHALL name a per-server variable in `mcp_tokens`.
 
@@ -189,15 +197,19 @@ Each `[ai.models]` key SHALL be lowercase letters, digits and hyphens, and each 
 - **THEN** alfred exits at startup with an error naming `ai.models.gemma` and the unknown key
 
 ### Requirement: User list
-The config file SHALL have at least one `[[users]]` entry. Each SHALL have a `name` (lowercase letters, digits and hyphens), a positive `telegram_user_id`, and optionally `address` (default "sir"), `admin` (default `false`), `tools` (the allow-list, default empty) and `mcp_tokens` (configured server name to token variable, default none).
+The config file SHALL have at least one `[[users]]` entry. Each SHALL have a `name` (lowercase letters, digits and hyphens), a positive `telegram_user_id`, and optionally `address` (default "sir"), `admin` (default `false`), `tools` (the allow-list, default empty), `confirm` (the confirm list, in the same syntax, default empty) and `mcp_tokens` (configured server name to token variable, default none).
 
 #### Scenario: Minimal user
 - **WHEN** a user entry sets only `name`, `telegram_user_id` and `admin = true`
-- **THEN** that user is addressed as "sir" and is offered no tools
+- **THEN** that user is addressed as "sir", is offered no tools, and confirms none
 
 #### Scenario: No users
 - **WHEN** the file has no `[[users]]` entry
 - **THEN** alfred exits at startup with an error naming `users`
+
+#### Scenario: Confirm entry with a bad prefix
+- **WHEN** a user sets `confirm = ["add_media"]`
+- **THEN** alfred exits at startup with an error naming the user and the entry
 
 ### Requirement: User list validation
 Two users with the same name or the same Telegram user ID, a number of admins other than one, and an `mcp_tokens` key that is not a configured MCP server SHALL be startup errors naming the users or keys involved.
