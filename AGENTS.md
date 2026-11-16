@@ -33,33 +33,35 @@ configured MCP servers, and runs the tool calls itself. Planning lives in `opens
 Everything the model can call is a toolset. The contract lives in
 `alfred.kernel` (`toolset.py`, with turns in `turn.py` and the allow and
 confirm lists in `access.py`), which imports nothing else from alfred; the
-turn loop in `agent/turn.py` names no tool. To add one:
+turn loop in `runtime/agent/turn.py` names no tool. To add one:
 
 - Subclass `LocalToolset` in the feature's own `tools.py` (see "Packages
-  and ranks"), or in `alfred/toolbox/` if it belongs to no feature (like
-  `calculator.py` and `dates.py`). Set `names` (every name it can ever
-  offer) and `definitions`, implement `call(name, raw_arguments, attempt)`,
-  and override `offered` if it is not for every turn (`chat_only` for turns
-  started by a user's chat message). A turn is a `ChatTurn`, `AskTurn` or
-  `ReminderTurn` (`TurnInput` is their union, plain data in
-  `kernel/turn.py`); a toolset tells them apart with `isinstance` in
-  `offered`, `open` or `new_attempt`, never by a kind string. Everything
-  else about a kind is its `TurnKind`'s (see "Turn kinds"). Override
-  `open` / `new_attempt` only for per-turn or per-attempt state (see
-  `web/tools.py`).
+  and ranks"), or in `alfred/features/toolbox/` if it belongs to no
+  feature (like `calculator.py` and `dates.py`). Set `names` (every name
+  it can ever offer) and `definitions`, implement
+  `call(name, raw_arguments, attempt)`, and override `offered` if it is
+  not for every turn (`chat_only` for turns started by a user's chat
+  message). A turn is
+  a `ChatTurn`, `AskTurn` or `ReminderTurn` (`TurnInput` is their union,
+  plain data in `kernel/turn.py`); a toolset tells them apart with
+  `isinstance` in `offered`, `open` or `new_attempt`, never by a kind
+  string. Everything else about a kind is its `TurnKind`'s (see "Turn
+  kinds"). Override `open` / `new_attempt` only for per-turn or
+  per-attempt state (see `features/web/tools.py`).
 - Don't check the user's tool allow-list or confirm list yourself: `turn.py`
   wraps every opened toolset in `Confirmed(Gated(...))` (`alfred.kernel.access`).
   `Gated` hides and refuses the names the turn user's `AllowList` doesn't
   match; `Confirmed` holds back the calls their confirm list matches until
   they tap **Do it**. Only prompt notes about tools the list hides need care
-  (see `attachments/tools.py`).
+  (see `features/attachments/tools.py`).
 - A toolset that needs the user's answer mid-call returns
   `ToolOutcome.waiting(InputNeed(question, state))` and implements
-  `resume(name, raw_arguments, state, answer, attempt)`: the turn is parked,
-  and once the user taps an option, `resume` gets the call again with that
-  option's `answer` (see `mcp/toolset.py`). `state` and `answer` must be
-  JSON-able: they are stored while the turn waits. `LocalToolset.resume`
-  raises `NotImplementedError`, which becomes an error result.
+  `resume(name, raw_arguments, state, answer, attempt)`: the turn is
+  parked, and once the user taps an option, `resume` gets the call again
+  with that option's `answer` (see `features/mcp/toolset.py`). `state` and
+  `answer` must be JSON-able: they are stored while the turn waits.
+  `LocalToolset.resume` raises `NotImplementedError`, which becomes an
+  error result.
 - Whose turn it is is `turn.user` (`attempt.turn.user` in `call`). Data a
   tool reads or writes belongs to that user; filter by `user.name` in the
   query, never in the prompt.
@@ -69,22 +71,24 @@ turn loop in `agent/turn.py` names no tool. To add one:
   `startup.check_tool_names` checks exact `alfred_*` allow-list entries
   against the `names` of `_TOOLSET_TYPES`.
 - Exceptions from `call` become error results for the model (`_safe_call`).
-- Test the toolset alone, and a whole turn with `tests/agent/turn_helpers.py`.
+- Test the toolset alone, and a whole turn with
+  `tests/runtime/agent/turn_helpers.py`.
 
 ## Turn kinds
 
 A turn answers a user's chat message, a service's `/ask` prompt or a due
-reminder. Each kind is one module in `alfred/turns/kinds/` (`chat.py`,
-`ask.py`, `reminder.py`) holding its payload type (stored as
-`queue_items.payload`, with the kind's `tag` in `queue_items.kind`) and its
-`TurnKind` (`turns/kinds/base.py`). A kind only decides, purely:
+reminder. Each kind is one module in `alfred/runtime/turns/kinds/`
+(`chat.py`, `ask.py`, `reminder.py`) holding its payload type (stored as
+`queue_items.payload`, with the kind's `tag` in `queue_items.kind`) and
+its `TurnKind` (`runtime/turns/kinds/base.py`). A kind only decides,
+purely:
 
 - `turn`: the kernel turn it builds from the queue item;
 - `opening`: what is recorded when the turn first starts, and whether a
   pending idle-close marker is told first;
-- `framing`: the `Framing` the agent gets (`agent/framing.py`): turn rules
-  for the system prompt, inline attachments, the input line after the
-  history. The agent never branches on kind;
+- `framing`: the `Framing` the agent gets (`runtime/agent/framing.py`):
+  turn rules for the system prompt, inline attachments, the input line
+  after the history. The agent never branches on kind;
 - `question_title`: what asked, on a question the turn parks with;
 - `answer`: the text that ends the exchange for the model's reply, or
   `None` for silence;
@@ -92,26 +96,28 @@ reminder. Each kind is one module in `alfred/turns/kinds/` (`chat.py`,
   reply), `Tell(text)` (a notice, sent, not recorded) or `Silent()`;
 - `entries` and `message`: what the exchange records for a text, and what
   the user is sent. A question that ends unanswered is recorded through
-  `entries` too (`turns/inputs/endings.py`).
+  `entries` too (`runtime/turns/inputs/endings.py`).
 
-The worker does what the kinds decide, through `turns/exchange.py`'s
-`Exchange` (the only place that records and sends for a kind). The
-delivery rule: the exchange is recorded and sent **before** the queue item
-finishes, so a crash repeats it rather than losing it; a `Tell` is sent
-**after**, so a crash loses it rather than repeating it.
+The worker does what the kinds decide, through
+`runtime/turns/exchange.py`'s `Exchange` (the only place that records and
+sends for a kind). The delivery rule: the exchange is recorded and sent
+**before** the queue item finishes, so a crash repeats it rather than
+losing it; a `Tell` is sent **after**, so a crash loses it rather than
+repeating it.
 
-`Kinds` (`turns/kinds/__init__.py`) is the registry, built once in `app`:
-by tag to decode an item, by turn type for everything after. Nothing
-outside `turns/kinds/` branches on kind, except toolsets choosing what to
-offer (see "Adding a tool group"). The set is closed; adding a kind takes:
+`Kinds` (`runtime/turns/kinds/__init__.py`) is the registry, built once in
+`app`: by tag to decode an item, by turn type for everything after.
+Nothing outside `runtime/turns/kinds/` branches on kind, except toolsets
+choosing what to offer (see "Adding a tool group"). The set is closed;
+adding a kind takes:
 
 - a turn data class in `kernel/turn.py`, added to `TurnInput`;
-- a module in `turns/kinds/` with its payload and `TurnKind`, listed in
-  `_KIND_TYPES` and `Kinds.default`;
-- whatever queues it (like `turns/intake.py` or `turns/due_reminders.py`),
-  calling `Queue.add` with its payload;
+- a module in `runtime/turns/kinds/` with its payload and `TurnKind`,
+  listed in `_KIND_TYPES` and `Kinds.default`;
+- whatever queues it (like `runtime/turns/intake.py` or
+  `runtime/turns/due_reminders.py`), calling `Queue.add` with its payload;
 - the toolsets' decisions about offering their tools on it, and its tests
-  in `tests/turns/kinds/`.
+  in `tests/runtime/turns/kinds/`.
 
 ## Code layout
 
@@ -154,28 +160,36 @@ class, or which public item is the main one; review covers those.
 
 ### Packages and ranks
 
-Every package under `src/alfred/` has a rank, and a module imports only from
-its own package or from the rows below it. `a | b` on one row are siblings
-that must not import each other; `a : b` may. Imports under `TYPE_CHECKING`
-count. `lint-imports` (run by `make lint`) checks this against the contract
-in `pyproject.toml`, which copies this table; a new top-level package or
-module must be added there.
+Every module under `src/alfred/` has a rank, and its path shows it: the
+entry modules sit at the root, `kernel/` is its own rank, and every other
+package sits in the directory of its rank (`alfred/features/facts/`,
+`alfred/infra/db/`). A module imports only from its own package or from
+the rows below it. `a | b` on one row are siblings that must not import
+each other; `a : b` may. Imports under `TYPE_CHECKING` count.
 
 ```
- rank  name       packages / modules
- ----  ---------  ---------------------------------------------------------
-  6    entry      app : cli : config : schema : startup
-  5    adapters   telegram | http
-  4    runtime    turns
-                  agent
-  3    features   archive | facts | reminders | web | mcp | toolbox
-                  conversations
-                  attachments
-                  brains
-  2    kernel     kernel
-  1    infra      db | llm | backoff | times
-                  settings
+ rank  directory    packages / modules
+ ----  -----------  -------------------------------------------------------
+  6    (root)       app : cli : config : schema : startup
+  5    adapters/    telegram | http
+  4    runtime/     turns
+                    agent
+  3    features/    archive | facts | reminders | web | mcp | toolbox
+                    conversations
+                    attachments
+                    brains
+  2    kernel/      kernel
+  1    infra/       db | llm | backoff | times
+                    settings
 ```
+
+`lint-imports` (run by `make lint`) checks this against the contracts in
+`pyproject.toml`, which copy this table: `ranks` orders the root modules
+and the rank directories, and one contract per rank directory (`adapters`,
+`runtime`, `features`, `infra`) orders the packages inside it. All of them
+are exhaustive, so a new package goes in the directory of its rank and in
+that rank's contract (and this table), on the row its imports allow; a new
+entry module goes on the root row of `ranks`.
 
 The feature rows are ordered by the dependencies that are real, not by
 taste: `archive` and `facts` read conversation transcripts, `conversations`
@@ -188,11 +202,13 @@ conversations' titles).
 
 A feature package holds everything about its feature, one job per module:
 
-- **domain** types and rules (`reminders/when.py`);
+- **domain** types and rules (`features/reminders/when.py`);
 - its **tables** (`tables.py`; see "Adding a table");
-- the **store**, its persistence (`facts/store.py`, `conversations/store.py`);
+- the **store**, its persistence (`features/facts/store.py`,
+  `features/conversations/store.py`);
 - the **tools** the model calls (`tools.py`, a `LocalToolset`);
-- background **jobs** run by `turns/background.py` (`archive/summary_job.py`);
+- background **jobs** run by `runtime/turns/background.py`
+  (`features/archive/summary_job.py`);
 - its **config** section (`config.py`, built on `settings.Section`). Only
   `alfred/config.py` composes the sections into `Config`, and nothing below
   the entry rank imports it: `app` hands each part the section or values it
@@ -200,28 +216,28 @@ A feature package holds everything about its feature, one job per module:
   read through one class that extends each package's section;
 - its fixed user-facing text (`notices.py`).
 
-Tests mirror the packages: the tests of `alfred/facts/store.py` are in
-`tests/facts/test_store.py`.
+Tests mirror the packages: the tests of `alfred/features/facts/store.py`
+are in `tests/features/facts/test_store.py`.
 
 ## Adding a table
 
 A table belongs to one feature (or to `turns`) and is defined in that
-package's `tables.py`, on `alfred.db.base.Base`; a status vocabulary is a
-check constraint built with `in_values`, next to the table. Import the
-module in `alfred/schema.py`, which gathers every table for Alembic (and
-add a column that names a user to `USER_NAME_COLUMNS`). Then add a
+package's `tables.py`, on `alfred.infra.db.base.Base`; a status vocabulary
+is a check constraint built with `in_values`, next to the table. Import
+the module in `alfred/schema.py`, which gathers every table for Alembic
+(and add a column that names a user to `USER_NAME_COLUMNS`). Then add a
 migration under `migrations/versions/` (autogenerate from
 `schema.metadata`, then edit by hand); `test_models_match_migrations`
 fails until the two agree. Constraint tests go in
-`tests/<package>/test_tables.py`.
+`tests/<rank>/<package>/test_tables.py`.
 
 Three rules keep the data shaped like the code:
 
 1. **Writes.** A package inserts, updates and deletes only its own tables.
 2. **Reads.** A package may read, and join, the tables of packages ranked
-   below it (`archive/search.py` joins `conversations`), never above. A
-   read from above goes through a protocol `app` wires in
-   (`conversations/transcript.py`'s `RecalledLookup`).
+   below it (`features/archive/search.py` joins `conversations`), never
+   above. A read from above goes through a protocol `app` wires in
+   (`features/conversations/transcript.py`'s `RecalledLookup`).
 3. **Foreign keys** point within the package or down the order. A link
    that would point up is a plain column with no foreign key
    (`entries.turn_id`) or a table owned by the higher package
@@ -229,11 +245,12 @@ Three rules keep the data shaped like the code:
 
 A write that spans packages runs in one transaction opened by the package
 ranked above all of them, which calls each package's session-taking
-operation: `turns/intake.py` queues a message with `attachments/rows.py`'s
-`add` and `Queue.add`; `turns/due_reminders.py` queues what
-`Reminders.claim_due` claims. Such an operation takes the caller's
-`AsyncSession` and never commits; the caller notifies anyone waiting
-(`Queue.notify`) after its transaction commits.
+operation: `runtime/turns/intake.py` queues a message with
+`features/attachments/rows.py`'s `add` and `Queue.add`;
+`runtime/turns/due_reminders.py` queues what `Reminders.claim_due` claims.
+Such an operation takes the caller's `AsyncSession` and never commits; the
+caller notifies anyone waiting (`Queue.notify`) after its transaction
+commits.
 
 ## Notices
 
@@ -286,10 +303,11 @@ Docs: <https://py.sdk.modelcontextprotocol.io/>. alfred is only an MCP
 - **Servers asking the user (protocol 2026-07-28).** A server may answer
   `tools/call` with `InputRequiredResult` (`input_requests` keyed by the
   server, plus an opaque `request_state`). alfred drives this itself:
-  - The capability is declared by passing `elicitation_callback` to `Client`
-    (`mcp/client.py` `new_client`); without one the server fails the call
-    with "did not declare the form elicitation capability". The SDK declares
-    form and URL mode together; alfred refuses URL requests itself.
+  - The capability is declared by passing `elicitation_callback` to
+    `Client` (`features/mcp/client.py` `new_client`); without one the
+    server fails the call with "did not declare the form elicitation
+    capability". The SDK declares form and URL mode together; alfred
+    refuses URL requests itself.
   - `client.session.call_tool(..., allow_input_required=True)` returns the
     `InputRequiredResult` instead of running the callback loop of
     `Client.call_tool`. The answer goes back on a *fresh* connection with

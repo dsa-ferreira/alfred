@@ -62,26 +62,50 @@ root_package = "alfred"
 exclude_type_checking_imports = false
 
 [[tool.importlinter.contracts]]
-name = "ranks and feature order"
+name = "ranks"
 type = "layers"
 containers = ["alfred"]
 exhaustive = true
 layers = [
-    # entry
     "app : cli : config : schema : startup",
-    # adapters
-    "telegram | http",
-    # runtime
-    "turns",
-    "agent",
-    # features, in their declared order
+    "adapters",
+    "runtime",
+    "features",
+    "kernel",
+    "infra",
+]
+
+# The order within each rank, one contract per rank package.
+
+[[tool.importlinter.contracts]]
+name = "adapters"
+type = "layers"
+containers = ["alfred.adapters"]
+exhaustive = true
+layers = ["telegram | http"]
+
+[[tool.importlinter.contracts]]
+name = "runtime"
+type = "layers"
+containers = ["alfred.runtime"]
+exhaustive = true
+layers = ["turns", "agent"]
+
+[[tool.importlinter.contracts]]
+name = "features"
+type = "layers"
+containers = ["alfred.features"]
+exhaustive = true
+layers = [
     "archive | facts | reminders | web | mcp | toolbox",
     "conversations",
     "attachments",
     "brains",
-    # kernel
-    "kernel",
-    # infra
-    "db | llm | backoff | times",
-    "settings",
 ]
+
+[[tool.importlinter.contracts]]
+name = "infra"
+type = "layers"
+containers = ["alfred.infra"]
+exhaustive = true
+layers = ["db | llm | backoff | times", "settings"]
