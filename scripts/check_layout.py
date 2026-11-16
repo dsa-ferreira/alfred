@@ -144,9 +144,20 @@ def _bound_names(node: ast.stmt) -> list[str]:
     if isinstance(node, ast.TypeAlias):
         return [node.name.id]
     if isinstance(node, ast.Assign):
-        return [n.id for t in node.targets for n in ast.walk(t) if isinstance(n, ast.Name)]
+        return [name for target in node.targets for name in _target_names(target)]
     if isinstance(node, ast.AnnAssign | ast.AugAssign) and isinstance(node.target, ast.Name):
         return [node.target.id]
+    return []
+
+
+def _target_names(target: ast.expr) -> list[str]:
+    """Names an assignment binds; ``x.y = ...`` and ``x[0] = ...`` bind none."""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Tuple | ast.List):
+        return [name for element in target.elts for name in _target_names(element)]
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
     return []
 
 
