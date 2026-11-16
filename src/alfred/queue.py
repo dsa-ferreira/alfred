@@ -1,37 +1,37 @@
 """The AI-bound queue and its single worker.
 
-Users' messages, ``/ask`` prompts and due reminders are rows in
-``queue_items``, each for one user. One worker, for all users,
-takes the oldest ``pending`` row and runs its turn; nothing behind it starts
-until it is done or failed. While the AI is unreachable (and no tool has run
-in the turn) the head item is retried with backoff and keeps its place.
-Pending rows simply resume after a restart.
+**Order.** Users' messages, ``/ask`` prompts and due reminders are rows in
+``queue_items``, each for one user. One worker, for all users, takes the
+oldest ``pending`` row and runs its turn; nothing behind it starts until it
+is done or failed. While the AI is unreachable (and no tool has run in the
+turn) the head item is retried with backoff and keeps its place. Pending
+rows simply resume after a restart. The queue tells the memory sweeper when
+items arrive and finish (``QueueActivity``).
 
-The worker resolves the item's user from the config; an item for a user who
-is no longer configured is marked failed instead of blocking the queue.
-Replies and fixed notices go to that user, in their form of address; a brain
-fallback is also told to the admin.
+**Users.** The worker resolves the item's user from the config; an item for
+a user who is no longer configured is marked failed instead of blocking the
+queue. Replies and fixed notices go to that user, in their form of address;
+a brain fallback is also told to the admin.
 
-A user's message starts with the marker of a conversation closed for
-inactivity, if one is pending. Ending a conversation only archives it:
-the memory sweeper summarises it in the background, so the next item
-never waits. The queue tells the sweeper when items arrive and finish
-(``QueueActivity``).
+**Conversations.** A user's message starts with the marker of a
+conversation closed for inactivity, if one is pending. Ending a
+conversation only archives it: the memory sweeper summarises it in the
+background, so the next item never waits.
 
-A reminder always reaches its recipient: a blank or ``NO_REPLY`` answer, or
-a turn that fails for good, is replaced by the fixed reminder notice. The
-exception is a quiet reminder (``quiet_ok``) answered ``NO_REPLY``: nothing
-is sent or recorded. A quiet reminder whose turn fails still gets the
-notice, so a broken AI doesn't look like "nothing to report".
+**Reminders.** A reminder always reaches its recipient: a blank or
+``NO_REPLY`` answer, or a turn that fails for good, is replaced by the fixed
+reminder notice. The exception is a quiet reminder (``quiet_ok``) answered
+``NO_REPLY``: nothing is sent or recorded. A quiet reminder whose turn fails
+still gets the notice, so a broken AI doesn't look like "nothing to report".
 
-A turn may park, waiting for its user's answer. Its item becomes
-``waiting``, which ``head`` skips, and the question goes to the user; a
-question that can't be sent ends the request at once. A tap makes the item
-``pending`` again: being older than anything queued since, it is the next
-head. The worker then marks the request ``running`` before the turn resumes,
-so a crash never runs the call twice: an item whose request is already
-``running`` fails with the partial notice. A user's new message first
-cancels their open requests (``before_user_message``).
+**Parked turns.** A turn may park, waiting for its user's answer. Its item
+becomes ``waiting``, which ``head`` skips, and the question goes to the
+user; a question that can't be sent ends the request at once. A tap makes
+the item ``pending`` again: being older than anything queued since, it is
+the next head. The worker then marks the request ``running`` before the turn
+resumes, so a crash never runs the call twice: an item whose request is
+already ``running`` fails with the partial notice. A user's new message
+first cancels their open requests (``before_user_message``).
 """
 
 from __future__ import annotations

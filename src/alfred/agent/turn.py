@@ -14,35 +14,35 @@ loop up to ai.max_requests_per_turn:
 fail "stopped after too many steps"
 ```
 
-The agent names no tool: what is offered on which turn, and what a call
-does, is up to the toolsets (``alfred.tools.base``) that ``app.py``
-passes in, seen through the turn user's allow-list. The names left are
-what the system prompt describes.
+**Tools.** The agent names no tool: what is offered on which turn, and what
+a call does, is up to the toolsets (``alfred.tools.base``) that ``app.py``
+passes in, seen through the turn user's allow-list and confirm list
+(``Gated`` inside ``Confirmed``). The names left are what the system prompt
+describes.
 
-A non-retryable model error on a brain other than the startup one makes the
-startup brain current. If no tool had run, the turn runs again from the
-start on it; either way the result carries the :class:`Fallback`, and the
-worker tells the user and the admin. Each attempt reads the history again
-and tells every open toolset it started (``new_attempt``), so per-attempt
-state such as the web fetch allowlist starts fresh.
+**Context.** Each attempt reads the history again and tells every open
+toolset it started (``new_attempt``), so per-attempt state such as the web
+fetch allowlist starts fresh. A user's chat message is already in the
+history when its turn runs (the worker records it at turn start), so it
+reaches the model as the newest entry. An ``/ask`` prompt is only recorded if
+the answer reaches the user, so it is added to the messages here, after the
+time now like the history's messages; so is a due reminder, labelled with its
+due time and the time of this attempt, so a retried turn shows how late it
+really is.
 
-A user's chat message is already in the history when its turn runs (the worker
-records it at turn start), so it reaches the model as the newest entry. An
-``/ask`` prompt is only recorded if the answer reaches the user, so it is added
-to the messages here, after the time now like the history's messages. So is a
-due reminder, labelled with its due time and the time of this attempt, so a
-retried turn shows how late it really is.
+**Fallback.** A non-retryable model error on a brain other than the startup
+one makes the startup brain current. If no tool had run, the turn runs again
+from the start on it; either way the result carries the :class:`Fallback`,
+and the worker tells the user and the admin.
 
-A call may need its user's answer. Every toolset is wrapped in
-``Confirmed`` with the user's confirm list, outside the allow-list gate.
-When a call returns a need, the turn stops there and returns ``waiting``:
-the call, the calls after it in the same reply (not run yet), the messages
-since the context (``tail``), the request and call counters, and the
-conversation and newest entry its context was built from. A resumed turn
-(``TurnInput.resume``) rebuilds the same context (the system prompt is
-new), appends the tail, hands the answer to the toolset that asked, runs
-the rest of that reply's calls, and carries on as usual. A resumed turn
-has run tools, so it is never retried.
+**Waiting for the user.** When a call returns a need for its user's answer,
+the turn stops there and returns ``waiting``: the call, the calls after it in
+the same reply (not run yet), the messages since the context (``tail``), the
+request and call counters, and the conversation and newest entry its context
+was built from. A resumed turn (``TurnInput.resume``) rebuilds the same
+context (the system prompt is new), appends the tail, hands the answer to the
+toolset that asked, runs the rest of that reply's calls, and carries on as
+usual. A resumed turn has run tools, so it is never retried.
 """
 
 from __future__ import annotations
