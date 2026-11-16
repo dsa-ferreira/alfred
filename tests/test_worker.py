@@ -25,12 +25,13 @@ from alfred.history import History
 from alfred.inputs.parking import Parking
 from alfred.memory.summaries import Summaries
 from alfred.model import ModelFailed, ModelUnreachable
+from alfred.notices import reset_marker
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools
 from alfred.tools.base import AllowList
 from alfred.tools.conversation import END_CONVERSATION
-from alfred.worker import Worker, _reset_marker
+from alfred.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import (
     ANA,
@@ -384,13 +385,13 @@ async def start_at_41(sessions: async_sessionmaker[AsyncSession]) -> None:
         await session.execute(sql("SELECT setval('conversations_id_seq', 41)"))
 
 
-def test_reset_marker() -> None:
-    assert _reset_marker(41, 42) == "— #41 archived —\n— new conversation #42 —"
-    assert _reset_marker(41, 42, idle=True) == (
+def testreset_marker() -> None:
+    assert reset_marker(41, 42) == "— #41 archived —\n— new conversation #42 —"
+    assert reset_marker(41, 42, idle=True) == (
         "— #41 closed after inactivity —\n— new conversation #42 —"
     )
-    assert _reset_marker(None, 1) == "— new conversation #1 —"
-    assert _reset_marker(None, 1, idle=True) == "— new conversation #1 —"
+    assert reset_marker(None, 1) == "— new conversation #1 —"
+    assert reset_marker(None, 1, idle=True) == "— new conversation #1 —"
 
 
 class BlockingModel:
