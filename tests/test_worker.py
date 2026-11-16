@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred import notices
 from alfred.agent.messages import strip_stamp
-from alfred.agent.model import ModelFailed, ModelUnreachable
 from alfred.agent.prompts import _NO_REPLY
 from alfred.attachments import NewAttachment
 from alfred.backoff import backoff_s
@@ -26,6 +25,7 @@ from alfred.history import History
 from alfred.inputs.loop import cancel_on_new_message
 from alfred.inputs.store import InputRequests
 from alfred.memory.summaries import Summaries
+from alfred.model import ModelFailed, ModelUnreachable
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, ReminderTools

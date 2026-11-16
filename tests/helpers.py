@@ -11,7 +11,6 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.inline import InlineAttachments
-from alfred.agent.model import ModelReply, ToolCall
 from alfred.agent.turn import Agent, _Model
 from alfred.app import _build_toolsets
 from alfred.attachments import NewAttachment
@@ -40,6 +39,7 @@ from alfred.history import History
 from alfred.mcp.client import Connector
 from alfred.memory.facts import FactTools
 from alfred.memory.search import Searcher
+from alfred.model import ModelReply, ToolCall
 from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
 from alfred.tools.base import AllowList

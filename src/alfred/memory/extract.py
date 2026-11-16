@@ -30,7 +30,6 @@ from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.agent.model import ModelError, token_counts
 from alfred.backoff import backoff_s
 from alfred.config import Config
 from alfred.db.models import Conversation
@@ -46,6 +45,7 @@ from alfred.memory.facts import FactStore, insert_fact, lock_user
 from alfred.memory.streaming import complete_unless_preempted
 from alfred.memory.summaries import Model, load_transcript
 from alfred.memory.transcript import cut_middle, render
+from alfred.model import ModelError, token_counts
 
 log = logging.getLogger(__name__)
 

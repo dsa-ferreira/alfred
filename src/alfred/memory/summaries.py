@@ -23,7 +23,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from alfred.agent.model import ModelError, ModelReply, token_counts
 from alfred.attachments.handles import refs_by_entry
 from alfred.backoff import backoff_s
 from alfred.config import Config
@@ -37,6 +36,7 @@ from alfred.memory.transcript import (
     render,
     summary_messages,
 )
+from alfred.model import ModelError, ModelReply, token_counts
 
 log = logging.getLogger(__name__)
 

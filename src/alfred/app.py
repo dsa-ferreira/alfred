@@ -26,7 +26,6 @@ import uvicorn
 from aiogram import Bot
 
 from alfred.agent.inline import InlineAttachments
-from alfred.agent.model import ModelClient
 from alfred.agent.turn import Agent
 from alfred.api import create_app
 from alfred.attachments.intake import Intake
@@ -51,6 +50,7 @@ from alfred.memory.facts import FactEmbeddingJob, FactStore, FactTools
 from alfred.memory.search import ConversationSearch, MemoryTools, Searcher
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
+from alfred.model import ModelClient
 from alfred.queue import Queue
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools

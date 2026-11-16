@@ -19,11 +19,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from alfred.agent.model import ModelError, token_counts
 from alfred.memory.extraction import DuplicateParseError, duplicate_messages, parse_duplicates
 from alfred.memory.facts import FactStore
 from alfred.memory.streaming import complete_unless_preempted
 from alfred.memory.summaries import Model
+from alfred.model import ModelError, token_counts
 
 log = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelReply, ModelUnreachable, _Usage
 from alfred.db.models import Fact
 from alfred.memory.duplicates import FactDuplicateJob
 from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
+from alfred.model import ModelReply, ModelUnreachable, _Usage
 from alfred.queue import Queue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 

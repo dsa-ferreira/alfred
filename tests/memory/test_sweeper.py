@@ -7,7 +7,6 @@ from typing import Any
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelReply, ModelUnreachable
 from alfred.db.models import Conversation, Fact, QueueItem
 from alfred.history import History
 from alfred.memory.duplicates import FactDuplicateJob
@@ -15,6 +14,7 @@ from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.facts import FactEmbeddingJob, FactStore
 from alfred.memory.summaries import Summaries
 from alfred.memory.sweeper import Sweeper
+from alfred.model import ModelReply, ModelUnreachable
 from alfred.queue import Queue
 from alfred.worker import Worker
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text

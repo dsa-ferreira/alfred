@@ -9,8 +9,8 @@ from dataclasses import replace
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import _Usage
 from alfred.history import History
+from alfred.model import _Usage
 from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, agent, owner_turn
 from tests.helpers import FakeModel, calls, make_agent, make_config, text

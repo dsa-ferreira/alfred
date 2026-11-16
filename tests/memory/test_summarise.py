@@ -9,12 +9,12 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelReply, ModelUnreachable, _Usage
 from alfred.db.models import Conversation
 from alfred.history import History
 from alfred.memory.embedding import _EmbeddingUnreachable
 from alfred.memory.summaries import Summaries
 from alfred.memory.transcript import _SUMMARY_PROMPT
+from alfred.model import ModelReply, ModelUnreachable, _Usage
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)

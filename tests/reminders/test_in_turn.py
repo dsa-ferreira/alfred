@@ -8,11 +8,11 @@ import pytest
 from mcp.server import MCPServer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.model import ModelUnreachable
 from alfred.agent.prompts import _ASK_RULE, _NO_REPLY, _REMINDER_ALWAYS, _REMINDER_RULE
 from alfred.agent.turn import TurnFailed
 from alfred.config import Users
 from alfred.history import History
+from alfred.model import ModelUnreachable
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.reminders.tools import NAMES as REMINDER_TOOLS

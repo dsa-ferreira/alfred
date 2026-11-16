@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from alfred.agent.model import ModelReply
 from alfred.memory.summaries import Model
+from alfred.model import ModelReply
 
 
 async def complete_unless_preempted(
