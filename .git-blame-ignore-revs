@@ -11,3 +11,11 @@ cc15c2847caed588fd170be7eef87878d7134cc4
 2be535f428c555a2d8d7a7b1da4527934ec570c1
 # docs: group the turn and queue docstrings by topic
 20ca077ef66e7c53f353d1d818ff25c46fdecdec
+# refactor: move brains and the calculator and date tools into packages
+789259e3e58a230f6b97e09b4279f20964388395
+# refactor(conversations): move the conversation modules into one package
+55addc4cf2851a3f9c83821bed33d74a212c316e
+# refactor: move memory into the archive and facts packages
+ba28570ed51627cc68e62dc4f2f563635dfa68d9
+# refactor: move the queue, worker and input requests into turns
+1d2f77b894ee73fc4b893e83f7c1edc5dc216ea5
