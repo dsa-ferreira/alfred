@@ -37,12 +37,6 @@ class DownloadFailed(Exception):
     """Telegram didn't hand over the file."""
 
 
-class _Downloader(Protocol):
-    async def download(self, file_id: str) -> bytes:
-        """The file's bytes; raises :class:`DownloadFailed`."""
-        ...
-
-
 @dataclass(frozen=True)
 class IncomingFile:
     """One file of a user's message, as Telegram describes it, before download."""
@@ -51,20 +45,6 @@ class IncomingFile:
     file_id: str
     size: int | None = None  # Telegram's, when it gives one
     file_name: str | None = None
-
-
-@dataclass
-class _Received:
-    """What became of a message: the queue item (if any) and the notices to send."""
-
-    item_id: int | None = None
-    notices: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class _Ready:
-    attachment: NewAttachment
-    data: bytes
 
 
 class Intake:
@@ -159,3 +139,23 @@ class Intake:
             log.info("refused a %s: %s", file.kind, exc)
             return notices.unreadable(address, "image" if file.kind == "image" else "PDF")
         return _Ready(new, data)
+
+
+class _Downloader(Protocol):
+    async def download(self, file_id: str) -> bytes:
+        """The file's bytes; raises :class:`DownloadFailed`."""
+        ...
+
+
+@dataclass
+class _Received:
+    """What became of a message: the queue item (if any) and the notices to send."""
+
+    item_id: int | None = None
+    notices: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _Ready:
+    attachment: NewAttachment
+    data: bytes

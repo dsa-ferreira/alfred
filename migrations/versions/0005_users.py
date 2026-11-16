@@ -55,22 +55,6 @@ _KINDS = {
 _CURRENT = sa.text("ended_at IS NULL")
 
 
-def _admin() -> str | None:
-    """The admin's name from the environment, or ``None`` when no row needs one."""
-    bind = op.get_bind()
-    if not any(bind.scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM {t})")) for t in _OWNED_TABLES):
-        return None
-    name = os.environ.get(_ADMIN_ENV, "").strip()
-    if _NAME.fullmatch(name):
-        return name
-    problem = f"{_ADMIN_ENV}={name!r} is not a user name" if name else f"{_ADMIN_ENV} is not set"
-    raise MigrationError(
-        f"{problem}. The database has conversations, messages or reminders from before "
-        f"alfred had users; set {_ADMIN_ENV} to the admin's [[users]] name (lowercase "
-        "letters, digits and hyphens) so they are assigned to the admin, then migrate again"
-    )
-
-
 def upgrade() -> None:
     admin = _admin()
 
@@ -143,3 +127,19 @@ def downgrade() -> None:
     op.drop_column("reminders", "created_by")
     for table in reversed(_USER_TABLES):
         op.drop_column(table, "user_name")
+
+
+def _admin() -> str | None:
+    """The admin's name from the environment, or ``None`` when no row needs one."""
+    bind = op.get_bind()
+    if not any(bind.scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM {t})")) for t in _OWNED_TABLES):
+        return None
+    name = os.environ.get(_ADMIN_ENV, "").strip()
+    if _NAME.fullmatch(name):
+        return name
+    problem = f"{_ADMIN_ENV}={name!r} is not a user name" if name else f"{_ADMIN_ENV} is not set"
+    raise MigrationError(
+        f"{problem}. The database has conversations, messages or reminders from before "
+        f"alfred had users; set {_ADMIN_ENV} to the admin's [[users]] name (lowercase "
+        "letters, digits and hyphens) so they are assigned to the admin, then migrate again"
+    )

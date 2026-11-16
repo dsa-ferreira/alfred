@@ -20,14 +20,6 @@ class EmbeddingError(Exception):
     """An embedding request that produced no vector. Messages are safe to log."""
 
 
-class _EmbeddingUnreachable(EmbeddingError):
-    pass
-
-
-class _EmbeddingFailed(EmbeddingError):
-    pass
-
-
 class EmbeddingClient:
     def __init__(
         self,
@@ -78,6 +70,14 @@ class EmbeddingClient:
             return _parse(response.json())
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise _EmbeddingFailed(f"unusable embedding reply: {exc}") from None
+
+
+class _EmbeddingUnreachable(EmbeddingError):
+    pass
+
+
+class _EmbeddingFailed(EmbeddingError):
+    pass
 
 
 def _parse(data: Any) -> list[float]:

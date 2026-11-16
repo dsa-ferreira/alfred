@@ -56,6 +56,13 @@ log = logging.getLogger(__name__)
 LOCAL_GROUP = "alfred"  # how alfred's own tools are grouped in the context-size line
 
 
+DO_IT = "Do it"
+CANCEL = "Cancel"
+_DECLINED = "The user declined this call; it did not run. Don't call it again unless they ask."
+# The resume state of a confirmation.
+_CONFIRM: dict[str, Any] = {"via": "confirm"}
+
+
 @dataclass(frozen=True)
 class AllowList:
     """A user's tool allow-list: exact names, ``prefix*`` patterns, or ``*`` for all."""
@@ -134,12 +141,12 @@ class ModelImage:
     data: bytes
     mime: str  # image/jpeg or image/png
 
-    def _data_url(self) -> str:
-        return f"data:{self.mime};base64,{base64.b64encode(self.data).decode('ascii')}"
-
     def part(self) -> dict[str, Any]:
         """The chat-completions content part that carries it."""
         return {"type": "image_url", "image_url": {"url": self._data_url()}}
+
+    def _data_url(self) -> str:
+        return f"data:{self.mime};base64,{base64.b64encode(self.data).decode('ascii')}"
 
 
 @dataclass(frozen=True)
@@ -377,13 +384,6 @@ class Gated:
         return await self.inner.resume(name, raw_arguments, state, answer, attempt)
 
 
-DO_IT = "Do it"
-CANCEL = "Cancel"
-_DECLINED = "The user declined this call; it did not run. Don't call it again unless they ask."
-# The resume state of a confirmation.
-_CONFIRM: dict[str, Any] = {"via": "confirm"}
-
-
 class Confirmed:
     """An open toolset whose calls the user's confirm list matches wait for a yes (design D2).
 
@@ -439,35 +439,6 @@ class Confirmed:
         return ToolOutcome(False, _DECLINED)
 
 
-def _confirm_question(name: str, arguments: dict[str, Any]) -> Question:
-    """The confirmation of a call: its model-facing name and its exact arguments."""
-    return Question(
-        f"Run {name} with these arguments?",
-        (Option(DO_IT, True), Option(CANCEL, False)),
-        detail=json.dumps(arguments, ensure_ascii=False, indent=2),
-    )
-
-
-def _unknown_tool(name: str) -> ToolOutcome:
-    return ToolOutcome(False, f"Error: unknown tool {name!r}.")
-
-
-def _find(opened: Sequence[OpenToolset], name: str) -> OpenToolset | None:
-    """The first open toolset that handles ``name``."""
-    return next((t for t in opened if t.handles(name)), None)
-
-
-async def _safe_call(
-    toolset: OpenToolset, name: str, raw_arguments: Any, attempt: AttemptContext
-) -> ToolOutcome:
-    """Run one call; any exception becomes an error result for the model."""
-    try:
-        return await toolset.call(name, raw_arguments, attempt)
-    except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
-        log.exception("tool %s failed", name)
-        return ToolOutcome(False, f"Error: tool {name!r} failed: {type(exc).__name__}")
-
-
 async def dispatch(
     opened: Sequence[OpenToolset], name: str, raw_arguments: Any, attempt: AttemptContext
 ) -> ToolOutcome:
@@ -494,4 +465,33 @@ async def dispatch_resume(
         return await toolset.resume(name, raw_arguments, state, answer, attempt)
     except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
         log.exception("tool %s failed on resume", name)
+        return ToolOutcome(False, f"Error: tool {name!r} failed: {type(exc).__name__}")
+
+
+def _confirm_question(name: str, arguments: dict[str, Any]) -> Question:
+    """The confirmation of a call: its model-facing name and its exact arguments."""
+    return Question(
+        f"Run {name} with these arguments?",
+        (Option(DO_IT, True), Option(CANCEL, False)),
+        detail=json.dumps(arguments, ensure_ascii=False, indent=2),
+    )
+
+
+def _unknown_tool(name: str) -> ToolOutcome:
+    return ToolOutcome(False, f"Error: unknown tool {name!r}.")
+
+
+def _find(opened: Sequence[OpenToolset], name: str) -> OpenToolset | None:
+    """The first open toolset that handles ``name``."""
+    return next((t for t in opened if t.handles(name)), None)
+
+
+async def _safe_call(
+    toolset: OpenToolset, name: str, raw_arguments: Any, attempt: AttemptContext
+) -> ToolOutcome:
+    """Run one call; any exception becomes an error result for the model."""
+    try:
+        return await toolset.call(name, raw_arguments, attempt)
+    except Exception as exc:  # noqa: BLE001 - any failure is reported to the model
+        log.exception("tool %s failed", name)
         return ToolOutcome(False, f"Error: tool {name!r} failed: {type(exc).__name__}")

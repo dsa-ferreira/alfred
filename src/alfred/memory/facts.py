@@ -56,42 +56,62 @@ _Origin = Literal["told", "learned"]
 _ACTIVE = Fact.removed_at.is_(None)
 
 
-@dataclass(frozen=True)
-class _FactRow:
-    id: int
-    text: str
-    origin: str
-    created_at: datetime
-
-
 # The most facts one duplicate check compares a new fact with (design D2).
 _DUPLICATE_CANDIDATES = 5
 
 
-@dataclass(frozen=True)
-class _DuplicateCheck:
-    """A fact pending its duplicate check, and the user's facts close enough to compare."""
+# --- Tools (design D8) ------------------------------------------------------------------
 
-    fact: _FactRow
-    user_name: str
-    # Nearest first.
-    candidates: list[_FactRow]
+_REMEMBER = "alfred_remember"
+_FORGET = "alfred_forget"
+NAMES = (_REMEMBER, _FORGET)
 
+_REMEMBER_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": _REMEMBER,
+        "description": (
+            "Remember a lasting fact about the user for future conversations: use it when "
+            "the user asks you to remember something about themselves, or corrects something "
+            "you know about them. Not for one-off tasks; use a reminder for something due "
+            "at a time."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The fact, one short sentence, e.g. 'is vegetarian'.",
+                },
+                "replaces": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Ids of the user's facts this one corrects or makes outdated.",
+                },
+            },
+            "required": ["text"],
+        },
+    },
+}
 
-@dataclass(frozen=True)
-class _Duplicate:
-    """Two facts found to say the same thing: ``removed`` is marked a duplicate of ``kept``."""
-
-    kept: int
-    removed: int
-
-
-class _FactsNotFound(Exception):
-    """Ids that aren't the user's active facts (unknown, removed or another user's)."""
-
-    def __init__(self, ids: list[int]) -> None:
-        super().__init__(f"not found: {', '.join(map(str, ids))}")
-        self.ids = ids
+_FORGET_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": _FORGET,
+        "description": "Forget facts about the user, by their ids, when the user asks you to.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "The fact ids, e.g. [12].",
+                }
+            },
+            "required": ["ids"],
+        },
+    },
+}
 
 
 async def lock_user(session: AsyncSession, user_name: str) -> None:
@@ -100,36 +120,6 @@ async def lock_user(session: AsyncSession, user_name: str) -> None:
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
         {"key": f"facts:{user_name}"},
     )
-
-
-async def _mark_removed(
-    session: AsyncSession,
-    user_name: str,
-    ids: Iterable[int],
-    reason: Literal["forgotten", "replaced", "duplicate"],
-    now: datetime,
-    *,
-    replaced_by: int | None = None,
-    origin: _Origin | None = None,
-) -> list[_FactRow]:
-    """Mark those of ``ids`` that are ``user_name``'s active facts removed; returns them.
-
-    ``origin`` limits it to facts of that origin. Call it under
-    :func:`lock_user`.
-    """
-    wanted = sorted(set(ids))
-    if not wanted:
-        return []
-    conditions = [Fact.user_name == user_name, _ACTIVE, Fact.id.in_(wanted)]
-    if origin is not None:
-        conditions.append(Fact.origin == origin)
-    rows = await session.execute(
-        update(Fact)
-        .where(*conditions)
-        .values(removed_at=now, removed_reason=reason, replaced_by=replaced_by)
-        .returning(Fact.id, Fact.text, Fact.origin, Fact.created_at)
-    )
-    return sorted((_FactRow(*r) for r in rows), key=lambda f: f.id)
 
 
 async def insert_fact(
@@ -264,38 +254,6 @@ class FactStore:
             await self._retry_later(fact_id, "internal error")
             return False
 
-    async def _embed(self, fact_id: int) -> bool:
-        async with self._sessions() as session:
-            found = (
-                await session.execute(select(Fact.text).where(Fact.id == fact_id, _ACTIVE))
-            ).first()
-        if found is None:
-            return False
-        (fact_text,) = found
-        model = self._embedder.model
-        try:
-            vector = await self._embedder.embed_document(fact_text)
-        except EmbeddingError as exc:
-            log.warning("fact %s: embedding failed: %s", fact_id, exc)
-            await self._retry_later(fact_id, str(exc))
-            return False
-
-        async with self._sessions.begin() as session:
-            stored = await session.scalar(
-                update(Fact)
-                .where(Fact.id == fact_id, _ACTIVE)
-                .values(
-                    embedding=vector,
-                    embedding_model=model,
-                    embedding_attempts=0,
-                    embedding_next_at=None,
-                )
-                .returning(Fact.origin)
-            )
-        # None: removed while it was being embedded.
-        self.changed.set()  # its duplicate check may be due now
-        return stored is not None
-
     async def duplicate_candidates(self, fact_id: int) -> _DuplicateCheck | None:
         """The user's other active facts within the duplicate distance, nearest first.
 
@@ -333,17 +291,6 @@ class FactStore:
                 .limit(_DUPLICATE_CANDIDATES)
             )
             return _DuplicateCheck(fact, user_name, [_FactRow(*r) for r in rows])
-
-    # --- The duplicate check's state (change fix-fact-removals, design D1, D2) ----------
-
-    def _duplicate_pending(self) -> tuple[object, ...]:
-        """Active facts not yet checked, embedded with the configured model."""
-        return (
-            _ACTIVE,
-            Fact.duplicate_checked_at.is_(None),
-            Fact.embedding.is_not(None),
-            Fact.embedding_model == self._embedder.model,
-        )
 
     async def next_duplicate_check(self) -> int | None:
         """The oldest fact whose duplicate check is due."""
@@ -462,6 +409,49 @@ class FactStore:
             return None
         return max(0.0, (soonest - self._now()).total_seconds())
 
+    async def _embed(self, fact_id: int) -> bool:
+        async with self._sessions() as session:
+            found = (
+                await session.execute(select(Fact.text).where(Fact.id == fact_id, _ACTIVE))
+            ).first()
+        if found is None:
+            return False
+        (fact_text,) = found
+        model = self._embedder.model
+        try:
+            vector = await self._embedder.embed_document(fact_text)
+        except EmbeddingError as exc:
+            log.warning("fact %s: embedding failed: %s", fact_id, exc)
+            await self._retry_later(fact_id, str(exc))
+            return False
+
+        async with self._sessions.begin() as session:
+            stored = await session.scalar(
+                update(Fact)
+                .where(Fact.id == fact_id, _ACTIVE)
+                .values(
+                    embedding=vector,
+                    embedding_model=model,
+                    embedding_attempts=0,
+                    embedding_next_at=None,
+                )
+                .returning(Fact.origin)
+            )
+        # None: removed while it was being embedded.
+        self.changed.set()  # its duplicate check may be due now
+        return stored is not None
+
+    # --- The duplicate check's state (change fix-fact-removals, design D1, D2) ----------
+
+    def _duplicate_pending(self) -> tuple[object, ...]:
+        """Active facts not yet checked, embedded with the configured model."""
+        return (
+            _ACTIVE,
+            Fact.duplicate_checked_at.is_(None),
+            Fact.embedding.is_not(None),
+            Fact.embedding_model == self._embedder.model,
+        )
+
     def _needs_embedding(self) -> tuple[object, ...]:
         return (
             _ACTIVE,
@@ -495,13 +485,6 @@ class FactStore:
             self.changed.set()
 
 
-def _winner(new: tuple[int, str], old: tuple[int, str]) -> _Duplicate:
-    """Which of two duplicates stays: a ``told`` fact over a ``learned`` one, else the older."""
-    (a, a_origin), (b, b_origin) = new, old
-    kept = (a if a_origin == "told" else b) if a_origin != b_origin else min(a, b)
-    return _Duplicate(kept=kept, removed=b if kept == a else a)
-
-
 class FactEmbeddingJob:
     """The sweeper job that embeds facts (design D6; checking them is ``FactDuplicateJob``).
 
@@ -530,74 +513,6 @@ class FactEmbeddingJob:
         await self._facts.embed(key)
 
 
-# --- Tools (design D8) ------------------------------------------------------------------
-
-_REMEMBER = "alfred_remember"
-_FORGET = "alfred_forget"
-NAMES = (_REMEMBER, _FORGET)
-
-_REMEMBER_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": _REMEMBER,
-        "description": (
-            "Remember a lasting fact about the user for future conversations: use it when "
-            "the user asks you to remember something about themselves, or corrects something "
-            "you know about them. Not for one-off tasks; use a reminder for something due "
-            "at a time."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "The fact, one short sentence, e.g. 'is vegetarian'.",
-                },
-                "replaces": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "Ids of the user's facts this one corrects or makes outdated.",
-                },
-            },
-            "required": ["text"],
-        },
-    },
-}
-
-_FORGET_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": _FORGET,
-        "description": "Forget facts about the user, by their ids, when the user asks you to.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ids": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "The fact ids, e.g. [12].",
-                }
-            },
-            "required": ["ids"],
-        },
-    },
-}
-
-
-def _facts_note(remember: bool, forget: bool) -> str | None:
-    """How the ids in the facts block are used, naming only the tools offered."""
-    uses = [
-        *([f"`{_FORGET}` to forget facts the user wants forgotten"] if forget else []),
-        *([f"`replaces` of `{_REMEMBER}` when a fact corrects one"] if remember else []),
-    ]
-    if not uses:
-        return None
-    return (
-        "The numbers in square brackets in what you know about the user are fact ids: "
-        f"use them in {' and '.join(uses)}."
-    )
-
-
 class FactTools(LocalToolset):
     """``alfred_remember`` and, while facts are in the context, ``alfred_forget``.
 
@@ -624,6 +539,10 @@ class FactTools(LocalToolset):
         if name == _REMEMBER:
             return await self._remember(user, arguments.get("text"), arguments.get("replaces"))
         return await self._forget(user, arguments.get("ids"))
+
+    @property
+    def facts(self) -> FactStore:
+        return self._facts
 
     async def _remember(self, user: str, value: Any, replaces: Any) -> ToolOutcome:
         if not isinstance(value, str) or not value.strip():
@@ -666,9 +585,90 @@ class FactTools(LocalToolset):
             parts.append(f"Not found: {_ids(missing)}.")
         return ToolOutcome(bool(removed), " ".join(parts))
 
-    @property
-    def facts(self) -> FactStore:
-        return self._facts
+
+@dataclass(frozen=True)
+class _FactRow:
+    id: int
+    text: str
+    origin: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class _DuplicateCheck:
+    """A fact pending its duplicate check, and the user's facts close enough to compare."""
+
+    fact: _FactRow
+    user_name: str
+    # Nearest first.
+    candidates: list[_FactRow]
+
+
+@dataclass(frozen=True)
+class _Duplicate:
+    """Two facts found to say the same thing: ``removed`` is marked a duplicate of ``kept``."""
+
+    kept: int
+    removed: int
+
+
+class _FactsNotFound(Exception):
+    """Ids that aren't the user's active facts (unknown, removed or another user's)."""
+
+    def __init__(self, ids: list[int]) -> None:
+        super().__init__(f"not found: {', '.join(map(str, ids))}")
+        self.ids = ids
+
+
+async def _mark_removed(
+    session: AsyncSession,
+    user_name: str,
+    ids: Iterable[int],
+    reason: Literal["forgotten", "replaced", "duplicate"],
+    now: datetime,
+    *,
+    replaced_by: int | None = None,
+    origin: _Origin | None = None,
+) -> list[_FactRow]:
+    """Mark those of ``ids`` that are ``user_name``'s active facts removed; returns them.
+
+    ``origin`` limits it to facts of that origin. Call it under
+    :func:`lock_user`.
+    """
+    wanted = sorted(set(ids))
+    if not wanted:
+        return []
+    conditions = [Fact.user_name == user_name, _ACTIVE, Fact.id.in_(wanted)]
+    if origin is not None:
+        conditions.append(Fact.origin == origin)
+    rows = await session.execute(
+        update(Fact)
+        .where(*conditions)
+        .values(removed_at=now, removed_reason=reason, replaced_by=replaced_by)
+        .returning(Fact.id, Fact.text, Fact.origin, Fact.created_at)
+    )
+    return sorted((_FactRow(*r) for r in rows), key=lambda f: f.id)
+
+
+def _winner(new: tuple[int, str], old: tuple[int, str]) -> _Duplicate:
+    """Which of two duplicates stays: a ``told`` fact over a ``learned`` one, else the older."""
+    (a, a_origin), (b, b_origin) = new, old
+    kept = (a if a_origin == "told" else b) if a_origin != b_origin else min(a, b)
+    return _Duplicate(kept=kept, removed=b if kept == a else a)
+
+
+def _facts_note(remember: bool, forget: bool) -> str | None:
+    """How the ids in the facts block are used, naming only the tools offered."""
+    uses = [
+        *([f"`{_FORGET}` to forget facts the user wants forgotten"] if forget else []),
+        *([f"`replaces` of `{_REMEMBER}` when a fact corrects one"] if remember else []),
+    ]
+    if not uses:
+        return None
+    return (
+        "The numbers in square brackets in what you know about the user are fact ids: "
+        f"use them in {' and '.join(uses)}."
+    )
 
 
 class _OpenFactTools(LocalToolset):

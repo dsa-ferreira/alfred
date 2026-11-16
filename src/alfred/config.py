@@ -58,14 +58,6 @@ _NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 _TOKEN_ENV = re.compile(r"ALFRED_[A-Z0-9_]+")
 
 
-class ConfigError(Exception):
-    """Invalid configuration. ``problems`` are safe to print and log."""
-
-    def __init__(self, problems: list[str]) -> None:
-        self.problems = problems
-        super().__init__("invalid configuration:\n" + "\n".join(f"  - {p}" for p in problems))
-
-
 # --- field types ---------------------------------------------------------------
 
 
@@ -75,11 +67,26 @@ def _check_name(value: str) -> str:
     return value
 
 
+_Name = Annotated[str, AfterValidator(_check_name)]
+
+
 def _check_http_url(value: str) -> str:
     parts = urlsplit(value)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("must be an http:// or https:// URL with a host")
     return value.rstrip("/")
+
+
+_HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
+
+
+def _check_token_env(value: str) -> str:
+    if not _TOKEN_ENV.fullmatch(value):
+        raise ValueError("must name an ALFRED_* environment variable (A-Z, 0-9, _)")
+    return value
+
+
+_TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
 
 
 def _check_timezone(value: str) -> str:
@@ -90,15 +97,6 @@ def _check_timezone(value: str) -> str:
     return value
 
 
-def _check_token_env(value: str) -> str:
-    if not _TOKEN_ENV.fullmatch(value):
-        raise ValueError("must name an ALFRED_* environment variable (A-Z, 0-9, _)")
-    return value
-
-
-_Name = Annotated[str, AfterValidator(_check_name)]
-_HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
-_TokenEnv = Annotated[str, AfterValidator(_check_token_env)]
 _TimeZoneName = Annotated[str, AfterValidator(_check_timezone)]
 _PositiveInt = Annotated[int, Field(gt=0)]
 _PositiveFloat = Annotated[float, Field(gt=0)]
@@ -106,18 +104,22 @@ _NonNegativeFloat = Annotated[float, Field(ge=0)]
 _NonNegativeInt = Annotated[int, Field(ge=0)]
 
 
+_CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
+
+
+_ALL_TOOLS = "*"
+
+
+class ConfigError(Exception):
+    """Invalid configuration. ``problems`` are safe to print and log."""
+
+    def __init__(self, problems: list[str]) -> None:
+        self.problems = problems
+        super().__init__("invalid configuration:\n" + "\n".join(f"  - {p}" for p in problems))
+
+
 class _Section(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-# --- file sections -------------------------------------------------------------
-
-
-class _TelegramConfig(_Section):
-    """No settings of its own: who may chat is set by ``[[users]]``.
-
-    Kept so the removed ``owner_user_id`` is reported as an unknown key.
-    """
 
 
 class BrainEntry(_Section):
@@ -171,13 +173,6 @@ class AIConfig(_Section):
         return models
 
 
-class _HistoryConfig(_Section):
-    max_entries: _PositiveInt = 30
-    # Hours after a user's last own message before their conversation is
-    # closed (change close-idle-conversations, design D7). None: never.
-    idle_close_after_h: _PositiveFloat | None = None
-
-
 class QueueConfig(_Section):
     retry_initial_s: _PositiveFloat = 30
     retry_max_s: _PositiveFloat = 900
@@ -219,35 +214,6 @@ class MemoryConfig(_Section):
     facts_duplicate_max_distance: Annotated[float, Field(gt=0, lt=1)] = 0.2
 
 
-class _WebConfig(_Section):
-    """Web search through SearXNG and page fetch (change add-web-search, design D9)."""
-
-    searxng_url: _HttpUrlStr = "http://oracle.lan"
-    search_results: _PositiveInt = 5
-    fetch_page_chars: _PositiveInt = 8000
-    fetch_timeout_s: _PositiveFloat = 20
-    fetch_max_bytes: _PositiveInt = 5_000_000
-
-
-_CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
-
-
-def _check_clock(value: str) -> str:
-    if not _CLOCK.fullmatch(value):
-        raise ValueError("must be a 24-hour time HH:MM, such as 09:00")
-    return value
-
-
-class _RemindersConfig(_Section):
-    """Timed reminders (change add-reminders, design D9)."""
-
-    # The time of a reminder on a date with no clock time ("on Friday").
-    default_time: Annotated[str, AfterValidator(_check_clock)] = "09:00"
-    # Checks run on the clock: at every whole minute and every
-    # check_interval_s within it, so at most 60.
-    check_interval_s: Annotated[float, Field(gt=0, le=60)] = 30
-
-
 class AttachmentsConfig(_Section):
     """Images and PDFs from users (change add-attachments, design D1 and D10).
 
@@ -275,78 +241,6 @@ class AttachmentsConfig(_Section):
                 "(20 MB, the largest file a bot can download)"
             )
         return value
-
-
-class _InputRequestsConfig(_Section):
-    """Turns waiting for their user's answer (change add-user-input-requests, design D9)."""
-
-    # Counted from when the question was sent.
-    expire_after_min: _PositiveFloat = 60
-
-
-class _MCPConfig(_Section):
-    list_timeout_s: _PositiveFloat = 10
-    call_timeout_s: _PositiveFloat = 60
-    instructions_max_chars: _PositiveInt = 2000
-
-
-class _ServerConfig(_Section):
-    host: Annotated[str, Field(min_length=1)] = "0.0.0.0"
-    port: Annotated[int, Field(ge=1, le=65535)] = 8080
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-
-
-class _ServiceEntry(_Section):
-    name: _Name
-    token_env: _TokenEnv
-
-
-class _McpServerEntry(_Section):
-    name: _Name
-    url: _HttpUrlStr
-    token_env: _TokenEnv
-    exclude_tools: list[Annotated[str, Field(min_length=1)]] = []
-    use_server_instructions: bool = True
-
-
-_ALL_TOOLS = "*"
-
-
-class _UserEntry(_Section):
-    """A ``[[users]]`` entry (change add-multiple-users, design D1)."""
-
-    name: _Name
-    telegram_user_id: _PositiveInt
-    # How alfred addresses this user, in replies and fixed notices.
-    address: Annotated[str, Field(min_length=1)] = "sir"
-    admin: bool = False
-    # Model-facing tool names, ``prefix*`` patterns, or ``*``.
-    tools: list[Annotated[str, Field(min_length=1)]] = []
-    # Tools whose calls on this user's turns wait for their confirmation, in
-    # the same syntax (change add-user-input-requests, design D9).
-    confirm: list[Annotated[str, Field(min_length=1)]] = []
-    # MCP server name -> the variable holding this user's token for it.
-    mcp_tokens: dict[_Name, _TokenEnv] = {}
-
-
-class _FileConfig(_Section):
-    """The shape of ``alfred.toml``."""
-
-    users: Annotated[list[_UserEntry], Field(min_length=1)]
-    telegram: _TelegramConfig = _TelegramConfig()
-    ai: AIConfig = AIConfig()
-    history: _HistoryConfig = _HistoryConfig()
-    queue: QueueConfig = QueueConfig()
-    memory: MemoryConfig = MemoryConfig()
-    web: _WebConfig = _WebConfig()
-    reminders: _RemindersConfig = _RemindersConfig()
-    input_requests: _InputRequestsConfig = _InputRequestsConfig()
-    # None: attachments are off and alfred reads text only.
-    attachments: AttachmentsConfig | None = None
-    mcp: _MCPConfig = _MCPConfig()
-    server: _ServerConfig = _ServerConfig()
-    services: list[_ServiceEntry] = []
-    mcp_servers: list[_McpServerEntry] = []
 
 
 # --- resolved configuration ----------------------------------------------------
@@ -415,6 +309,58 @@ class S3Key:
     secret_access_key: SecretStr
 
 
+class _HistoryConfig(_Section):
+    max_entries: _PositiveInt = 30
+    # Hours after a user's last own message before their conversation is
+    # closed (change close-idle-conversations, design D7). None: never.
+    idle_close_after_h: _PositiveFloat | None = None
+
+
+class _WebConfig(_Section):
+    """Web search through SearXNG and page fetch (change add-web-search, design D9)."""
+
+    searxng_url: _HttpUrlStr = "http://oracle.lan"
+    search_results: _PositiveInt = 5
+    fetch_page_chars: _PositiveInt = 8000
+    fetch_timeout_s: _PositiveFloat = 20
+    fetch_max_bytes: _PositiveInt = 5_000_000
+
+
+def _check_clock(value: str) -> str:
+    if not _CLOCK.fullmatch(value):
+        raise ValueError("must be a 24-hour time HH:MM, such as 09:00")
+    return value
+
+
+class _RemindersConfig(_Section):
+    """Timed reminders (change add-reminders, design D9)."""
+
+    # The time of a reminder on a date with no clock time ("on Friday").
+    default_time: Annotated[str, AfterValidator(_check_clock)] = "09:00"
+    # Checks run on the clock: at every whole minute and every
+    # check_interval_s within it, so at most 60.
+    check_interval_s: Annotated[float, Field(gt=0, le=60)] = 30
+
+
+class _InputRequestsConfig(_Section):
+    """Turns waiting for their user's answer (change add-user-input-requests, design D9)."""
+
+    # Counted from when the question was sent.
+    expire_after_min: _PositiveFloat = 60
+
+
+class _MCPConfig(_Section):
+    list_timeout_s: _PositiveFloat = 10
+    call_timeout_s: _PositiveFloat = 60
+    instructions_max_chars: _PositiveInt = 2000
+
+
+class _ServerConfig(_Section):
+    host: Annotated[str, Field(min_length=1)] = "0.0.0.0"
+    port: Annotated[int, Field(ge=1, le=65535)] = 8080
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+
 @dataclass(frozen=True)
 class Config:
     """The validated configuration with its secrets resolved."""
@@ -450,14 +396,6 @@ class Config:
             else s
             for s in self.mcp_servers
         )
-
-
-# --- loading -------------------------------------------------------------------
-
-
-def _config_path(env: Mapping[str, str] | None = None) -> Path:
-    source = os.environ if env is None else env
-    return Path(source.get(_CONFIG_ENV) or _DEFAULT_CONFIG_PATH)
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -576,6 +514,74 @@ def load_database_url(
     if problems is None and own:
         raise ConfigError(own)
     return result
+
+
+# --- file sections -------------------------------------------------------------
+
+
+class _TelegramConfig(_Section):
+    """No settings of its own: who may chat is set by ``[[users]]``.
+
+    Kept so the removed ``owner_user_id`` is reported as an unknown key.
+    """
+
+
+class _ServiceEntry(_Section):
+    name: _Name
+    token_env: _TokenEnv
+
+
+class _McpServerEntry(_Section):
+    name: _Name
+    url: _HttpUrlStr
+    token_env: _TokenEnv
+    exclude_tools: list[Annotated[str, Field(min_length=1)]] = []
+    use_server_instructions: bool = True
+
+
+class _UserEntry(_Section):
+    """A ``[[users]]`` entry (change add-multiple-users, design D1)."""
+
+    name: _Name
+    telegram_user_id: _PositiveInt
+    # How alfred addresses this user, in replies and fixed notices.
+    address: Annotated[str, Field(min_length=1)] = "sir"
+    admin: bool = False
+    # Model-facing tool names, ``prefix*`` patterns, or ``*``.
+    tools: list[Annotated[str, Field(min_length=1)]] = []
+    # Tools whose calls on this user's turns wait for their confirmation, in
+    # the same syntax (change add-user-input-requests, design D9).
+    confirm: list[Annotated[str, Field(min_length=1)]] = []
+    # MCP server name -> the variable holding this user's token for it.
+    mcp_tokens: dict[_Name, _TokenEnv] = {}
+
+
+class _FileConfig(_Section):
+    """The shape of ``alfred.toml``."""
+
+    users: Annotated[list[_UserEntry], Field(min_length=1)]
+    telegram: _TelegramConfig = _TelegramConfig()
+    ai: AIConfig = AIConfig()
+    history: _HistoryConfig = _HistoryConfig()
+    queue: QueueConfig = QueueConfig()
+    memory: MemoryConfig = MemoryConfig()
+    web: _WebConfig = _WebConfig()
+    reminders: _RemindersConfig = _RemindersConfig()
+    input_requests: _InputRequestsConfig = _InputRequestsConfig()
+    # None: attachments are off and alfred reads text only.
+    attachments: AttachmentsConfig | None = None
+    mcp: _MCPConfig = _MCPConfig()
+    server: _ServerConfig = _ServerConfig()
+    services: list[_ServiceEntry] = []
+    mcp_servers: list[_McpServerEntry] = []
+
+
+# --- loading -------------------------------------------------------------------
+
+
+def _config_path(env: Mapping[str, str] | None = None) -> Path:
+    source = os.environ if env is None else env
+    return Path(source.get(_CONFIG_ENV) or _DEFAULT_CONFIG_PATH)
 
 
 def _read_toml(path: Path) -> dict[str, Any]:

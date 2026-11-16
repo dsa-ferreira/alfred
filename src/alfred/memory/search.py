@@ -131,19 +131,13 @@ LIMIT :limit
 """
 
 
-@dataclass(frozen=True)
-class _Found:
-    id: int
-    title: str | None
-    summary: str | None
-    started_at: datetime
-    ended_at: datetime | None
-
-
-class _QueryEmbedder(Protocol):
-    model: str
-
-    async def embed_query(self, text: str) -> list[float]: ...
+_FOUND_COLUMNS = (
+    Conversation.id,
+    Conversation.title,
+    Conversation.summary,
+    Conversation.started_at,
+    Conversation.ended_at,
+)
 
 
 class ConversationSearch:
@@ -232,6 +226,47 @@ class ConversationSearch:
             lines.append(self._format(found_by_id[cid], label))
         return ToolOutcome(True, "\n\n".join(lines))
 
+    # --- recall ------------------------------------------------------------------
+
+    async def recall(self, user: str, conversation_id: Any) -> ToolOutcome:
+        """Bring one of ``user``'s archived conversations into their current one (D8)."""
+        cid = _parse_id(conversation_id)
+        if cid is None:
+            return ToolOutcome(False, "Error: id must be a conversation number, such as 41.")
+        async with self._sessions.begin() as session:
+            # The same lock as History.append: a reset can't slip in between.
+            current = await current_id(session, user, lock=True)
+            if cid == current:
+                return ToolOutcome(
+                    False,
+                    f"Error: #{cid} is the current conversation; it is already in your context.",
+                )
+            target = await session.get(Conversation, cid)
+            # Another user's conversation is refused as if it didn't exist.
+            if target is None or target.user_name != user:
+                return ToolOutcome(False, f"Error: there is no conversation #{cid}.")
+            if await self._already_recalled(session, current, cid):
+                return ToolOutcome(False, _already(cid))
+            entries = await load_transcript(session, cid)
+            recalled_text = self._recall_text(target, entries)
+            inserted = await session.execute(
+                insert(Entry)
+                .values(
+                    conversation_id=current,
+                    kind="recall",
+                    text=recalled_text,
+                    recalled_conversation_id=cid,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=["conversation_id", "recalled_conversation_id"],
+                    index_where=text("kind = 'recall'"),
+                )
+            )
+            if inserted.rowcount == 0:  # type: ignore[attr-defined]
+                return ToolOutcome(False, _already(cid))
+        log.info("conversation %s recalled into %s", cid, current)
+        return ToolOutcome(True, recalled_text)
+
     async def _vector_candidates(
         self, vector: list[float], dates: Sequence[ColumnElement[bool]], limit: int
     ) -> list[int]:
@@ -291,47 +326,6 @@ class ConversationSearch:
             title += f" ({label})"
         summary = found.summary or "(no summary yet)"
         return f"{title}\n{date_span(found.started_at, found.ended_at, self._zone)}\n{summary}"
-
-    # --- recall ------------------------------------------------------------------
-
-    async def recall(self, user: str, conversation_id: Any) -> ToolOutcome:
-        """Bring one of ``user``'s archived conversations into their current one (D8)."""
-        cid = _parse_id(conversation_id)
-        if cid is None:
-            return ToolOutcome(False, "Error: id must be a conversation number, such as 41.")
-        async with self._sessions.begin() as session:
-            # The same lock as History.append: a reset can't slip in between.
-            current = await current_id(session, user, lock=True)
-            if cid == current:
-                return ToolOutcome(
-                    False,
-                    f"Error: #{cid} is the current conversation; it is already in your context.",
-                )
-            target = await session.get(Conversation, cid)
-            # Another user's conversation is refused as if it didn't exist.
-            if target is None or target.user_name != user:
-                return ToolOutcome(False, f"Error: there is no conversation #{cid}.")
-            if await self._already_recalled(session, current, cid):
-                return ToolOutcome(False, _already(cid))
-            entries = await load_transcript(session, cid)
-            recalled_text = self._recall_text(target, entries)
-            inserted = await session.execute(
-                insert(Entry)
-                .values(
-                    conversation_id=current,
-                    kind="recall",
-                    text=recalled_text,
-                    recalled_conversation_id=cid,
-                )
-                .on_conflict_do_nothing(
-                    index_elements=["conversation_id", "recalled_conversation_id"],
-                    index_where=text("kind = 'recall'"),
-                )
-            )
-            if inserted.rowcount == 0:  # type: ignore[attr-defined]
-                return ToolOutcome(False, _already(cid))
-        log.info("conversation %s recalled into %s", cid, current)
-        return ToolOutcome(True, recalled_text)
 
     async def _already_recalled(self, session: AsyncSession, current: int, cid: int) -> bool:
         found = await session.scalar(
@@ -406,13 +400,19 @@ class MemoryTools(LocalToolset):
         return await self._search.recall(user, arguments.get("id"))
 
 
-_FOUND_COLUMNS = (
-    Conversation.id,
-    Conversation.title,
-    Conversation.summary,
-    Conversation.started_at,
-    Conversation.ended_at,
-)
+@dataclass(frozen=True)
+class _Found:
+    id: int
+    title: str | None
+    summary: str | None
+    started_at: datetime
+    ended_at: datetime | None
+
+
+class _QueryEmbedder(Protocol):
+    model: str
+
+    async def embed_query(self, text: str) -> list[float]: ...
 
 
 def _count(n: int) -> str:

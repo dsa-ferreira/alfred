@@ -35,21 +35,6 @@ class SearchUnavailable(Exception):
     """SearXNG could not answer. The message is safe to show the model."""
 
 
-@dataclass(frozen=True)
-class _SearchResults:
-    text: str
-    # The URLs listed in ``text``, as SearXNG gave them.
-    urls: list[str]
-
-
-@dataclass(frozen=True)
-class _Item:
-    title: str
-    url: str
-    date: str | None
-    snippet: str
-
-
 class SearxngClient:
     def __init__(
         self,
@@ -90,6 +75,21 @@ class SearxngClient:
         if not isinstance(data, dict):
             raise SearchUnavailable("the search server's reply can't be understood")
         return _shape(data, query, limit=self._results, max_chars=self._max_chars)
+
+
+@dataclass(frozen=True)
+class _SearchResults:
+    text: str
+    # The URLs listed in ``text``, as SearXNG gave them.
+    urls: list[str]
+
+
+@dataclass(frozen=True)
+class _Item:
+    title: str
+    url: str
+    date: str | None
+    snippet: str
 
 
 def _shape(data: dict[str, Any], query: str, *, limit: int, max_chars: int) -> _SearchResults:

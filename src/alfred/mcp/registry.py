@@ -58,15 +58,8 @@ _VIA_MCP = "mcp"
 _STATE_ONLY_DELAYS_S = (0.05, 0.1, 0.2) + (0.25,) * (_MAX_INPUT_ROUNDS - 3)
 
 
-def _tool_name(server: str, tool: str) -> str:
-    """The name the model sees: ``<server>_<tool>`` with disallowed characters as ``_``."""
-    return _INVALID_CHARS.sub("_", f"{server}_{tool}")
-
-
-@dataclass(frozen=True)
-class _Route:
-    server: McpServer
-    tool: str
+_YES, _NO, _CANCEL = "Yes", "No", "Cancel"
+_DECLINE = {"action": "decline"}
 
 
 @dataclass(frozen=True)
@@ -78,9 +71,9 @@ class ServerInstructions:
 
 
 @dataclass(frozen=True)
-class _Listing:
-    tools: list[Tool]
-    instructions: str | None
+class _Route:
+    server: McpServer
+    tool: str
 
 
 @dataclass
@@ -127,63 +120,6 @@ async def build_turn_tools(
                 continue
             _add(turn, server, tool)
     return turn
-
-
-def _add_instructions(turn: TurnTools, server: McpServer, text: str | None, max_chars: int) -> None:
-    if not server.use_server_instructions or text is None or not text.strip():
-        return
-    text = text.strip()
-    if len(text) > max_chars:
-        log.warning(
-            "MCP server %s sent %d characters of instructions; cut to %d "
-            "(mcp.instructions_max_chars)",
-            server.name,
-            len(text),
-            max_chars,
-        )
-    turn.instructions.append(ServerInstructions(server.name, _truncate(text, max_chars)))
-
-
-def _add(turn: TurnTools, server: McpServer, tool: Tool) -> None:
-    name = _tool_name(server.name, tool.name)
-    if len(name) > _MAX_TOOL_NAME:
-        log.warning("skipping %s tool %r: name %r is too long", server.name, tool.name, name)
-        return
-    if name in turn.routes:
-        other = turn.routes[name]
-        log.warning(
-            "skipping %s tool %r: name %r collides with %s tool %r",
-            server.name,
-            tool.name,
-            name,
-            other.server.name,
-            other.tool,
-        )
-        return
-    turn.routes[name] = _Route(server, tool.name)
-    turn.definitions.append(
-        {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": tool.description or "",
-                "parameters": tool.input_schema or {"type": "object", "properties": {}},
-            },
-        }
-    )
-
-
-async def _list_tools(server: McpServer, connect: Connector, limit_s: float) -> _Listing:
-    async with asyncio.timeout(limit_s), connect(server, limit_s) as client:
-        tools: list[Tool] = []
-        cursor: str | None = None
-        while True:
-            result = await client.list_tools(cursor=cursor)
-            tools += result.tools
-            cursor = result.next_cursor
-            if not cursor:
-                # Set by the initialize handshake, so already there inside ``async with``.
-                return _Listing(tools, client.instructions)
 
 
 async def call_tool(
@@ -246,6 +182,74 @@ async def resume_tool(
         route, name, arguments, leg, connect=connect, call_timeout_s=call_timeout_s,
         max_chars=max_chars,
     )  # fmt: skip
+
+
+def _tool_name(server: str, tool: str) -> str:
+    """The name the model sees: ``<server>_<tool>`` with disallowed characters as ``_``."""
+    return _INVALID_CHARS.sub("_", f"{server}_{tool}")
+
+
+@dataclass(frozen=True)
+class _Listing:
+    tools: list[Tool]
+    instructions: str | None
+
+
+def _add_instructions(turn: TurnTools, server: McpServer, text: str | None, max_chars: int) -> None:
+    if not server.use_server_instructions or text is None or not text.strip():
+        return
+    text = text.strip()
+    if len(text) > max_chars:
+        log.warning(
+            "MCP server %s sent %d characters of instructions; cut to %d "
+            "(mcp.instructions_max_chars)",
+            server.name,
+            len(text),
+            max_chars,
+        )
+    turn.instructions.append(ServerInstructions(server.name, _truncate(text, max_chars)))
+
+
+def _add(turn: TurnTools, server: McpServer, tool: Tool) -> None:
+    name = _tool_name(server.name, tool.name)
+    if len(name) > _MAX_TOOL_NAME:
+        log.warning("skipping %s tool %r: name %r is too long", server.name, tool.name, name)
+        return
+    if name in turn.routes:
+        other = turn.routes[name]
+        log.warning(
+            "skipping %s tool %r: name %r collides with %s tool %r",
+            server.name,
+            tool.name,
+            name,
+            other.server.name,
+            other.tool,
+        )
+        return
+    turn.routes[name] = _Route(server, tool.name)
+    turn.definitions.append(
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": tool.description or "",
+                "parameters": tool.input_schema or {"type": "object", "properties": {}},
+            },
+        }
+    )
+
+
+async def _list_tools(server: McpServer, connect: Connector, limit_s: float) -> _Listing:
+    async with asyncio.timeout(limit_s), connect(server, limit_s) as client:
+        tools: list[Tool] = []
+        cursor: str | None = None
+        while True:
+            result = await client.list_tools(cursor=cursor)
+            tools += result.tools
+            cursor = result.next_cursor
+            if not cursor:
+                # Set by the initialize handshake, so already there inside ``async with``.
+                return _Listing(tools, client.instructions)
 
 
 @dataclass(frozen=True)
@@ -371,10 +375,6 @@ def _classify(server: str, name: str, result: InputRequiredResult, rounds: int) 
     question = Question(f"{server} asks: {params.message}", options, detail=name)
     state = {"via": _VIA_MCP, "key": key, "request_state": result.request_state, "round": rounds}
     return ToolOutcome.waiting(InputNeed(question, state))
-
-
-_YES, _NO, _CANCEL = "Yes", "No", "Cancel"
-_DECLINE = {"action": "decline"}
 
 
 def _options(schema: Any) -> tuple[Option, ...] | str:

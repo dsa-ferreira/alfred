@@ -66,25 +66,49 @@ If there is nothing worth keeping, which is usual, answer with the single line:
 NONE"""
 
 
-class _KnownFact(Protocol):
-    id: int
-    text: str
-    origin: str
+# Bullets, numbering, quotes and Markdown emphasis before a label.
+_PREFIX = r"^\s*(?:(?:[-*+•>]|\d+[.)])\s+)*[*_`#\s]*"
+_AFTER_LABEL = r"[*_`]*\s*:[*_`\s]*(.*)$"
+_NEW = re.compile(_PREFIX + r"new" + _AFTER_LABEL, re.IGNORECASE)
+# ``REPLACE 7 "old": new``; the colon may be left out after a quote, and an
+# old-style ``REPLACE 7: new`` has no quote.
+_REPLACE = re.compile(
+    _PREFIX
+    + r"replace[*_`\s]*\[?#?(\d+)\]?[*_`]*\s*"
+    + r"(?:[\"“”](.*?)[\"“”][*_`]*\s*:?|:)[*_`\s]*(.*)$",
+    re.IGNORECASE,
+)
+_NONE = re.compile(_PREFIX + r"none[*_`.!\s]*$", re.IGNORECASE)
+
+
+# How close a REPLACE quote must be to the fact's text (change fix-fact-removals, D4).
+_QUOTE_MIN_RATIO = 0.85
+# A quote found inside the fact must cover at least this share of it.
+_QUOTE_MIN_SHARE = 0.5
+_NOT_WORD = re.compile(r"[\W_]+")
+
+
+# --- The duplicate check (change fix-fact-removals, design D3) -----------------------------
+
+_DUPLICATE_PROMPT = """\
+You check a list of short facts about {user} for repeats. Below are a new \
+fact and some known facts. Which known facts say the same thing as the new \
+fact, so that keeping both would only repeat it? A fact on the same topic, \
+one that adds detail the other lacks, or one that contradicts it is not the \
+same.
+
+Answer with one line per known fact that is the same, and nothing else:
+SAME <id>
+If none is the same, answer with the single line:
+NONE"""
+
+
+_SAME = re.compile(_PREFIX + r"same[*_`:\s]*\[?#?(\d+)\]?[*_`.\s]*$", re.IGNORECASE)
 
 
 def extraction_entries(entries: Sequence[TranscriptEntry]) -> list[TranscriptEntry]:
     """The entries extraction may read: the user's messages and alfred's replies to them."""
     return [e for e in entries if e.kind in _EXTRACTION_KINDS]
-
-
-def _known_facts(user: str, facts: Sequence[_KnownFact]) -> str:
-    if not facts:
-        return f"Known facts about {user}: none."
-    lines = [f"Known facts about {user}:"]
-    for fact in facts:
-        label = "told, can't be replaced" if fact.origin == "told" else "learned"
-        lines.append(f"[{fact.id}] ({label}) {fact.text}")
-    return "\n".join(lines)
 
 
 def extraction_messages(
@@ -107,21 +131,6 @@ class NewFact:
 
 class ExtractionParseError(ValueError):
     pass
-
-
-# Bullets, numbering, quotes and Markdown emphasis before a label.
-_PREFIX = r"^\s*(?:(?:[-*+•>]|\d+[.)])\s+)*[*_`#\s]*"
-_AFTER_LABEL = r"[*_`]*\s*:[*_`\s]*(.*)$"
-_NEW = re.compile(_PREFIX + r"new" + _AFTER_LABEL, re.IGNORECASE)
-# ``REPLACE 7 "old": new``; the colon may be left out after a quote, and an
-# old-style ``REPLACE 7: new`` has no quote.
-_REPLACE = re.compile(
-    _PREFIX
-    + r"replace[*_`\s]*\[?#?(\d+)\]?[*_`]*\s*"
-    + r"(?:[\"“”](.*?)[\"“”][*_`]*\s*:?|:)[*_`\s]*(.*)$",
-    re.IGNORECASE,
-)
-_NONE = re.compile(_PREFIX + r"none[*_`.!\s]*$", re.IGNORECASE)
 
 
 def parse_facts(reply: str) -> list[NewFact]:
@@ -153,21 +162,6 @@ def parse_facts(reply: str) -> list[NewFact]:
     return found
 
 
-# How close a REPLACE quote must be to the fact's text (change fix-fact-removals, D4).
-_QUOTE_MIN_RATIO = 0.85
-# A quote found inside the fact must cover at least this share of it.
-_QUOTE_MIN_SHARE = 0.5
-_NOT_WORD = re.compile(r"[\W_]+")
-
-
-def _normalised(text: str, user: str) -> str:
-    """Case-folded words only, without the user's name at the start."""
-    words = _NOT_WORD.sub(" ", text.casefold()).split()
-    if words and words[0] == user.casefold():
-        words = words[1:]
-    return " ".join(words)
-
-
 def quote_matches(quote: str | None, fact_text: str, user: str) -> bool:
     """Whether a ``REPLACE`` quote names this fact.
 
@@ -186,21 +180,6 @@ def quote_matches(quote: str | None, fact_text: str, user: str) -> bool:
     return f" {said} " in f" {actual} " and len(said) >= _QUOTE_MIN_SHARE * len(actual)
 
 
-# --- The duplicate check (change fix-fact-removals, design D3) -----------------------------
-
-_DUPLICATE_PROMPT = """\
-You check a list of short facts about {user} for repeats. Below are a new \
-fact and some known facts. Which known facts say the same thing as the new \
-fact, so that keeping both would only repeat it? A fact on the same topic, \
-one that adds detail the other lacks, or one that contradicts it is not the \
-same.
-
-Answer with one line per known fact that is the same, and nothing else:
-SAME <id>
-If none is the same, answer with the single line:
-NONE"""
-
-
 def duplicate_messages(
     user: str, new_fact: str, candidates: Sequence[_KnownFact]
 ) -> list[dict[str, str]]:
@@ -214,9 +193,6 @@ def duplicate_messages(
 
 class DuplicateParseError(ValueError):
     pass
-
-
-_SAME = re.compile(_PREFIX + r"same[*_`:\s]*\[?#?(\d+)\]?[*_`.\s]*$", re.IGNORECASE)
 
 
 def parse_duplicates(reply: str) -> list[int]:
@@ -236,3 +212,27 @@ def parse_duplicates(reply: str) -> list[int]:
     if not labelled:
         raise DuplicateParseError("no SAME or NONE line in the model's reply")
     return found
+
+
+class _KnownFact(Protocol):
+    id: int
+    text: str
+    origin: str
+
+
+def _known_facts(user: str, facts: Sequence[_KnownFact]) -> str:
+    if not facts:
+        return f"Known facts about {user}: none."
+    lines = [f"Known facts about {user}:"]
+    for fact in facts:
+        label = "told, can't be replaced" if fact.origin == "told" else "learned"
+        lines.append(f"[{fact.id}] ({label}) {fact.text}")
+    return "\n".join(lines)
+
+
+def _normalised(text: str, user: str) -> str:
+    """Case-folded words only, without the user's name at the start."""
+    words = _NOT_WORD.sub(" ", text.casefold()).split()
+    if words and words[0] == user.casefold():
+        words = words[1:]
+    return " ".join(words)

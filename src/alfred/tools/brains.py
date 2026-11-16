@@ -26,33 +26,6 @@ log = logging.getLogger(__name__)
 SET_MODEL = "alfred_set_model"
 
 
-def _set_model_tool(names: list[str]) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": SET_MODEL,
-            "description": (
-                "Switch the model that answers, for every user, from the next message on. The "
-                "user may call it your model or your brain (for example 'change brains to "
-                "gemma', 'set your brain to bonsai', 'use the bonsai model'). Call this ONLY "
-                "when the user asks to switch. The system prompt says which brain you are "
-                "running on. After calling it, reply with a short confirmation."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "model": {
-                        "type": "string",
-                        "enum": names,
-                        "description": "The brain to switch to.",
-                    }
-                },
-                "required": ["model"],
-            },
-        },
-    }
-
-
 class BrainTools(LocalToolset):
     """``alfred_set_model``: on the admin's chat turns, when there is a brain to switch to."""
 
@@ -86,3 +59,30 @@ class BrainTools(LocalToolset):
             f'Switched to the brain "{brain}" ({self._brains.tag}). It answers from the '
             "next message on. Reply with a short confirmation.",
         )
+
+
+def _set_model_tool(names: list[str]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": SET_MODEL,
+            "description": (
+                "Switch the model that answers, for every user, from the next message on. The "
+                "user may call it your model or your brain (for example 'change brains to "
+                "gemma', 'set your brain to bonsai', 'use the bonsai model'). Call this ONLY "
+                "when the user asks to switch. The system prompt says which brain you are "
+                "running on. After calling it, reply with a short confirmation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "model": {
+                        "type": "string",
+                        "enum": names,
+                        "description": "The brain to switch to.",
+                    }
+                },
+                "required": ["model"],
+            },
+        },
+    }

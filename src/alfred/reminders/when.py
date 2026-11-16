@@ -39,6 +39,19 @@ _DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _DATE_CLOCK = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})")
 
 
+_DATE_FORMS = '"YYYY-MM-DD" or "today"'
+
+
+# --- repeat rules (change add-recurring-reminders, design D2) ------------------
+
+REPEATS = ("daily", "weekdays", "weekends", "weekly")
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+DAY_NAMES = tuple(d[:3] for d in _WEEKDAYS)  # "mon" ... "sun", as the tool offers them
+_ALL_DAYS = 0b1111111
+_MASKS = {"daily": _ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
+_REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
+
+
 class WhenError(ValueError):
     """The time can't be used; the message is written for the model."""
 
@@ -106,9 +119,6 @@ def resolve(
     return due
 
 
-_DATE_FORMS = '"YYYY-MM-DD" or "today"'
-
-
 def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
     """A date as ``YYYY-MM-DD``, or ``today`` in ``zone`` at ``now``.
 
@@ -123,52 +133,6 @@ def parse_date(value: Any, *, now: datetime, zone: ZoneInfo) -> date:
     if match := _DATE.fullmatch(text):
         return _date(*match.group(1, 2, 3))
     raise WhenError(f"Error: can't read the date {value!r}. Use {_DATE_FORMS}.")
-
-
-def _whole_minutes(value: Any) -> int:
-    minutes: int | None = None
-    if isinstance(value, bool):
-        minutes = None
-    elif isinstance(value, int):
-        minutes = value
-    elif isinstance(value, float) and value.is_integer():
-        minutes = int(value)
-    elif isinstance(value, str) and value.strip().isdigit():
-        minutes = int(value.strip())
-    if minutes is None or minutes < 1:
-        raise WhenError("Error: in_minutes must be a whole number of minutes, 1 or more.")
-    if minutes > _MAX_MINUTES:
-        raise WhenError("Error: a reminder can be at most one year ahead.")
-    return minutes
-
-
-def _clock(hour: str, minute: str) -> time:
-    h, m = int(hour), int(minute)
-    if h > 23 or m > 59:
-        raise WhenError(f"Error: {hour}:{minute} is not a valid 24-hour time.")
-    return time(h, m)
-
-
-def _date(year: str, month: str, day: str) -> date:
-    try:
-        return date(int(year), int(month), int(day))
-    except ValueError:
-        raise WhenError(f"Error: {year}-{month}-{day} is not a valid date.") from None
-
-
-def _local(day: date, clock: time, zone: ZoneInfo) -> datetime:
-    """That wall-clock time in ``zone``, as UTC; a time in a DST gap moves forward by it."""
-    return datetime.combine(day, clock, tzinfo=zone).astimezone(UTC)
-
-
-# --- repeat rules (change add-recurring-reminders, design D2) ------------------
-
-REPEATS = ("daily", "weekdays", "weekends", "weekly")
-_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-DAY_NAMES = tuple(d[:3] for d in _WEEKDAYS)  # "mon" ... "sun", as the tool offers them
-_ALL_DAYS = 0b1111111
-_MASKS = {"daily": _ALL_DAYS, "weekdays": 0b0011111, "weekends": 0b1100000}
-_REPEAT_FORMS = "daily, weekdays, weekends, or weekly with days"
 
 
 @dataclass(frozen=True)
@@ -226,26 +190,6 @@ def parse_rule(
     return Rule(name, mask, clock)
 
 
-def _days_mask(value: Any) -> int:
-    if isinstance(value, str):
-        value = [value]
-    if not value:
-        raise WhenError(
-            'Error: repeat weekly needs days, e.g. ["tue", "fri"]. '
-            f"Days are {', '.join(DAY_NAMES)}."
-        )
-    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        raise WhenError('Error: days must be a list of day names, e.g. ["tue", "fri"].')
-    mask = 0
-    for raw in value:
-        day = raw.strip().lower()
-        index = next((i for i, d in enumerate(_WEEKDAYS) if day in (d, d[:3])), None)
-        if index is None:
-            raise WhenError(f"Error: {raw!r} is not a day. Days are {', '.join(DAY_NAMES)}.")
-        mask |= 1 << index
-    return mask
-
-
 def next_occurrence(days: int, clock: time, after: datetime, zone: ZoneInfo) -> datetime:
     """The first occurrence of the rule strictly after ``after``, in UTC.
 
@@ -274,23 +218,6 @@ def latest_occurrence(
     return latest
 
 
-def _format_rule(repeat: str, days: int, clock: time) -> str:
-    """``every weekday at 08:00``, ``every Tuesday and Friday at 20:00``."""
-    at = f"at {clock:%H:%M}"
-    if days == _ALL_DAYS:
-        return f"every day {at}"
-    if days == _MASKS["weekdays"]:
-        return f"every weekday {at}"
-    if days == _MASKS["weekends"]:
-        return f"every weekend day {at}"
-    names = [_WEEKDAYS[i].capitalize() for i in range(7) if days & (1 << i)]
-    return f"every {_and(names)} {at}"
-
-
-def _and(items: Sequence[str]) -> str:
-    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
-
-
 # --- formatting ------------------------------------------------------------------
 
 
@@ -315,11 +242,6 @@ def format_day_time(moment: datetime, now: datetime, zone: ZoneInfo) -> str:
         return f"on {local:%A} at {clock}"
     year = f" {local.year}" if local.year != now.astimezone(zone).year else ""
     return f"on {local:%A} {local.day} {local:%B}{year} at {clock}"
-
-
-def _format_clock(moment: datetime, zone: ZoneInfo) -> str:
-    """``17:00`` in alfred's timezone."""
-    return f"{moment.astimezone(zone):%H:%M}"
 
 
 def format_now(now: datetime, due: datetime, zone: ZoneInfo) -> str:
@@ -348,3 +270,81 @@ def format_in(delta: timedelta) -> str:
     if minutes:
         parts.append(f"{minutes} min")
     return "in " + " ".join(parts)
+
+
+def _whole_minutes(value: Any) -> int:
+    minutes: int | None = None
+    if isinstance(value, bool):
+        minutes = None
+    elif isinstance(value, int):
+        minutes = value
+    elif isinstance(value, float) and value.is_integer():
+        minutes = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        minutes = int(value.strip())
+    if minutes is None or minutes < 1:
+        raise WhenError("Error: in_minutes must be a whole number of minutes, 1 or more.")
+    if minutes > _MAX_MINUTES:
+        raise WhenError("Error: a reminder can be at most one year ahead.")
+    return minutes
+
+
+def _clock(hour: str, minute: str) -> time:
+    h, m = int(hour), int(minute)
+    if h > 23 or m > 59:
+        raise WhenError(f"Error: {hour}:{minute} is not a valid 24-hour time.")
+    return time(h, m)
+
+
+def _date(year: str, month: str, day: str) -> date:
+    try:
+        return date(int(year), int(month), int(day))
+    except ValueError:
+        raise WhenError(f"Error: {year}-{month}-{day} is not a valid date.") from None
+
+
+def _local(day: date, clock: time, zone: ZoneInfo) -> datetime:
+    """That wall-clock time in ``zone``, as UTC; a time in a DST gap moves forward by it."""
+    return datetime.combine(day, clock, tzinfo=zone).astimezone(UTC)
+
+
+def _days_mask(value: Any) -> int:
+    if isinstance(value, str):
+        value = [value]
+    if not value:
+        raise WhenError(
+            'Error: repeat weekly needs days, e.g. ["tue", "fri"]. '
+            f"Days are {', '.join(DAY_NAMES)}."
+        )
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise WhenError('Error: days must be a list of day names, e.g. ["tue", "fri"].')
+    mask = 0
+    for raw in value:
+        day = raw.strip().lower()
+        index = next((i for i, d in enumerate(_WEEKDAYS) if day in (d, d[:3])), None)
+        if index is None:
+            raise WhenError(f"Error: {raw!r} is not a day. Days are {', '.join(DAY_NAMES)}.")
+        mask |= 1 << index
+    return mask
+
+
+def _format_rule(repeat: str, days: int, clock: time) -> str:
+    """``every weekday at 08:00``, ``every Tuesday and Friday at 20:00``."""
+    at = f"at {clock:%H:%M}"
+    if days == _ALL_DAYS:
+        return f"every day {at}"
+    if days == _MASKS["weekdays"]:
+        return f"every weekday {at}"
+    if days == _MASKS["weekends"]:
+        return f"every weekend day {at}"
+    names = [_WEEKDAYS[i].capitalize() for i in range(7) if days & (1 << i)]
+    return f"every {_and(names)} {at}"
+
+
+def _and(items: Sequence[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _format_clock(moment: datetime, zone: ZoneInfo) -> str:
+    """``17:00`` in alfred's timezone."""
+    return f"{moment.astimezone(zone):%H:%M}"

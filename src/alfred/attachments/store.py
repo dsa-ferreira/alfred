@@ -33,12 +33,6 @@ class StoreError(Exception):
     """The object store refused or didn't answer. The message holds no secret."""
 
 
-@dataclass(frozen=True)
-class _StoredObject:
-    key: str
-    last_modified: datetime
-
-
 class ObjectStore(Protocol):
     async def put(self, key: str, data: bytes, content_type: str) -> None: ...
 
@@ -140,3 +134,9 @@ class S3Store:
         error = StoreError(f"object store {operation} {key} failed: {code}")
         log.warning("%s", error)
         return error
+
+
+@dataclass(frozen=True)
+class _StoredObject:
+    key: str
+    last_modified: datetime

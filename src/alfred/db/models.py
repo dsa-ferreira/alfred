@@ -108,12 +108,12 @@ _FACT_REMOVAL_REASONS = ("forgotten", "replaced", "duplicate")
 _FACTS_OUTCOMES = ("done", "gave_up")
 
 
-def _in(column: str, values: tuple[str, ...]) -> str:
-    return f"{column} IN ({', '.join(repr(v) for v in values)})"
-
-
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=_NAMING_CONVENTION)
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
 
 
 class Conversation(Base):

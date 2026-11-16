@@ -62,20 +62,6 @@ def with_handles(text: str, handles: Iterable[str]) -> str:
     return " ".join([text, *handles]) if text else " ".join(handles)
 
 
-def _ref_columns() -> tuple:
-    return (
-        Attachment.id,
-        Attachment.kind,
-        Attachment.mime,
-        Attachment.object_key,
-        Attachment.file_name,
-        Attachment.page_count,
-        AttachmentPage.text,
-        Attachment.entry_id,
-        Attachment.position,
-    )
-
-
 def ref_query():  # noqa: ANN201 - a SQLAlchemy Select
     """Attachments with their page 1 text (PDFs), for :class:`AttachmentRef`."""
     return select(*_ref_columns()).outerjoin(
@@ -102,3 +88,17 @@ async def refs_by_entry(
         assert ref.entry_id is not None
         found.setdefault(ref.entry_id, []).append(ref)
     return {entry_id: tuple(refs) for entry_id, refs in found.items()}
+
+
+def _ref_columns() -> tuple:
+    return (
+        Attachment.id,
+        Attachment.kind,
+        Attachment.mime,
+        Attachment.object_key,
+        Attachment.file_name,
+        Attachment.page_count,
+        AttachmentPage.text,
+        Attachment.entry_id,
+        Attachment.position,
+    )

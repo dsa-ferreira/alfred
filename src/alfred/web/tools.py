@@ -106,21 +106,6 @@ _WEB_FETCH_TOOL: dict[str, Any] = {
 _DEFINITIONS: list[dict[str, Any]] = [_WEB_SEARCH_TOOL, _WEB_FETCH_TOOL]
 
 
-@dataclass(frozen=True)
-class _Page:
-    url: str  # after redirects
-    title: str | None
-    text: str
-
-
-@dataclass
-class _WebTurn:
-    """What one turn (attempt) may fetch, and the pages it already read."""
-
-    allowed: Allowlist
-    pages: dict[str, _Page] = field(default_factory=dict)
-
-
 class WebTools:
     def __init__(
         self,
@@ -229,6 +214,21 @@ class WebTools:
             turn.pages[key] = page
             log.info("fetch %s: %d characters of text", page.url, len(page.text))
         return _render(page, start, self._page_chars)
+
+
+@dataclass(frozen=True)
+class _Page:
+    url: str  # after redirects
+    title: str | None
+    text: str
+
+
+@dataclass
+class _WebTurn:
+    """What one turn (attempt) may fetch, and the pages it already read."""
+
+    allowed: Allowlist
+    pages: dict[str, _Page] = field(default_factory=dict)
 
 
 class _OpenWebTools:

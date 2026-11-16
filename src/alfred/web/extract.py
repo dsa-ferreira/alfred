@@ -22,12 +22,6 @@ class NoReadableContent(Exception):
     """The page has no text alfred can extract."""
 
 
-@dataclass(frozen=True)
-class _PageText:
-    title: str | None
-    text: str
-
-
 def supported(content_type: str) -> bool:
     """Whether a media type (``text/html``, without parameters) can be read."""
     return content_type in _HTML_TYPES or content_type in _TEXT_TYPES
@@ -50,6 +44,12 @@ async def extract(
     if not page.text:
         raise NoReadableContent
     return page
+
+
+@dataclass(frozen=True)
+class _PageText:
+    title: str | None
+    text: str
 
 
 def _extract_html(body: bytes, charset: str | None, url: str | None) -> _PageText:

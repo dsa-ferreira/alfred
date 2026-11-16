@@ -27,6 +27,13 @@ _BUTTONS_PER_ROW = 2
 _CALLBACK = re.compile(r"ir:(\d+):(\d+)")
 
 
+ENDED_LINES = {
+    "new_message": "Cancelled: you sent a new message.",
+    "expired": "Expired: no answer in time.",
+    "not_delivered": "Cancelled.",
+}
+
+
 def title(kind: str, *, source: str | None = None, reminder: str | None = None) -> str:
     """What asked, by the queue item's kind: ``user``, ``ask`` or ``reminder``.
 
@@ -76,13 +83,6 @@ def answered_line(label: str) -> str:
     if label == CANCEL:
         return "Cancelled."
     return f"Answered: {label}"
-
-
-ENDED_LINES = {
-    "new_message": "Cancelled: you sent a new message.",
-    "expired": "Expired: no answer in time.",
-    "not_delivered": "Cancelled.",
-}
 
 
 def outcome_html(question: Question, line: str) -> str:

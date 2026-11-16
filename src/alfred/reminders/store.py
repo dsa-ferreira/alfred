@@ -55,49 +55,6 @@ class ReminderRow:
         return self.created_by == user and self.recipients == (user,)
 
 
-async def _rows(session: AsyncSession, reminders: Sequence[Reminder]) -> list[ReminderRow]:
-    """The reminders with their recipients, in the given order (one query)."""
-    ids = [r.id for r in reminders]
-    recipients: dict[int, list[str]] = {i: [] for i in ids}
-    if ids:
-        found = await session.execute(
-            select(ReminderRecipient.reminder_id, ReminderRecipient.user_name)
-            .where(ReminderRecipient.reminder_id.in_(ids))
-            .order_by(ReminderRecipient.user_name)
-        )
-        for reminder_id, name in found:
-            recipients[reminder_id].append(name)
-    return [
-        ReminderRow(
-            r.id,
-            r.text,
-            r.due_at,
-            r.status,
-            r.created_by,
-            tuple(recipients[r.id]),
-            _rule(r),
-            r.quiet_ok,
-        )
-        for r in reminders
-    ]
-
-
-def _rule(reminder: Reminder) -> Rule | None:
-    if reminder.repeat is None or reminder.repeat_days is None or reminder.repeat_time is None:
-        return None
-    return Rule.stored(reminder.repeat, reminder.repeat_days, reminder.repeat_time)
-
-
-def _involves(user: str):  # noqa: ANN202 - a SQLAlchemy condition
-    """The reminder was set by ``user`` or is for them."""
-    return or_(
-        Reminder.created_by == user,
-        exists().where(
-            ReminderRecipient.reminder_id == Reminder.id, ReminderRecipient.user_name == user
-        ),
-    )
-
-
 class Reminders:
     def __init__(
         self, sessions: async_sessionmaker[AsyncSession], zone: ZoneInfo = _UTC_ZONE
@@ -234,3 +191,46 @@ class Reminders:
                     await session.flush()
                     ids.append(item.id)
             return ids
+
+
+async def _rows(session: AsyncSession, reminders: Sequence[Reminder]) -> list[ReminderRow]:
+    """The reminders with their recipients, in the given order (one query)."""
+    ids = [r.id for r in reminders]
+    recipients: dict[int, list[str]] = {i: [] for i in ids}
+    if ids:
+        found = await session.execute(
+            select(ReminderRecipient.reminder_id, ReminderRecipient.user_name)
+            .where(ReminderRecipient.reminder_id.in_(ids))
+            .order_by(ReminderRecipient.user_name)
+        )
+        for reminder_id, name in found:
+            recipients[reminder_id].append(name)
+    return [
+        ReminderRow(
+            r.id,
+            r.text,
+            r.due_at,
+            r.status,
+            r.created_by,
+            tuple(recipients[r.id]),
+            _rule(r),
+            r.quiet_ok,
+        )
+        for r in reminders
+    ]
+
+
+def _rule(reminder: Reminder) -> Rule | None:
+    if reminder.repeat is None or reminder.repeat_days is None or reminder.repeat_time is None:
+        return None
+    return Rule.stored(reminder.repeat, reminder.repeat_days, reminder.repeat_time)
+
+
+def _involves(user: str):  # noqa: ANN202 - a SQLAlchemy condition
+    """The reminder was set by ``user`` or is for them."""
+    return or_(
+        Reminder.created_by == user,
+        exists().where(
+            ReminderRecipient.reminder_id == Reminder.id, ReminderRecipient.user_name == user
+        ),
+    )

@@ -100,6 +100,39 @@ _CALCULATE_TOOL: dict[str, Any] = {
 }
 
 
+# --- units (design D4) -----------------------------------------------------------
+
+# Letters, °, spaces, / * ^, and a digit only as a one-digit exponent (m^2, m**3).
+_UNIT = re.compile(r"(?:[^\W\d]|[° /*^]|(?<=\^)\d|(?<=\*\*)\d)+")
+
+_DIMENSIONS = {
+    "[length]": "length",
+    "[length] ** 2": "area",
+    "[length] ** 3": "volume",
+    "[mass]": "mass",
+    "[temperature]": "temperature",
+    "[time]": "time",
+    "[length] / [time]": "speed",
+    "[mass] * [length] ** 2 / [time] ** 2": "energy",
+    "dimensionless": "a count or data size",
+}
+
+
+class CalculatorTools(LocalToolset):
+    """``alfred_calculate``, on every turn."""
+
+    definitions = [_CALCULATE_TOOL]
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        arguments = parse_arguments(raw_arguments)
+        if isinstance(arguments, str):
+            return ToolOutcome(False, arguments)
+        try:
+            return ToolOutcome(True, _calculate(arguments))
+        except _CalculationError as exc:
+            return ToolOutcome(False, f"Error: {exc}")
+
+
 class _CalculationError(ValueError):
     """The calculation can't be done; the message is written for the model."""
 
@@ -191,24 +224,6 @@ def _format_number(value: int | float) -> str:
     return format(value, f".{_SIGNIFICANT_DIGITS}g")
 
 
-# --- units (design D4) -----------------------------------------------------------
-
-# Letters, °, spaces, / * ^, and a digit only as a one-digit exponent (m^2, m**3).
-_UNIT = re.compile(r"(?:[^\W\d]|[° /*^]|(?<=\^)\d|(?<=\*\*)\d)+")
-
-_DIMENSIONS = {
-    "[length]": "length",
-    "[length] ** 2": "area",
-    "[length] ** 3": "volume",
-    "[mass]": "mass",
-    "[temperature]": "temperature",
-    "[time]": "time",
-    "[length] / [time]": "speed",
-    "[mass] * [length] ** 2 / [time] ** 2": "energy",
-    "dimensionless": "a count or data size",
-}
-
-
 @functools.cache
 def _registry() -> pint.UnitRegistry:
     """pint's units, loaded once (about half a second)."""
@@ -284,18 +299,3 @@ def _calculate(arguments: dict[str, Any]) -> str:
     if head == result:
         return f"{source} = {target}"
     return f"{head} = {source} = {target}"
-
-
-class CalculatorTools(LocalToolset):
-    """``alfred_calculate``, on every turn."""
-
-    definitions = [_CALCULATE_TOOL]
-
-    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        arguments = parse_arguments(raw_arguments)
-        if isinstance(arguments, str):
-            return ToolOutcome(False, arguments)
-        try:
-            return ToolOutcome(True, _calculate(arguments))
-        except _CalculationError as exc:
-            return ToolOutcome(False, f"Error: {exc}")

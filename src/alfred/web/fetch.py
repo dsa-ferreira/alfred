@@ -51,25 +51,6 @@ class FetchError(Exception):
     """A fetch that produced no page. The message is safe to show the model."""
 
 
-class _BlockedAddress(FetchError):
-    pass
-
-
-class _UnsupportedType(FetchError):
-    def __init__(self, content_type: str) -> None:
-        super().__init__(f"the content type {content_type or 'unknown'} is not supported")
-        self.content_type = content_type
-
-
-@dataclass(frozen=True)
-class _Download:
-    url: str  # the final URL, after redirects
-    status: int
-    content_type: str  # media type only, lower case, e.g. "text/html"
-    charset: str | None
-    body: bytes
-
-
 def make_http_client() -> httpx.AsyncClient:
     """The client web search and fetch share: no cookies kept, alfred's User-Agent."""
     jar = CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
@@ -82,17 +63,6 @@ async def _resolve(host: str, port: int) -> list[str]:
     """Every address ``host`` resolves to."""
     infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return [str(info[4][0]) for info in infos]
-
-
-def _is_public(address: str) -> bool:
-    """Whether ``address`` is globally routable (IPv4-mapped IPv6 judged as IPv4)."""
-    try:
-        ip = ipaddress.ip_address(address.split("%", 1)[0])
-    except ValueError:
-        return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return ip.is_global and not ip.is_multicast
 
 
 class Fetcher:
@@ -211,3 +181,33 @@ class Fetcher:
         except httpx.HTTPError as exc:
             raise FetchError(f"the download failed ({type(exc).__name__})") from None
         return _Download(url, status, content_type, response.charset_encoding, bytes(body))
+
+
+class _BlockedAddress(FetchError):
+    pass
+
+
+class _UnsupportedType(FetchError):
+    def __init__(self, content_type: str) -> None:
+        super().__init__(f"the content type {content_type or 'unknown'} is not supported")
+        self.content_type = content_type
+
+
+@dataclass(frozen=True)
+class _Download:
+    url: str  # the final URL, after redirects
+    status: int
+    content_type: str  # media type only, lower case, e.g. "text/html"
+    charset: str | None
+    body: bytes
+
+
+def _is_public(address: str) -> bool:
+    """Whether ``address`` is globally routable (IPv4-mapped IPv6 judged as IPv4)."""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast

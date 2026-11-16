@@ -29,6 +29,23 @@ log = logging.getLogger(__name__)
 Connector = Callable[[McpServer, float], AbstractAsyncContextManager[Client]]
 
 
+def http_connector(transport: httpx2.AsyncBaseTransport | None = None) -> Connector:
+    """The production connector. ``transport`` is for tests (e.g. ASGI)."""
+
+    @asynccontextmanager
+    async def connect(server: McpServer, http_timeout_s: float) -> AsyncIterator[Client]:
+        async with httpx2.AsyncClient(
+            headers={"Authorization": f"Bearer {server.token.get_secret_value()}"},
+            timeout=httpx2.Timeout(http_timeout_s),
+            transport=transport,
+        ) as http:
+            client = _new_client(streamable_http_client(server.url, http_client=http))
+            async with client:
+                yield client
+
+    return connect
+
+
 async def _refuse_elicitation(
     context: ClientRequestContext, params: ElicitRequestParams
 ) -> ElicitResult | ErrorData:
@@ -47,20 +64,3 @@ def _new_client(target: Any) -> Client:
     ``cache=None``: tool lists are looked up fresh every turn.
     """
     return Client(target, cache=None, elicitation_callback=_refuse_elicitation)
-
-
-def http_connector(transport: httpx2.AsyncBaseTransport | None = None) -> Connector:
-    """The production connector. ``transport`` is for tests (e.g. ASGI)."""
-
-    @asynccontextmanager
-    async def connect(server: McpServer, http_timeout_s: float) -> AsyncIterator[Client]:
-        async with httpx2.AsyncClient(
-            headers={"Authorization": f"Bearer {server.token.get_secret_value()}"},
-            timeout=httpx2.Timeout(http_timeout_s),
-            transport=transport,
-        ) as http:
-            client = _new_client(streamable_http_client(server.url, http_client=http))
-            async with client:
-                yield client
-
-    return connect

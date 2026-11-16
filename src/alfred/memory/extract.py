@@ -50,21 +50,6 @@ from alfred.memory.transcript import cut_middle, render
 log = logging.getLogger(__name__)
 
 
-def _pending() -> tuple[object, ...]:
-    return (Conversation.ended_at.is_not(None), Conversation.facts_outcome.is_(None))
-
-
-def _first_of_its_user() -> object:
-    """No older conversation of the same user is pending (the partial index)."""
-    older = aliased(Conversation)
-    return ~exists().where(
-        older.user_name == Conversation.user_name,
-        older.id < Conversation.id,
-        older.ended_at.is_not(None),
-        older.facts_outcome.is_(None),
-    )
-
-
 class FactExtractionJob:
     uses_model = True
 
@@ -267,3 +252,18 @@ class FactExtractionJob:
             log.exception("conversation %s: could not record a failed extraction", conversation_id)
         finally:
             self.changed.set()
+
+
+def _pending() -> tuple[object, ...]:
+    return (Conversation.ended_at.is_not(None), Conversation.facts_outcome.is_(None))
+
+
+def _first_of_its_user() -> object:
+    """No older conversation of the same user is pending (the partial index)."""
+    older = aliased(Conversation)
+    return ~exists().where(
+        older.user_name == Conversation.user_name,
+        older.id < Conversation.id,
+        older.ended_at.is_not(None),
+        older.facts_outcome.is_(None),
+    )

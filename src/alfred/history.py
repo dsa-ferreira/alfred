@@ -52,6 +52,16 @@ _ARRIVALS = frozenset({"notice", "ask_prompt", "reminder"})
 _LIVE_STATUSES = ("open", "answered", "running")
 
 
+# --- message times (change add-utility-tools, design D1) ---------------------
+
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_STAMP = re.compile(
+    r"\[(?:" + "|".join(_DAYS) + r") \d{1,2} (?:" + "|".join(_MONTHS) + r") \d{2}:\d{2}\]"
+)
+_LEADING_STAMP = re.compile(_STAMP.pattern + r"\s*")
+
+
 @dataclass(frozen=True)
 class HistoryEntry:
     kind: str
@@ -85,23 +95,6 @@ class Inline:
 
     handles: list[str]
     images: list[ModelImage] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class _Reset:
-    """The conversation just archived (``None`` if there was none) and the new one."""
-
-    archived_id: int | None
-    new_id: int
-
-
-@dataclass(frozen=True)
-class _LastMessage:
-    """A current conversation and when its user last wrote in it."""
-
-    conversation_id: int
-    user: str
-    at: datetime
 
 
 class History:
@@ -383,38 +376,6 @@ class History:
             return max(ids), await current_id(session, user, lock=False)
 
 
-def _not_parked(turn_item_id: int) -> ColumnElement[bool]:
-    """Not an entry of another queue item with a live input request (a parked turn)."""
-    live = (
-        select(InputRequest.id)
-        .where(
-            InputRequest.queue_item_id == Entry.queue_item_id,
-            InputRequest.queue_item_id != turn_item_id,
-            InputRequest.status.in_(_LIVE_STATUSES),
-        )
-        .exists()
-    )
-    return ~live
-
-
-async def _unattended(session: AsyncSession, conversation_id: int, idle_after: timedelta) -> bool:
-    """The conversation has entries, none from its user, the newest older than ``idle_after``."""
-    has_user = await session.scalar(
-        select(Entry.id)
-        .where(Entry.conversation_id == conversation_id, Entry.kind == "user")
-        .limit(1)
-    )
-    if has_user is not None:
-        return False
-    # NULL (no entries yet) is not stale. The database's clock, like created_at.
-    stale = await session.scalar(
-        select(func.max(Entry.created_at) < func.now() - idle_after).where(
-            Entry.conversation_id == conversation_id
-        )
-    )
-    return bool(stale)
-
-
 async def current_id(
     session: AsyncSession, user: str, *, lock: bool, exclusive: bool = False
 ) -> int:
@@ -444,25 +405,6 @@ async def current_id(
     return found
 
 
-# --- message times (change add-utility-tools, design D1) ---------------------
-
-_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-_STAMP = re.compile(
-    r"\[(?:" + "|".join(_DAYS) + r") \d{1,2} (?:" + "|".join(_MONTHS) + r") \d{2}:\d{2}\]"
-)
-_LEADING_STAMP = re.compile(_STAMP.pattern + r"\s*")
-
-
-def _format_stamp(moment: datetime, zone: ZoneInfo) -> str:
-    """``[Mon 9 Nov 14:05]``: absolute, so an entry's text never changes.
-
-    English names without the locale, like the rest of alfred's prompts.
-    """
-    local = moment.astimezone(zone)
-    return f"[{_DAYS[local.weekday()]} {local.day} {_MONTHS[local.month - 1]} {local:%H:%M}]"
-
-
 def stamped(text_: str, moment: datetime | None, zone: ZoneInfo) -> str:
     """``text_`` after the time it arrived, or as is when that time is unknown."""
     return text_ if moment is None else f"{_format_stamp(moment, zone)} {text_}"
@@ -471,12 +413,6 @@ def stamped(text_: str, moment: datetime | None, zone: ZoneInfo) -> str:
 def strip_stamp(text_: str) -> str:
     """``text_`` without a stamp at its very start (one the model copied, design D2)."""
     return _LEADING_STAMP.sub("", text_, count=1) if _LEADING_STAMP.match(text_) else text_
-
-
-def _user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
-    """What the user wrote, then the handles of what they sent with it."""
-    handles = inline.handles if inline else [handle(a) for a in entry.attachments]
-    return with_handles(entry.text, handles)
 
 
 def to_messages(
@@ -535,3 +471,67 @@ def to_messages(
         if content is not None:
             messages.append({"role": "user", "content": stamped(content, e.created_at, zone)})
     return messages
+
+
+@dataclass(frozen=True)
+class _Reset:
+    """The conversation just archived (``None`` if there was none) and the new one."""
+
+    archived_id: int | None
+    new_id: int
+
+
+@dataclass(frozen=True)
+class _LastMessage:
+    """A current conversation and when its user last wrote in it."""
+
+    conversation_id: int
+    user: str
+    at: datetime
+
+
+def _not_parked(turn_item_id: int) -> ColumnElement[bool]:
+    """Not an entry of another queue item with a live input request (a parked turn)."""
+    live = (
+        select(InputRequest.id)
+        .where(
+            InputRequest.queue_item_id == Entry.queue_item_id,
+            InputRequest.queue_item_id != turn_item_id,
+            InputRequest.status.in_(_LIVE_STATUSES),
+        )
+        .exists()
+    )
+    return ~live
+
+
+async def _unattended(session: AsyncSession, conversation_id: int, idle_after: timedelta) -> bool:
+    """The conversation has entries, none from its user, the newest older than ``idle_after``."""
+    has_user = await session.scalar(
+        select(Entry.id)
+        .where(Entry.conversation_id == conversation_id, Entry.kind == "user")
+        .limit(1)
+    )
+    if has_user is not None:
+        return False
+    # NULL (no entries yet) is not stale. The database's clock, like created_at.
+    stale = await session.scalar(
+        select(func.max(Entry.created_at) < func.now() - idle_after).where(
+            Entry.conversation_id == conversation_id
+        )
+    )
+    return bool(stale)
+
+
+def _format_stamp(moment: datetime, zone: ZoneInfo) -> str:
+    """``[Mon 9 Nov 14:05]``: absolute, so an entry's text never changes.
+
+    English names without the locale, like the rest of alfred's prompts.
+    """
+    local = moment.astimezone(zone)
+    return f"[{_DAYS[local.weekday()]} {local.day} {_MONTHS[local.month - 1]} {local:%H:%M}]"
+
+
+def _user_text(entry: HistoryEntry, inline: Inline | None = None) -> str:
+    """What the user wrote, then the handles of what they sent with it."""
+    handles = inline.handles if inline else [handle(a) for a in entry.attachments]
+    return with_handles(entry.text, handles)

@@ -75,35 +75,6 @@ class Outbox(Protocol):
     async def send(self, user: User, text: str) -> None: ...
 
 
-class _QuestionOutbox(Protocol):
-    """Sends a question with its buttons, returning its message ID; raises if not delivered."""
-
-    async def send_question(self, user: User, request_id: int, question: Question) -> int: ...
-
-
-class _TurnRunner(Protocol):
-    async def run(self, turn: TurnInput) -> TurnResult: ...
-
-
-class _ReminderLookup(Protocol):
-    async def get(self, reminder_id: int) -> ReminderRow | None: ...
-
-
-def _reset_marker(archived_id: int | None, new_id: int, *, idle: bool = False) -> str:
-    """The one message that tells the user a conversation ended.
-
-    Ids only: the title is made later, in the background (change
-    close-idle-conversations, design D1). ``idle`` for a conversation closed
-    after inactivity.
-    """
-    lines: list[str] = []
-    if archived_id is not None:
-        how = "closed after inactivity" if idle else "archived"
-        lines.append(f"— #{archived_id} {how} —")
-    lines.append(f"— new conversation #{new_id} —")
-    return "\n".join(lines)
-
-
 class QueueActivity:
     """When items arrive and finish, for the memory sweeper (change
     close-idle-conversations, design D5).
@@ -211,14 +182,6 @@ class Queue:
         """Queue ``source``'s ``/ask`` prompt as a turn for ``user``."""
         return await self._insert(QueueItem(kind="ask", user_name=user, source=source, text=prompt))
 
-    async def _insert(self, item: QueueItem) -> int:
-        async with self._sessions.begin() as session:
-            session.add(item)
-            await session.flush()
-            item_id = item.id
-        self.activity.notify()
-        return item_id
-
     async def head(self) -> QueueItem | None:
         """The oldest pending item, which must finish before any other starts."""
         async with self._sessions() as session:
@@ -244,6 +207,14 @@ class Queue:
                 .where(QueueItem.id == item_id)
                 .values(status=status, failure_reason=reason, finished_at=datetime.now(UTC))
             )
+
+    async def _insert(self, item: QueueItem) -> int:
+        async with self._sessions.begin() as session:
+            session.add(item)
+            await session.flush()
+            item_id = item.id
+        self.activity.notify()
+        return item_id
 
 
 class Worker:
@@ -618,3 +589,32 @@ class Worker:
         except Exception:
             # The turn already ran; re-running it would repeat tool actions.
             log.exception("queue item %s: could not deliver a message to %s", item.id, user.name)
+
+
+class _QuestionOutbox(Protocol):
+    """Sends a question with its buttons, returning its message ID; raises if not delivered."""
+
+    async def send_question(self, user: User, request_id: int, question: Question) -> int: ...
+
+
+class _TurnRunner(Protocol):
+    async def run(self, turn: TurnInput) -> TurnResult: ...
+
+
+class _ReminderLookup(Protocol):
+    async def get(self, reminder_id: int) -> ReminderRow | None: ...
+
+
+def _reset_marker(archived_id: int | None, new_id: int, *, idle: bool = False) -> str:
+    """The one message that tells the user a conversation ended.
+
+    Ids only: the title is made later, in the background (change
+    close-idle-conversations, design D1). ``idle`` for a conversation closed
+    after inactivity.
+    """
+    lines: list[str] = []
+    if archived_id is not None:
+        how = "closed after inactivity" if idle else "archived"
+        lines.append(f"— #{archived_id} {how} —")
+    lines.append(f"— new conversation #{new_id} —")
+    return "\n".join(lines)

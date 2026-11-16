@@ -160,37 +160,12 @@ _REMINDER_QUIET = f"""\
 If there is nothing worth telling, answer exactly {_NO_REPLY} and nothing else."""
 
 
-def _reminder_rule(quiet: bool) -> str:
-    """The reminder turn's rule with its ending: ``quiet`` for a ``quiet_ok`` reminder."""
-    return f"{_REMINDER_RULE} {_REMINDER_QUIET if quiet else _REMINDER_ALWAYS}"
+# --- The user's facts (change add-user-facts, design D9) --------------------------------
 
-
-def _operating_rules(name: str, tools: Collection[str] = (), others: Sequence[str] = ()) -> str:
-    """The built-in rules for a turn of user ``name`` offering ``tools``.
-
-    ``others`` are the other users' names, named when reminders can be set.
-    """
-    parts = [_TALKING_TO.format(name=name), _TOOLS_RULE]
-    if _WEB_SEARCH in tools or _WEB_FETCH in tools:
-        parts.append(_WEB_RULE)
-    if _CALCULATE in tools or _DATE in tools:
-        routes = [_CALCULATE_RULE] if _CALCULATE in tools else []
-        if _DATE in tools:
-            routes.append(_DATE_RULE)
-        parts.append(" ".join([_CALCULATION_RULE, *routes, "Answer from their results."]))
-    if _REMIND_SET in tools:
-        parts.append(_REMINDER_ROUTING_RULE)
-        if others:
-            parts.append(
-                _REMIND_OTHERS_RULE.format(name=name, other=others[0], others=", ".join(others))
-            )
-    parts += [_TIMES_RULE, _LABELS_RULE]
-    return "\n\n".join(parts)
-
-
-def _today_line(today: date) -> str:
-    """``Today is Monday, 2 November 2026.``"""
-    return f"Today is {today:%A}, {today.day} {today:%B %Y}."
+_FACT_LABELS = (
+    "told: {name} asked you to remember it; learned: picked up from an earlier "
+    "conversation, so it may be out of date."
+)
 
 
 def brain_line(name: str, tag: str, others: Sequence[str] = (), tools: Collection[str] = ()) -> str:
@@ -205,10 +180,6 @@ def brain_line(name: str, tag: str, others: Sequence[str] = (), tools: Collectio
         f'You are running on the brain "{name}" (model {tag}). '
         f"Other brains you can be switched to: {', '.join(others)}."
     )
-
-
-def _butler_persona(address: str) -> str:
-    return _BUTLER_PERSONA.format(address=address)
 
 
 def system_prompt(
@@ -253,14 +224,6 @@ def system_prompt(
     return "\n\n".join(parts)
 
 
-# --- The user's facts (change add-user-facts, design D9) --------------------------------
-
-_FACT_LABELS = (
-    "told: {name} asked you to remember it; learned: picked up from an earlier "
-    "conversation, so it may be out of date."
-)
-
-
 class KnownFact(Protocol):
     id: int
     text: str
@@ -274,10 +237,6 @@ class FactsBlock:
     text: str
     shown: int
     total: int
-
-
-def _fact_line(fact: KnownFact) -> str:
-    return f"[{fact.id}] {fact.text} ({fact.origin})"
 
 
 def facts_block(name: str, facts: Sequence[KnownFact], max_chars: int) -> FactsBlock:
@@ -312,3 +271,44 @@ def facts_block(name: str, facts: Sequence[KnownFact], max_chars: int) -> FactsB
 
 def is_no_reply(answer: str) -> bool:
     return answer.strip() == _NO_REPLY
+
+
+def _reminder_rule(quiet: bool) -> str:
+    """The reminder turn's rule with its ending: ``quiet`` for a ``quiet_ok`` reminder."""
+    return f"{_REMINDER_RULE} {_REMINDER_QUIET if quiet else _REMINDER_ALWAYS}"
+
+
+def _operating_rules(name: str, tools: Collection[str] = (), others: Sequence[str] = ()) -> str:
+    """The built-in rules for a turn of user ``name`` offering ``tools``.
+
+    ``others`` are the other users' names, named when reminders can be set.
+    """
+    parts = [_TALKING_TO.format(name=name), _TOOLS_RULE]
+    if _WEB_SEARCH in tools or _WEB_FETCH in tools:
+        parts.append(_WEB_RULE)
+    if _CALCULATE in tools or _DATE in tools:
+        routes = [_CALCULATE_RULE] if _CALCULATE in tools else []
+        if _DATE in tools:
+            routes.append(_DATE_RULE)
+        parts.append(" ".join([_CALCULATION_RULE, *routes, "Answer from their results."]))
+    if _REMIND_SET in tools:
+        parts.append(_REMINDER_ROUTING_RULE)
+        if others:
+            parts.append(
+                _REMIND_OTHERS_RULE.format(name=name, other=others[0], others=", ".join(others))
+            )
+    parts += [_TIMES_RULE, _LABELS_RULE]
+    return "\n\n".join(parts)
+
+
+def _today_line(today: date) -> str:
+    """``Today is Monday, 2 November 2026.``"""
+    return f"Today is {today:%A}, {today.day} {today:%B %Y}."
+
+
+def _butler_persona(address: str) -> str:
+    return _BUTLER_PERSONA.format(address=address)
+
+
+def _fact_line(fact: KnownFact) -> str:
+    return f"[{fact.id}] {fact.text} ({fact.origin})"

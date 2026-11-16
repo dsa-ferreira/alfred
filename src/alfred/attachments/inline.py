@@ -62,15 +62,6 @@ async def load_image(store: ObjectStore, ref: AttachmentRef, page: int, max_px: 
     return await for_model_async(data, max_px)
 
 
-def _first_page_block(ref: AttachmentRef, max_chars: int) -> str:
-    """A PDF's page 1 text as sent inline, cut to ``max_chars``."""
-    text = (ref.first_page or "").strip()
-    block = f"--- page 1 ---\n{text[:max_chars]}"
-    if len(text) > max_chars:
-        block += f"\n(page 1 cut at {max_chars} characters; read on with alfred_read_document)"
-    return block
-
-
 class InlineAttachments:
     def __init__(self, store: ObjectStore, config: AttachmentsConfig) -> None:
         self._store = store
@@ -110,3 +101,12 @@ class InlineAttachments:
                 shown += "\n" + _first_page_block(ref, self._config.first_page_chars)
             inline.handles.append(shown)
         return inline
+
+
+def _first_page_block(ref: AttachmentRef, max_chars: int) -> str:
+    """A PDF's page 1 text as sent inline, cut to ``max_chars``."""
+    text = (ref.first_page or "").strip()
+    block = f"--- page 1 ---\n{text[:max_chars]}"
+    if len(text) > max_chars:
+        block += f"\n(page 1 cut at {max_chars} characters; read on with alfred_read_document)"
+    return block

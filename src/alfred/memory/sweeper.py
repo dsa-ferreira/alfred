@@ -44,104 +44,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class _QueueState(Protocol):
-    """What the sweeper needs to know about the queue (``alfred.queue.Queue``)."""
-
-    activity: QueueActivity
-
-    async def has_pending(self) -> bool: ...
-
-
-class _Job(Protocol):
-    """One kind of background work the sweeper does."""
-
-    # Whether it sends model requests: they get ``preempt``.
-    uses_model: bool
-    # Set when what is due may have changed, so the sweeper looks again.
-    changed: asyncio.Event
-
-    async def next_due(self, model_allowed: bool) -> Hashable | None:
-        """The next piece of work due now, or ``None``.
-
-        ``model_allowed`` is false while the queue isn't quiet: then only
-        work that needs no model request may be returned.
-        """
-        ...
-
-    async def seconds_until_due(self, model_allowed: bool) -> float | None:
-        """Until the next piece of work is due, or ``None`` if none is scheduled."""
-        ...
-
-    async def run(self, key: Any, preempt: asyncio.Event | None) -> None:
-        """Do one piece of work. Never raises; schedules its own retries."""
-        ...
-
-
-class _ConversationSummaryJob:
-    """Title, summary and embedding of archived conversations (memory design D4)."""
-
-    uses_model = True
-
-    def __init__(
-        self,
-        config: Config,
-        sessions: async_sessionmaker[AsyncSession],
-        summaries: Summaries,
-        now: Callable[[], datetime],
-    ) -> None:
-        self._config = config
-        self._sessions = sessions
-        self.summaries = summaries
-        self._now = now
-
-    @property
-    def changed(self) -> asyncio.Event:
-        return self.summaries.changed
-
-    async def next_due(self, model_allowed: bool) -> int | None:
-        async with self._sessions() as session:
-            return await session.scalar(
-                select(Conversation.id)
-                .where(
-                    *self._pending(embedding_only=not model_allowed),
-                    or_(
-                        Conversation.summary_next_at.is_(None),
-                        Conversation.summary_next_at <= self._now(),
-                    ),
-                )
-                .order_by(Conversation.id)
-                .limit(1)
-            )
-
-    async def seconds_until_due(self, model_allowed: bool) -> float | None:
-        async with self._sessions() as session:
-            soonest = await session.scalar(
-                select(func.min(Conversation.summary_next_at)).where(
-                    *self._pending(embedding_only=not model_allowed)
-                )
-            )
-        if soonest is None:
-            return None
-        return max(0.0, (soonest - self._now()).total_seconds())
-
-    async def run(self, key: int, preempt: asyncio.Event | None) -> None:
-        await self.summaries.summarise(key, preempt=preempt)
-
-    def _pending(self, *, embedding_only: bool) -> Any:
-        conditions: tuple[Any, ...] = (
-            Conversation.ended_at.is_not(None),
-            or_(
-                Conversation.summary.is_(None),
-                Conversation.embedding.is_(None),
-                Conversation.embedding_model.is_distinct_from(self.summaries.embedding_model),
-            ),
-        )
-        if embedding_only:
-            # Already summarised: only the embedding request (never preempted) is left.
-            conditions += (Conversation.summary.is_not(None),)
-        return conditions
-
-
 class Sweeper:
     def __init__(
         self,
@@ -239,6 +141,104 @@ class Sweeper:
             return None
         left = self._config.memory.summary_quiet_s - self._queue.activity.quiet_for()
         return max(0.0, left)
+
+
+class _QueueState(Protocol):
+    """What the sweeper needs to know about the queue (``alfred.queue.Queue``)."""
+
+    activity: QueueActivity
+
+    async def has_pending(self) -> bool: ...
+
+
+class _Job(Protocol):
+    """One kind of background work the sweeper does."""
+
+    # Whether it sends model requests: they get ``preempt``.
+    uses_model: bool
+    # Set when what is due may have changed, so the sweeper looks again.
+    changed: asyncio.Event
+
+    async def next_due(self, model_allowed: bool) -> Hashable | None:
+        """The next piece of work due now, or ``None``.
+
+        ``model_allowed`` is false while the queue isn't quiet: then only
+        work that needs no model request may be returned.
+        """
+        ...
+
+    async def seconds_until_due(self, model_allowed: bool) -> float | None:
+        """Until the next piece of work is due, or ``None`` if none is scheduled."""
+        ...
+
+    async def run(self, key: Any, preempt: asyncio.Event | None) -> None:
+        """Do one piece of work. Never raises; schedules its own retries."""
+        ...
+
+
+class _ConversationSummaryJob:
+    """Title, summary and embedding of archived conversations (memory design D4)."""
+
+    uses_model = True
+
+    def __init__(
+        self,
+        config: Config,
+        sessions: async_sessionmaker[AsyncSession],
+        summaries: Summaries,
+        now: Callable[[], datetime],
+    ) -> None:
+        self._config = config
+        self._sessions = sessions
+        self.summaries = summaries
+        self._now = now
+
+    @property
+    def changed(self) -> asyncio.Event:
+        return self.summaries.changed
+
+    async def next_due(self, model_allowed: bool) -> int | None:
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(Conversation.id)
+                .where(
+                    *self._pending(embedding_only=not model_allowed),
+                    or_(
+                        Conversation.summary_next_at.is_(None),
+                        Conversation.summary_next_at <= self._now(),
+                    ),
+                )
+                .order_by(Conversation.id)
+                .limit(1)
+            )
+
+    async def seconds_until_due(self, model_allowed: bool) -> float | None:
+        async with self._sessions() as session:
+            soonest = await session.scalar(
+                select(func.min(Conversation.summary_next_at)).where(
+                    *self._pending(embedding_only=not model_allowed)
+                )
+            )
+        if soonest is None:
+            return None
+        return max(0.0, (soonest - self._now()).total_seconds())
+
+    async def run(self, key: int, preempt: asyncio.Event | None) -> None:
+        await self.summaries.summarise(key, preempt=preempt)
+
+    def _pending(self, *, embedding_only: bool) -> Any:
+        conditions: tuple[Any, ...] = (
+            Conversation.ended_at.is_not(None),
+            or_(
+                Conversation.summary.is_(None),
+                Conversation.embedding.is_(None),
+                Conversation.embedding_model.is_distinct_from(self.summaries.embedding_model),
+            ),
+        )
+        if embedding_only:
+            # Already summarised: only the embedding request (never preempted) is left.
+            conditions += (Conversation.summary.is_not(None),)
+        return conditions
 
 
 async def _wait_any(events: list[asyncio.Event], seconds: float) -> None:

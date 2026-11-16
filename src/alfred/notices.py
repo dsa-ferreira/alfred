@@ -12,8 +12,14 @@ from datetime import date, datetime
 _PARTIAL = " Some actions may have been partly carried out."
 
 
-def _partial(partial: bool) -> str:
-    return _PARTIAL if partial else ""
+# --- input requests (change add-user-input-requests, design D5) -------------------------
+
+# Why a waiting turn ended without its user's answer.
+_NOT_DONE_REASONS = {
+    "new_message": "you sent a new message before answering my question",
+    "expired": "my question went unanswered for too long",
+    "not_delivered": "I could not send you my question",
+}
 
 
 def text_only(address: str) -> str:
@@ -111,21 +117,15 @@ def memory_usage(address: str) -> str:
     )
 
 
-def _numbers(ids: list[int]) -> str:
-    return ", ".join(str(i) for i in ids)
-
-
-# --- input requests (change add-user-input-requests, design D5) -------------------------
-
-# Why a waiting turn ended without its user's answer.
-_NOT_DONE_REASONS = {
-    "new_message": "you sent a new message before answering my question",
-    "expired": "my question went unanswered for too long",
-    "not_delivered": "I could not send you my question",
-}
-
-
 def input_not_done(address: str, tool: str, reason: str) -> str:
     """Recorded as alfred's reply when a waiting turn ends unanswered (``NOT_DONE_REASONS``)."""
     why = _NOT_DONE_REASONS.get(reason, "the request was cancelled")
     return f"Nothing was done: I did not run {tool}, as {why}, {address}."
+
+
+def _partial(partial: bool) -> str:
+    return _PARTIAL if partial else ""
+
+
+def _numbers(ids: list[int]) -> str:
+    return ", ".join(str(i) for i in ids)

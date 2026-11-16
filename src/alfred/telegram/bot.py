@@ -61,20 +61,10 @@ _DOWNLOAD_TIMEOUT_S = 120
 _PDF_MIME = "application/pdf"
 
 
-def _incoming_file(message: Message) -> IncomingFile | None:
-    """The message's photo, image file or PDF file; ``None`` for anything else."""
-    if message.photo:
-        largest = message.photo[-1]  # Telegram lists the sizes smallest first
-        return IncomingFile("image", largest.file_id, largest.file_size)
-    document = message.document
-    if document is None:
-        return None
-    mime = (document.mime_type or "").lower()
-    if mime == _PDF_MIME:
-        return IncomingFile("pdf", document.file_id, document.file_size, document.file_name)
-    if mime.startswith("image/"):
-        return IncomingFile("image", document.file_id, document.file_size, document.file_name)
-    return None
+# ``/memory``, ``/memory@alfred_bot`` (from the command menu) and their
+# arguments; not ``/memorybank``.
+_MEMORY_COMMAND = re.compile(r"/memory(?:@\w+)?(?:\s+(.*))?", re.DOTALL)
+_COMMANDS = [BotCommand(command="memory", description="What I know about you")]
 
 
 class TelegramDownloader:
@@ -96,35 +86,12 @@ class TelegramDownloader:
         return out.read()
 
 
-# ``/memory``, ``/memory@alfred_bot`` (from the command menu) and their
-# arguments; not ``/memorybank``.
-_MEMORY_COMMAND = re.compile(r"/memory(?:@\w+)?(?:\s+(.*))?", re.DOTALL)
-_COMMANDS = [BotCommand(command="memory", description="What I know about you")]
-
-
 async def register_commands(bot: Bot) -> None:
     """Show ``/memory`` in the clients' command menu. A failure is only logged."""
     try:
         await bot.set_my_commands(_COMMANDS)
     except Exception as exc:
         log.warning("could not register the bot commands: %s", type(exc).__name__)
-
-
-class _Fact(Protocol):
-    id: int
-    text: str
-    origin: str
-    created_at: datetime
-
-
-class _Facts(Protocol):
-    """The user's facts (``alfred.memory.facts.FactStore``)."""
-
-    async def list(self, user_name: str) -> Sequence[_Fact]: ...
-
-    async def forget(
-        self, user_name: str, ids: Sequence[int]
-    ) -> tuple[Sequence[_Fact], Sequence[int]]: ...
 
 
 class MemoryCommand:
@@ -158,45 +125,6 @@ class MemoryCommand:
         """``[12] allergic to shellfish (told, 3 Nov)``."""
         day = fact.created_at.astimezone(self._zone)
         return f"[{fact.id}] {fact.text} ({fact.origin}, {day.day} {day:%b})"
-
-
-def _fact_id(word: str) -> int | None:
-    word = word.removeprefix("#")
-    return int(word) if word.isdigit() else None
-
-
-class _AlbumCollector:
-    """Holds the parts of each album until ``wait_s`` passes without a new one."""
-
-    def __init__(self, wait_s: float, receive: Callable[[list[Message]], Awaitable[None]]) -> None:
-        self._wait_s = wait_s
-        self._receive = receive
-        self._parts: dict[str, list[Message]] = {}
-        self._timers: dict[str, asyncio.Task[None]] = {}
-
-    def add(self, message: Message) -> None:
-        group = message.media_group_id
-        assert group is not None
-        self._parts.setdefault(group, []).append(message)
-        timer = self._timers.get(group)
-        if timer is not None:
-            timer.cancel()
-        self._timers[group] = asyncio.create_task(self._later(group), name=f"album {group}")
-
-    async def _drain(self) -> None:
-        """Wait for every album collected so far to be received (for tests)."""
-        while self._timers:
-            await asyncio.gather(*self._timers.values(), return_exceptions=True)
-
-    async def _later(self, group: str) -> None:
-        await asyncio.sleep(self._wait_s)
-        # From here on the album is complete: a cancel can no longer reach it.
-        self._timers.pop(group, None)
-        parts = sorted(self._parts.pop(group, []), key=lambda m: m.message_id)
-        try:
-            await self._receive(parts)
-        except Exception:
-            log.exception("album %s could not be received", group)
 
 
 def make_dispatcher(
@@ -353,3 +281,75 @@ class TelegramOutbox:
                 )
                 failed = True
             await asyncio.sleep(_TYPING_INTERVAL_S)
+
+
+def _incoming_file(message: Message) -> IncomingFile | None:
+    """The message's photo, image file or PDF file; ``None`` for anything else."""
+    if message.photo:
+        largest = message.photo[-1]  # Telegram lists the sizes smallest first
+        return IncomingFile("image", largest.file_id, largest.file_size)
+    document = message.document
+    if document is None:
+        return None
+    mime = (document.mime_type or "").lower()
+    if mime == _PDF_MIME:
+        return IncomingFile("pdf", document.file_id, document.file_size, document.file_name)
+    if mime.startswith("image/"):
+        return IncomingFile("image", document.file_id, document.file_size, document.file_name)
+    return None
+
+
+class _Fact(Protocol):
+    id: int
+    text: str
+    origin: str
+    created_at: datetime
+
+
+class _Facts(Protocol):
+    """The user's facts (``alfred.memory.facts.FactStore``)."""
+
+    async def list(self, user_name: str) -> Sequence[_Fact]: ...
+
+    async def forget(
+        self, user_name: str, ids: Sequence[int]
+    ) -> tuple[Sequence[_Fact], Sequence[int]]: ...
+
+
+def _fact_id(word: str) -> int | None:
+    word = word.removeprefix("#")
+    return int(word) if word.isdigit() else None
+
+
+class _AlbumCollector:
+    """Holds the parts of each album until ``wait_s`` passes without a new one."""
+
+    def __init__(self, wait_s: float, receive: Callable[[list[Message]], Awaitable[None]]) -> None:
+        self._wait_s = wait_s
+        self._receive = receive
+        self._parts: dict[str, list[Message]] = {}
+        self._timers: dict[str, asyncio.Task[None]] = {}
+
+    def add(self, message: Message) -> None:
+        group = message.media_group_id
+        assert group is not None
+        self._parts.setdefault(group, []).append(message)
+        timer = self._timers.get(group)
+        if timer is not None:
+            timer.cancel()
+        self._timers[group] = asyncio.create_task(self._later(group), name=f"album {group}")
+
+    async def _drain(self) -> None:
+        """Wait for every album collected so far to be received (for tests)."""
+        while self._timers:
+            await asyncio.gather(*self._timers.values(), return_exceptions=True)
+
+    async def _later(self, group: str) -> None:
+        await asyncio.sleep(self._wait_s)
+        # From here on the album is complete: a cancel can no longer reach it.
+        self._timers.pop(group, None)
+        parts = sorted(self._parts.pop(group, []), key=lambda m: m.message_id)
+        try:
+            await self._receive(parts)
+        except Exception:
+            log.exception("album %s could not be received", group)

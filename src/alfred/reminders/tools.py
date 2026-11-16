@@ -58,80 +58,6 @@ _REMINDER_CANCEL = "alfred_reminder_cancel"
 NAMES = frozenset({_REMIND_SET, _REMINDERS_LIST, _REMINDER_CANCEL})
 
 
-def _remind_set_tool(users: list[str]) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": _REMIND_SET,
-            "description": (
-                "Set a reminder: alfred messages the user about it at that time. Use for "
-                "requests with a time or date ('remind me to call mum at five', 'in 20 "
-                "minutes', 'on Friday'), and for requests to do something later or on a "
-                "schedule ('every weekday at 8, brief me on the weather'): the text says what "
-                "to do then, and it is not done now. If the user says 'task' or 'todo', or "
-                "gives no time, use the to-do list tools instead. Pass the time as the user "
-                "said it, as exactly one of in_minutes or at; never work out times yourself. "
-                "Confirm to the user the time this tool returns."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": (
-                            "What to remind them of, or what to do at that time, e.g. "
-                            "'call mum' or 'brief me on the weather'."
-                        ),
-                    },
-                    "in_minutes": {
-                        "type": "integer",
-                        "description": (
-                            "Minutes from now, for 'in 20 minutes' or 'in 2 hours' (120)."
-                        ),
-                    },
-                    "at": {
-                        "type": "string",
-                        "description": (
-                            "A local time: 'HH:MM' (24-hour; the next time it comes round), "
-                            "'YYYY-MM-DD HH:MM', or 'YYYY-MM-DD' (a date with no time). With "
-                            "repeat, only 'HH:MM'."
-                        ),
-                    },
-                    "repeat": {
-                        "type": "string",
-                        "enum": list(REPEATS),
-                        "description": (
-                            "For 'every day', 'every weekday', 'at weekends' or 'every Tuesday "
-                            "and Friday' (weekly, with days). Needs at as HH:MM."
-                        ),
-                    },
-                    "days": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": list(DAY_NAMES)},
-                        "description": "Weekdays, only with repeat weekly, e.g. ['tue', 'fri'].",
-                    },
-                    "quiet_ok": {
-                        "type": "boolean",
-                        "description": (
-                            "true when the user only wants to hear if there is something to "
-                            "tell ('tell me if…', 'only if…')."
-                        ),
-                    },
-                    "for": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": users},
-                        "description": (
-                            "The users to remind, by name, for 'remind ana ...' or 'remind "
-                            "us ...'. Leave out to remind only the user you are talking to."
-                        ),
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-    }
-
-
 _REMINDERS_LIST_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -161,19 +87,6 @@ _REMINDER_CANCEL_TOOL: dict[str, Any] = {
         },
     },
 }
-
-
-class _ListOnly(LocalToolset):
-    """``alfred_reminders_list`` alone, for reminder turns (design D4)."""
-
-    def __init__(self, tools: ReminderTools) -> None:
-        self._tools = tools
-        self.definitions = [_REMINDERS_LIST_TOOL]
-
-    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        if name != _REMINDERS_LIST:
-            return ToolOutcome(False, f"Error: unknown tool {name!r}.")
-        return await self._tools.call(name, raw_arguments, attempt)
 
 
 class ReminderTools(LocalToolset):
@@ -347,6 +260,93 @@ class ReminderTools(LocalToolset):
         return ToolOutcome(
             True, f"Reminder #{value} cancelled (was set for {when}): {row.text}{_who(row, user)}"
         )
+
+
+def _remind_set_tool(users: list[str]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": _REMIND_SET,
+            "description": (
+                "Set a reminder: alfred messages the user about it at that time. Use for "
+                "requests with a time or date ('remind me to call mum at five', 'in 20 "
+                "minutes', 'on Friday'), and for requests to do something later or on a "
+                "schedule ('every weekday at 8, brief me on the weather'): the text says what "
+                "to do then, and it is not done now. If the user says 'task' or 'todo', or "
+                "gives no time, use the to-do list tools instead. Pass the time as the user "
+                "said it, as exactly one of in_minutes or at; never work out times yourself. "
+                "Confirm to the user the time this tool returns."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "What to remind them of, or what to do at that time, e.g. "
+                            "'call mum' or 'brief me on the weather'."
+                        ),
+                    },
+                    "in_minutes": {
+                        "type": "integer",
+                        "description": (
+                            "Minutes from now, for 'in 20 minutes' or 'in 2 hours' (120)."
+                        ),
+                    },
+                    "at": {
+                        "type": "string",
+                        "description": (
+                            "A local time: 'HH:MM' (24-hour; the next time it comes round), "
+                            "'YYYY-MM-DD HH:MM', or 'YYYY-MM-DD' (a date with no time). With "
+                            "repeat, only 'HH:MM'."
+                        ),
+                    },
+                    "repeat": {
+                        "type": "string",
+                        "enum": list(REPEATS),
+                        "description": (
+                            "For 'every day', 'every weekday', 'at weekends' or 'every Tuesday "
+                            "and Friday' (weekly, with days). Needs at as HH:MM."
+                        ),
+                    },
+                    "days": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(DAY_NAMES)},
+                        "description": "Weekdays, only with repeat weekly, e.g. ['tue', 'fri'].",
+                    },
+                    "quiet_ok": {
+                        "type": "boolean",
+                        "description": (
+                            "true when the user only wants to hear if there is something to "
+                            "tell ('tell me if…', 'only if…')."
+                        ),
+                    },
+                    "for": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": users},
+                        "description": (
+                            "The users to remind, by name, for 'remind ana ...' or 'remind "
+                            "us ...'. Leave out to remind only the user you are talking to."
+                        ),
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+    }
+
+
+class _ListOnly(LocalToolset):
+    """``alfred_reminders_list`` alone, for reminder turns (design D4)."""
+
+    def __init__(self, tools: ReminderTools) -> None:
+        self._tools = tools
+        self.definitions = [_REMINDERS_LIST_TOOL]
+
+    async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
+        if name != _REMINDERS_LIST:
+            return ToolOutcome(False, f"Error: unknown tool {name!r}.")
+        return await self._tools.call(name, raw_arguments, attempt)
 
 
 def _quiet_ok(value: Any) -> bool:

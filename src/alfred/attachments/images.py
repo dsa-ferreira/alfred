@@ -35,6 +35,24 @@ _QUARTER_TURNS = {5, 6, 7, 8}
 _ORIENTATION = 0x0112
 
 
+def encode(image: Image.Image) -> ModelImage:
+    """PNG when the image has see-through pixels, JPEG otherwise."""
+    out = io.BytesIO()
+    if _transparent(image):
+        image.convert("RGBA").save(out, "PNG", optimize=True)
+        return ModelImage(out.getvalue(), "image/png")
+    image.convert("RGB").save(out, "JPEG", quality=_JPEG_QUALITY)
+    return ModelImage(out.getvalue(), "image/jpeg")
+
+
+async def inspect_image_async(data: bytes) -> _ImageInfo:
+    return await asyncio.to_thread(_inspect_image, data)
+
+
+async def for_model_async(data: bytes, max_px: int) -> ModelImage:
+    return await asyncio.to_thread(_for_model, data, max_px)
+
+
 @dataclass(frozen=True)
 class _ImageInfo:
     mime: str
@@ -75,16 +93,6 @@ def _for_model(data: bytes, max_px: int) -> ModelImage:
         raise Unreadable(f"image can't be decoded: {type(exc).__name__}") from None
 
 
-def encode(image: Image.Image) -> ModelImage:
-    """PNG when the image has see-through pixels, JPEG otherwise."""
-    out = io.BytesIO()
-    if _transparent(image):
-        image.convert("RGBA").save(out, "PNG", optimize=True)
-        return ModelImage(out.getvalue(), "image/png")
-    image.convert("RGB").save(out, "JPEG", quality=_JPEG_QUALITY)
-    return ModelImage(out.getvalue(), "image/jpeg")
-
-
 def _transparent(image: Image.Image) -> bool:
     if image.mode == "P" and "transparency" in image.info:
         image = image.convert("RGBA")
@@ -92,11 +100,3 @@ def _transparent(image: Image.Image) -> bool:
         return False
     low, _ = image.getchannel("A").getextrema()
     return low < 255
-
-
-async def inspect_image_async(data: bytes) -> _ImageInfo:
-    return await asyncio.to_thread(_inspect_image, data)
-
-
-async def for_model_async(data: bytes, max_px: int) -> ModelImage:
-    return await asyncio.to_thread(_for_model, data, max_px)

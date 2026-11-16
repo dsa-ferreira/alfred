@@ -26,30 +26,6 @@ log = logging.getLogger(__name__)
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class _NotifyRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    text: _NonEmpty
-    user: str | None = None
-
-
-class _AskRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    prompt: _NonEmpty
-    user: str | None = None
-
-
-class _AskAccepted(BaseModel):
-    id: int
-
-
-def _unauthorized() -> HTTPException:
-    return HTTPException(
-        status.HTTP_401_UNAUTHORIZED,
-        "missing or invalid bearer token",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-
 def create_app(
     services: tuple[Service, ...],
     users: Users,
@@ -119,3 +95,27 @@ def create_app(
         return _AskAccepted(id=item_id)
 
     return app
+
+
+class _NotifyRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    text: _NonEmpty
+    user: str | None = None
+
+
+class _AskRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    prompt: _NonEmpty
+    user: str | None = None
+
+
+class _AskAccepted(BaseModel):
+    id: int
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        "missing or invalid bearer token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

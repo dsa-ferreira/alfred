@@ -31,6 +31,10 @@ _TITLE_MAX_CHARS = 80
 _FALLBACK_TITLE_WORDS = 5
 
 
+_LABEL = re.compile(r"^[\s*_#>`-]*(title|summary)[\s*_`]*:(.*)$", re.IGNORECASE)
+_QUOTES = "\"'“”‘’`"
+
+
 @dataclass(frozen=True)
 class TranscriptEntry:
     kind: str
@@ -46,24 +50,6 @@ class TranscriptEntry:
 def render(entries: list[TranscriptEntry]) -> str:
     """The conversation as plain text, one entry per line (multi-line entries kept)."""
     return "\n".join(_line(e) for e in entries)
-
-
-def _line(e: TranscriptEntry) -> str:
-    match e.kind:
-        case "user":
-            return f"User: {with_handles(e.text, (handle(a) for a in e.attachments))}"
-        case "assistant" | "ask_reply" | "reminder_reply":
-            return f"alfred: {e.text}"
-        case "reminder":
-            return f"[reminder:#{e.reminder_id}] {e.text}"
-        case "notice":
-            return f"[notice:{e.source}] {e.text}"
-        case "ask_prompt":
-            return f"[ask:{e.source}] {e.text}"
-        case "recall":
-            return f"[recalled {recall_label(e.recalled_id, e.recalled_title)}]"
-        case _:
-            return e.text
 
 
 def recall_label(conversation_id: int | None, title: str | None) -> str:
@@ -88,10 +74,6 @@ def cut_middle(text: str, max_chars: int) -> str:
     return text[:head] + _omitted(len(text) - keep) + text[len(text) - tail :]
 
 
-def _omitted(n: int) -> str:
-    return f"\n[… {n} characters omitted …]\n"
-
-
 def summary_messages(transcript: str) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": _SUMMARY_PROMPT},
@@ -99,18 +81,8 @@ def summary_messages(transcript: str) -> list[dict[str, str]]:
     ]
 
 
-@dataclass(frozen=True)
-class _Summary:
-    title: str
-    summary: str
-
-
 class SummaryParseError(ValueError):
     pass
-
-
-_LABEL = re.compile(r"^[\s*_#>`-]*(title|summary)[\s*_`]*:(.*)$", re.IGNORECASE)
-_QUOTES = "\"'“”‘’`"
 
 
 def parse_summary(reply: str) -> _Summary:
@@ -150,13 +122,41 @@ def clean(value: str) -> str:
     return value
 
 
-def _local_date(moment: datetime, zone: ZoneInfo) -> str:
-    """``Tue 3 Nov 2026``, in alfred's timezone."""
-    day = moment.astimezone(zone)
-    return f"{day:%a} {day.day} {day:%b %Y}"
-
-
 def date_span(started: datetime, ended: datetime | None, zone: ZoneInfo) -> str:
     start = _local_date(started, zone)
     end = _local_date(ended, zone) if ended is not None else "now"
     return f"{start} to {end}"
+
+
+def _line(e: TranscriptEntry) -> str:
+    match e.kind:
+        case "user":
+            return f"User: {with_handles(e.text, (handle(a) for a in e.attachments))}"
+        case "assistant" | "ask_reply" | "reminder_reply":
+            return f"alfred: {e.text}"
+        case "reminder":
+            return f"[reminder:#{e.reminder_id}] {e.text}"
+        case "notice":
+            return f"[notice:{e.source}] {e.text}"
+        case "ask_prompt":
+            return f"[ask:{e.source}] {e.text}"
+        case "recall":
+            return f"[recalled {recall_label(e.recalled_id, e.recalled_title)}]"
+        case _:
+            return e.text
+
+
+def _omitted(n: int) -> str:
+    return f"\n[… {n} characters omitted …]\n"
+
+
+@dataclass(frozen=True)
+class _Summary:
+    title: str
+    summary: str
+
+
+def _local_date(moment: datetime, zone: ZoneInfo) -> str:
+    """``Tue 3 Nov 2026``, in alfred's timezone."""
+    day = moment.astimezone(zone)
+    return f"{day:%a} {day.day} {day:%b %Y}"

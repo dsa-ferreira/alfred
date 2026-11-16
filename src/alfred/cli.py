@@ -7,6 +7,11 @@ import sys
 from collections.abc import Sequence
 
 
+def run() -> None:
+    """Console-script entry point."""
+    sys.exit(_main())
+
+
 def _cmd_serve() -> int:
     from alfred.config import ConfigError, load_config
 
@@ -56,11 +61,6 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "serve":
         return _cmd_serve()
     return _cmd_migrate()
-
-
-def run() -> None:
-    """Console-script entry point."""
-    sys.exit(_main())
 
 
 if __name__ == "__main__":

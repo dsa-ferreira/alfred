@@ -43,19 +43,19 @@ class ToolCall:
     arguments: str
 
 
+def token_counts(usage: _Usage | None) -> str:
+    """The counts for a log line, or a note that the server sent none."""
+    if usage is None:
+        return "token counts not reported"
+    return f"{usage.prompt_tokens} prompt tokens, {usage.completion_tokens} completion tokens"
+
+
 @dataclass(frozen=True)
 class _Usage:
     """Token counts the model server reported for one request."""
 
     prompt_tokens: int
     completion_tokens: int
-
-
-def token_counts(usage: _Usage | None) -> str:
-    """The counts for a log line, or a note that the server sent none."""
-    if usage is None:
-        return "token counts not reported"
-    return f"{usage.prompt_tokens} prompt tokens, {usage.completion_tokens} completion tokens"
 
 
 @dataclass(frozen=True)

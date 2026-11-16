@@ -11,23 +11,6 @@ from alfred.tools.base import LOCAL_GROUP, OpenToolset
 _LARGEST_TOOLS = 5
 
 
-def _chars(value: Any) -> int:
-    return len(json.dumps(value, ensure_ascii=False))
-
-
-def _facts_size(facts: tuple[int, int, int] | None) -> str:
-    """``facts 14, 1240 chars``, ``facts 40 of 52, 2990 chars, 12 left out``,
-    ``facts none`` or ``facts off``, from ``(shown, total, chars)``."""
-    if facts is None:
-        return "facts off"
-    shown, total, chars = facts
-    if total == 0:
-        return "facts none"
-    if shown == total:
-        return f"facts {shown}, {chars} chars"
-    return f"facts {shown} of {total}, {chars} chars, {total - shown} left out"
-
-
 def context_sizes(
     messages: list[dict[str, Any]],
     opened: Sequence[OpenToolset],
@@ -78,6 +61,29 @@ def context_sizes(
     return line
 
 
+def largest_tools(definitions: list[dict[str, Any]], count: int = _LARGEST_TOOLS) -> str:
+    """The ``count`` largest tool definitions as ``name size``, largest first."""
+    sizes = sorted(((d["function"]["name"], _chars(d)) for d in definitions), key=lambda t: -t[1])
+    return ", ".join(f"{name} {size}" for name, size in sizes[:count]) or "none"
+
+
+def _chars(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False))
+
+
+def _facts_size(facts: tuple[int, int, int] | None) -> str:
+    """``facts 14, 1240 chars``, ``facts 40 of 52, 2990 chars, 12 left out``,
+    ``facts none`` or ``facts off``, from ``(shown, total, chars)``."""
+    if facts is None:
+        return "facts off"
+    shown, total, chars = facts
+    if total == 0:
+        return "facts none"
+    if shown == total:
+        return f"facts {shown}, {chars} chars"
+    return f"facts {shown} of {total}, {chars} chars, {total - shown} left out"
+
+
 def _without_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """The messages with each image part's data left out, and how many there were.
 
@@ -94,9 +100,3 @@ def _without_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
             message = {**message, "content": parts}
         kept.append(message)
     return kept, images
-
-
-def largest_tools(definitions: list[dict[str, Any]], count: int = _LARGEST_TOOLS) -> str:
-    """The ``count`` largest tool definitions as ``name size``, largest first."""
-    sizes = sorted(((d["function"]["name"], _chars(d)) for d in definitions), key=lambda t: -t[1])
-    return ", ".join(f"{name} {size}" for name, size in sizes[:count]) or "none"

@@ -75,18 +75,6 @@ class RequestRow:
         )
 
 
-@dataclass(frozen=True)
-class _Answer:
-    """What a tap did, and the request it was for (``None`` when there is none)."""
-
-    outcome: _Answered
-    request: RequestRow | None = None
-    # The label of the option chosen, when answered.
-    label: str | None = None
-    # Set when the tap found the request past its expiry and ended it.
-    expired: bool = False
-
-
 class InputRequests:
     def __init__(
         self, sessions: async_sessionmaker[AsyncSession], history: History, users: Users
@@ -327,6 +315,18 @@ class InputRequests:
                     reminder_id=item.reminder_id,
                     reminder_due_at=item.reminder_due_at,
                 )
+
+
+@dataclass(frozen=True)
+class _Answer:
+    """What a tap did, and the request it was for (``None`` when there is none)."""
+
+    outcome: _Answered
+    request: RequestRow | None = None
+    # The label of the option chosen, when answered.
+    label: str | None = None
+    # Set when the tap found the request past its expiry and ended it.
+    expired: bool = False
 
 
 def _by_id(request_id: int, user: str) -> tuple[Any, ...]:

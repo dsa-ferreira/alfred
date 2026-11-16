@@ -29,18 +29,6 @@ from alfred.reminders.store import Reminders
 log = logging.getLogger(__name__)
 
 
-async def _claim_once(
-    store: Reminders, notify: Callable[[], None], now: Callable[[], datetime]
-) -> list[int]:
-    """Queue the reminders due now and, if there were any, tell the queue
-    (``QueueActivity.notify``: it wakes the worker and the memory sweeper)."""
-    ids = await store.claim_due(now())
-    if ids:
-        log.info("%d due reminder(s) queued as item(s) %s", len(ids), ids)
-        notify()
-    return ids
-
-
 def seconds_to_next_check(now: datetime, interval_s: float) -> float:
     """Seconds from ``now`` to the next check: the next multiple of the interval within
     the minute, or the next whole minute."""
@@ -67,3 +55,15 @@ async def run_due_loop(
             log.exception("checking for due reminders failed; trying again later")
         # Recomputed each time, so an early or late wake-up never drifts.
         await sleep(seconds_to_next_check(now(), interval_s))
+
+
+async def _claim_once(
+    store: Reminders, notify: Callable[[], None], now: Callable[[], datetime]
+) -> list[int]:
+    """Queue the reminders due now and, if there were any, tell the queue
+    (``QueueActivity.notify``: it wakes the worker and the memory sweeper)."""
+    ids = await store.claim_due(now())
+    if ids:
+        log.info("%d due reminder(s) queued as item(s) %s", len(ids), ids)
+        notify()
+    return ids

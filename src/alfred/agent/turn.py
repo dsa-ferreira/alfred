@@ -91,16 +91,6 @@ log = logging.getLogger(__name__)
 _EXCERPT_CHARS = 500
 
 
-class _Model(Protocol):
-    async def complete(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        *,
-        model: str | None = None,
-    ) -> ModelReply: ...
-
-
 @dataclass(frozen=True)
 class Fallback:
     """The chosen brain failed and alfred went back to the startup brain (design D5)."""
@@ -149,14 +139,6 @@ class _Waiting:
         }
 
 
-def _call_json(call: ToolCall) -> dict[str, Any]:
-    return {"id": call.id, "name": call.name, "arguments": call.arguments}
-
-
-def _call_of(data: dict[str, Any]) -> ToolCall:
-    return ToolCall(data["id"], data["name"], data["arguments"])
-
-
 @dataclass(frozen=True)
 class TurnResult:
     reply: str
@@ -192,53 +174,6 @@ class TurnFailed(Exception):
         self.retryable = retryable
         self.side_effects_possible = side_effects_possible
         self.fallback = fallback
-
-
-class _BrainFailed(Exception):
-    """A non-retryable model error on a brain that can still fall back."""
-
-    def __init__(self, reason: str, side_effects: bool) -> None:
-        super().__init__(reason)
-        self.reason = reason
-        self.side_effects = side_effects
-
-
-@dataclass
-class _State:
-    brain: Brain
-    can_fall_back: bool
-    context: AttemptContext
-    side_effects: bool = False
-    seq: int = 0
-    messages: list[dict[str, Any]] = field(default_factory=list)
-    # Where the context ends and what it was built from, for parking (design D3).
-    context_len: int = 0
-    requests: int = 0
-    conversation_id: int | None = None
-    upto_entry_id: int | None = None
-    entry_ids: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True)
-class _Turn:
-    """What stays the same across a turn's attempts."""
-
-    input: TurnInput
-    opened: list[OpenToolset]
-    definitions: list[dict[str, Any]]
-    notes: list[str]
-    # The names in ``definitions``: what the system prompt describes.
-    offered: frozenset[str]
-    # The turn's attachment images, kept across attempts (change add-attachments).
-    images: ImageCache | None = None
-    # The user's facts, when they are in the context (change add-user-facts).
-    facts: FactsBlock | None = None
-
-
-class _Facts(Protocol):
-    """Where the turn reads its user's facts (``alfred.memory.facts.FactStore``)."""
-
-    async def list(self, user_name: str) -> Sequence[KnownFact]: ...
 
 
 class Agent:
@@ -590,6 +525,71 @@ class Agent:
                     result_excerpt=excerpt,
                 )
             )
+
+
+class _Model(Protocol):
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+    ) -> ModelReply: ...
+
+
+def _call_json(call: ToolCall) -> dict[str, Any]:
+    return {"id": call.id, "name": call.name, "arguments": call.arguments}
+
+
+def _call_of(data: dict[str, Any]) -> ToolCall:
+    return ToolCall(data["id"], data["name"], data["arguments"])
+
+
+class _BrainFailed(Exception):
+    """A non-retryable model error on a brain that can still fall back."""
+
+    def __init__(self, reason: str, side_effects: bool) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.side_effects = side_effects
+
+
+@dataclass
+class _State:
+    brain: Brain
+    can_fall_back: bool
+    context: AttemptContext
+    side_effects: bool = False
+    seq: int = 0
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    # Where the context ends and what it was built from, for parking (design D3).
+    context_len: int = 0
+    requests: int = 0
+    conversation_id: int | None = None
+    upto_entry_id: int | None = None
+    entry_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Turn:
+    """What stays the same across a turn's attempts."""
+
+    input: TurnInput
+    opened: list[OpenToolset]
+    definitions: list[dict[str, Any]]
+    notes: list[str]
+    # The names in ``definitions``: what the system prompt describes.
+    offered: frozenset[str]
+    # The turn's attachment images, kept across attempts (change add-attachments).
+    images: ImageCache | None = None
+    # The user's facts, when they are in the context (change add-user-facts).
+    facts: FactsBlock | None = None
+
+
+class _Facts(Protocol):
+    """Where the turn reads its user's facts (``alfred.memory.facts.FactStore``)."""
+
+    async def list(self, user_name: str) -> Sequence[KnownFact]: ...
 
 
 def _tool_message(call_id: str, outcome: ToolOutcome) -> dict[str, Any]:

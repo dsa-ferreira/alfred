@@ -19,19 +19,6 @@ from alfred.db.models import Attachment, Conversation, QueueItem, Reminder, Remi
 log = logging.getLogger(__name__)
 
 
-async def _stored_user_names(sessions: async_sessionmaker[AsyncSession]) -> set[str]:
-    """Every user name some row refers to."""
-    query = union(
-        select(Conversation.user_name),
-        select(QueueItem.user_name),
-        select(Attachment.user_name),
-        select(Reminder.created_by),
-        select(ReminderRecipient.user_name),
-    )
-    async with sessions() as session:
-        return set(await session.scalars(select(query.subquery().c[0])))
-
-
 async def warn_unknown_users(
     sessions: async_sessionmaker[AsyncSession], configured: Collection[str]
 ) -> list[str]:
@@ -45,3 +32,16 @@ async def warn_unknown_users(
             ", ".join(configured),
         )
     return unknown
+
+
+async def _stored_user_names(sessions: async_sessionmaker[AsyncSession]) -> set[str]:
+    """Every user name some row refers to."""
+    query = union(
+        select(Conversation.user_name),
+        select(QueueItem.user_name),
+        select(Attachment.user_name),
+        select(Reminder.created_by),
+        select(ReminderRecipient.user_name),
+    )
+    async with sessions() as session:
+        return set(await session.scalars(select(query.subquery().c[0])))

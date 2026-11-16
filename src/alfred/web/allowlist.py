@@ -39,11 +39,6 @@ def normalise(url: str) -> str | None:
     return urlunsplit((scheme, netloc, parts.path or "/", parts.query, ""))
 
 
-def _find_urls(text: str) -> list[str]:
-    """http(s) URLs written in ``text``, with trailing punctuation stripped."""
-    return [match.group().rstrip(_TRAILING) for match in _URL.finditer(text)]
-
-
 class Allowlist:
     """The normalised URLs one turn may fetch."""
 
@@ -52,18 +47,23 @@ class Allowlist:
         for text in texts:
             self._add_from_text(text)
 
+    def __len__(self) -> int:
+        return len(self._urls)
+
     def add(self, url: str) -> None:
         normal = normalise(url)
         if normal is not None:
             self._urls.add(normal)
 
-    def _add_from_text(self, text: str) -> None:
-        for url in _find_urls(text):
-            self.add(url)
-
     def allows(self, url: str) -> bool:
         normal = normalise(url)
         return normal is not None and normal in self._urls
 
-    def __len__(self) -> int:
-        return len(self._urls)
+    def _add_from_text(self, text: str) -> None:
+        for url in _find_urls(text):
+            self.add(url)
+
+
+def _find_urls(text: str) -> list[str]:
+    """http(s) URLs written in ``text``, with trailing punctuation stripped."""
+    return [match.group().rstrip(_TRAILING) for match in _URL.finditer(text)]

@@ -32,6 +32,44 @@ _STRIKE = re.compile(r"~~(?!\s)(.+?)(?<!\s)~~")
 _PLACEHOLDER = re.compile("\x00(\\d+)\x00")
 
 
+def split_markdown(text: str, limit: int = _SOURCE_LIMIT) -> list[str]:
+    """Split ``text`` into parts of at most ``limit`` characters (plus fence lines)."""
+    parts: list[str] = []
+    rest = text.strip("\n")
+    reopen = ""
+    while rest:
+        rest = reopen + rest
+        if len(rest) <= limit:
+            parts.append(rest)
+            break
+        cut, skip = _cut_point(rest, limit, after=len(reopen))
+        part, rest = rest[:cut], rest[cut + skip :]
+        fence = _open_fence(part)
+        if fence is not None:
+            part += "\n```"
+            reopen = fence + "\n"
+        else:
+            reopen = ""
+        parts.append(part)
+    return parts
+
+
+def split_for_telegram(text: str) -> list[tuple[str, str]]:
+    """``(markdown, html)`` pairs, each html at most Telegram's message length."""
+    result: list[tuple[str, str]] = []
+    pending = [(part, _SOURCE_LIMIT) for part in split_markdown(text)]
+    while pending:
+        part, limit = pending.pop(0)
+        rendered = _to_telegram_html(part)
+        if len(rendered) <= _TELEGRAM_LIMIT or limit < 200:
+            result.append((part, rendered))
+            continue
+        # Escaping made it too long: split this part again, smaller.
+        smaller = limit // 2
+        pending[:0] = [(p, smaller) for p in split_markdown(part, smaller)]
+    return result
+
+
 def _to_telegram_html(markdown: str) -> str:
     out: list[str] = []
     lines = markdown.split("\n")
@@ -84,28 +122,6 @@ def _inline(text: str) -> str:
     return _PLACEHOLDER.sub(lambda m: saved[int(m.group(1))], text)
 
 
-def split_markdown(text: str, limit: int = _SOURCE_LIMIT) -> list[str]:
-    """Split ``text`` into parts of at most ``limit`` characters (plus fence lines)."""
-    parts: list[str] = []
-    rest = text.strip("\n")
-    reopen = ""
-    while rest:
-        rest = reopen + rest
-        if len(rest) <= limit:
-            parts.append(rest)
-            break
-        cut, skip = _cut_point(rest, limit, after=len(reopen))
-        part, rest = rest[:cut], rest[cut + skip :]
-        fence = _open_fence(part)
-        if fence is not None:
-            part += "\n```"
-            reopen = fence + "\n"
-        else:
-            reopen = ""
-        parts.append(part)
-    return parts
-
-
 def _cut_point(text: str, limit: int, after: int) -> tuple[int, int]:
     """Where to cut, and how many separator characters to drop there.
 
@@ -127,19 +143,3 @@ def _open_fence(part: str) -> str | None:
         if _FENCE.match(line):
             opening = None if opening is not None else line.strip()
     return opening
-
-
-def split_for_telegram(text: str) -> list[tuple[str, str]]:
-    """``(markdown, html)`` pairs, each html at most Telegram's message length."""
-    result: list[tuple[str, str]] = []
-    pending = [(part, _SOURCE_LIMIT) for part in split_markdown(text)]
-    while pending:
-        part, limit = pending.pop(0)
-        rendered = _to_telegram_html(part)
-        if len(rendered) <= _TELEGRAM_LIMIT or limit < 200:
-            result.append((part, rendered))
-            continue
-        # Escaping made it too long: split this part again, smaller.
-        smaller = limit // 2
-        pending[:0] = [(p, smaller) for p in split_markdown(part, smaller)]
-    return result

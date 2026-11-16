@@ -68,64 +68,6 @@ _DATE_TOOL: dict[str, Any] = {
 _WHOLE = re.compile(r"[+-]?\d+")
 
 
-class _DateError(ValueError):
-    """The date calculation can't be done; the message is written for the model."""
-
-
-def _long_date(day: date) -> str:
-    """``Friday 25 December 2026``, like the reminders' times."""
-    return f"{day:%A} {day.day} {day:%B %Y}"
-
-
-def _plural(n: int, unit: str) -> str:
-    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
-
-
-def _day_count(days: int) -> str:
-    """``46 days (6 weeks and 4 days)``; under a week, just the days."""
-    text = _plural(days, "day")
-    weeks, rest = divmod(days, 7)
-    if weeks == 0:
-        return text
-    if rest == 0:
-        return f"{text} ({_plural(weeks, 'week')})"
-    return f"{text} ({_plural(weeks, 'week')} and {_plural(rest, 'day')})"
-
-
-def _whole(value: Any, name: str) -> int:
-    if isinstance(value, bool):
-        raise _DateError(f"{name} must be a whole number.")
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str) and _WHOLE.fullmatch(value.strip()):
-        return int(value.strip())
-    raise _DateError(f"{name} must be a whole number.")
-
-
-def _add_months(day: date, months: int) -> date:
-    """``day`` ``months`` on; a day the target month lacks becomes its last day."""
-    index = day.year * 12 + day.month - 1 + months
-    year, month = divmod(index, 12)
-    if not 1 <= year <= 9999:
-        raise _DateError("the result is outside the years 1 to 9999.")
-    last = calendar.monthrange(year, month + 1)[1]
-    return date(year, month + 1, min(day.day, last))
-
-
-def _offset_text(offset: timedelta) -> str:
-    """``9 hours ahead of the user``, ``5 hours 30 minutes behind the user``."""
-    minutes = int(offset.total_seconds()) // 60
-    if minutes == 0:
-        return "the same time as the user"
-    hours, rest = divmod(abs(minutes), 60)
-    parts = [_plural(hours, "hour")] if hours else []
-    if rest:
-        parts.append(_plural(rest, "minute"))
-    return f"{' '.join(parts)} {'ahead of' if minutes > 0 else 'behind'} the user"
-
-
 class DateTools(LocalToolset):
     """``alfred_date``, on every turn, in the user's timezone."""
 
@@ -220,3 +162,61 @@ class DateTools(LocalToolset):
             f"It is {local:%H:%M} on {_long_date(local.date())} in {zone_name.strip()}, "
             f"{_offset_text(offset)}."
         )
+
+
+class _DateError(ValueError):
+    """The date calculation can't be done; the message is written for the model."""
+
+
+def _long_date(day: date) -> str:
+    """``Friday 25 December 2026``, like the reminders' times."""
+    return f"{day:%A} {day.day} {day:%B %Y}"
+
+
+def _plural(n: int, unit: str) -> str:
+    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
+
+
+def _day_count(days: int) -> str:
+    """``46 days (6 weeks and 4 days)``; under a week, just the days."""
+    text = _plural(days, "day")
+    weeks, rest = divmod(days, 7)
+    if weeks == 0:
+        return text
+    if rest == 0:
+        return f"{text} ({_plural(weeks, 'week')})"
+    return f"{text} ({_plural(weeks, 'week')} and {_plural(rest, 'day')})"
+
+
+def _whole(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise _DateError(f"{name} must be a whole number.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and _WHOLE.fullmatch(value.strip()):
+        return int(value.strip())
+    raise _DateError(f"{name} must be a whole number.")
+
+
+def _add_months(day: date, months: int) -> date:
+    """``day`` ``months`` on; a day the target month lacks becomes its last day."""
+    index = day.year * 12 + day.month - 1 + months
+    year, month = divmod(index, 12)
+    if not 1 <= year <= 9999:
+        raise _DateError("the result is outside the years 1 to 9999.")
+    last = calendar.monthrange(year, month + 1)[1]
+    return date(year, month + 1, min(day.day, last))
+
+
+def _offset_text(offset: timedelta) -> str:
+    """``9 hours ahead of the user``, ``5 hours 30 minutes behind the user``."""
+    minutes = int(offset.total_seconds()) // 60
+    if minutes == 0:
+        return "the same time as the user"
+    hours, rest = divmod(abs(minutes), 60)
+    parts = [_plural(hours, "hour")] if hours else []
+    if rest:
+        parts.append(_plural(rest, "minute"))
+    return f"{' '.join(parts)} {'ahead of' if minutes > 0 else 'behind'} the user"

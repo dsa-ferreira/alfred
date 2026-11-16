@@ -37,50 +37,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _server_instructions(item: ServerInstructions) -> str:
-    """One server's instructions, framed so the model maps tool names to its prefix."""
-    return (
-        f'Instructions from the tool server "{item.server}". Its tools are offered to you '
-        f"as {item.server}_<tool>; where this text names a tool, use that prefixed name."
-        f"\n\n{item.text}"
-    )
-
-
-def _unavailable_note(servers: Sequence[str]) -> str:
-    names = ", ".join(servers)
-    return (
-        f"These tool servers are unavailable right now, so their tools are missing: {names}. "
-        "If the request needs them, tell the user."
-    )
-
-
-def _prompt_notes(tools: TurnTools) -> list[PromptNote]:
-    """Each server's instructions (logged by size), then the unavailable servers."""
-    notes = [PromptNote(_server_instructions(i), i.server, len(i.text)) for i in tools.instructions]
-    if tools.unavailable:
-        notes.append(PromptNote(_unavailable_note(tools.unavailable)))
-    return notes
-
-
-def _keep_allowed(tools: TurnTools, allow: AllowList, user: str) -> None:
-    """Drop instructions of servers with no allowed tool; warn about unknown exact names.
-
-    The tools themselves are left for the gate (``alfred.tools.base.Gated``).
-    """
-    allowed = {route.server.name for name, route in tools.routes.items() if allow.matches(name)}
-    tools.instructions = [i for i in tools.instructions if i.server in allowed]
-    listed = {route.server.name for route in tools.routes.values()}
-    for server in sorted(listed):
-        for entry in allow.exact(f"{server}_"):
-            if entry not in tools.routes:
-                log.warning(
-                    "user %s's tools list %r, which MCP server %s doesn't offer",
-                    user,
-                    entry,
-                    server,
-                )
-
-
 class McpTools:
     def __init__(
         self,
@@ -145,6 +101,50 @@ class McpTools:
             call_timeout_s=self._call_timeout_s,
             max_chars=self._max_chars,
         )
+
+
+def _server_instructions(item: ServerInstructions) -> str:
+    """One server's instructions, framed so the model maps tool names to its prefix."""
+    return (
+        f'Instructions from the tool server "{item.server}". Its tools are offered to you '
+        f"as {item.server}_<tool>; where this text names a tool, use that prefixed name."
+        f"\n\n{item.text}"
+    )
+
+
+def _unavailable_note(servers: Sequence[str]) -> str:
+    names = ", ".join(servers)
+    return (
+        f"These tool servers are unavailable right now, so their tools are missing: {names}. "
+        "If the request needs them, tell the user."
+    )
+
+
+def _prompt_notes(tools: TurnTools) -> list[PromptNote]:
+    """Each server's instructions (logged by size), then the unavailable servers."""
+    notes = [PromptNote(_server_instructions(i), i.server, len(i.text)) for i in tools.instructions]
+    if tools.unavailable:
+        notes.append(PromptNote(_unavailable_note(tools.unavailable)))
+    return notes
+
+
+def _keep_allowed(tools: TurnTools, allow: AllowList, user: str) -> None:
+    """Drop instructions of servers with no allowed tool; warn about unknown exact names.
+
+    The tools themselves are left for the gate (``alfred.tools.base.Gated``).
+    """
+    allowed = {route.server.name for name, route in tools.routes.items() if allow.matches(name)}
+    tools.instructions = [i for i in tools.instructions if i.server in allowed]
+    listed = {route.server.name for route in tools.routes.values()}
+    for server in sorted(listed):
+        for entry in allow.exact(f"{server}_"):
+            if entry not in tools.routes:
+                log.warning(
+                    "user %s's tools list %r, which MCP server %s doesn't offer",
+                    user,
+                    entry,
+                    server,
+                )
 
 
 class _OpenMcpTools:

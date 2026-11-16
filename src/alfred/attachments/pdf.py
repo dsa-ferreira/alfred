@@ -30,6 +30,14 @@ _lock = threading.Lock()
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdfium")
 
 
+async def read_pdf_async(data: bytes) -> _PdfText:
+    return await _run(_read_pdf, data)
+
+
+async def render_page_async(data: bytes, page_number: int, max_px: int) -> ModelImage:
+    return await _run(_render_page, data, page_number, max_px)
+
+
 @dataclass(frozen=True)
 class _PdfText:
     """Each page's text, page 1 first."""
@@ -99,11 +107,3 @@ def _render_page(data: bytes, page_number: int, max_px: int) -> ModelImage:
 
 async def _run[T](function: Callable[..., T], *args: object) -> T:
     return await asyncio.get_running_loop().run_in_executor(_executor, function, *args)
-
-
-async def read_pdf_async(data: bytes) -> _PdfText:
-    return await _run(_read_pdf, data)
-
-
-async def render_page_async(data: bytes, page_number: int, max_px: int) -> ModelImage:
-    return await _run(_render_page, data, page_number, max_px)

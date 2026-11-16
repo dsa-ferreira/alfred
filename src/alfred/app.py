@@ -77,14 +77,6 @@ _CANCELLED_ON_STOP = frozenset(
 )
 
 
-class _Server(uvicorn.Server):
-    """uvicorn without its own signal handlers; ``serve`` owns shutdown."""
-
-    @contextlib.contextmanager
-    def capture_signals(self) -> Generator[None]:
-        yield
-
-
 def configure_logging(level: str) -> None:
     logging.basicConfig(
         level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True
@@ -93,45 +85,6 @@ def configure_logging(level: str) -> None:
     # botocore's DEBUG lines show signed request headers.
     for name in ("httpx", "httpx2", "aiogram.event", "botocore", "aiobotocore"):
         logging.getLogger(name).setLevel(max(logging.WARNING, logging.getLogger().level))
-
-
-def _build_toolsets(
-    config: Config,
-    connect: Connector,
-    *,
-    brains: Brains,
-    web: WebTools | None = None,
-    memory: Searcher | None = None,
-    facts: FactTools | None = None,
-    reminders: ReminderTools | None = None,
-    attachments: AttachmentTools | None = None,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
-) -> list[Toolset]:
-    """What the model may call, in the order it is offered; alfred's own tools first.
-
-    Each toolset decides on which turns it is offered; the turn user's
-    allow-list then gates every one of them (``alfred.agent.turn``). A name
-    offered by two toolsets goes to the first.
-    """
-    toolsets: list[Toolset] = []
-    if web is not None:
-        toolsets.append(web)
-    toolsets.append(ConversationTools())
-    if memory is not None:
-        toolsets.append(MemoryTools(memory))
-    if facts is not None:
-        toolsets.append(facts)
-    # Only with [attachments] (change add-attachments, design D8).
-    if attachments is not None:
-        toolsets.append(attachments)
-    if reminders is not None:
-        toolsets.append(reminders)
-    toolsets.append(BrainTools(brains))
-    # Arithmetic and dates, on every turn (change add-utility-tools, design D7).
-    toolsets.append(CalculatorTools())
-    toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
-    toolsets.append(McpTools.from_config(config, connect))
-    return toolsets
 
 
 async def serve(config: Config) -> None:
@@ -359,3 +312,50 @@ async def serve(config: Config) -> None:
         cause = cause.replace(config.telegram_bot_token.get_secret_value(), "<bot token>")
         raise RuntimeError(f"{failed.get_name()} stopped unexpectedly{cause}") from exc
     log.info("alfred stopped")
+
+
+class _Server(uvicorn.Server):
+    """uvicorn without its own signal handlers; ``serve`` owns shutdown."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Generator[None]:
+        yield
+
+
+def _build_toolsets(
+    config: Config,
+    connect: Connector,
+    *,
+    brains: Brains,
+    web: WebTools | None = None,
+    memory: Searcher | None = None,
+    facts: FactTools | None = None,
+    reminders: ReminderTools | None = None,
+    attachments: AttachmentTools | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> list[Toolset]:
+    """What the model may call, in the order it is offered; alfred's own tools first.
+
+    Each toolset decides on which turns it is offered; the turn user's
+    allow-list then gates every one of them (``alfred.agent.turn``). A name
+    offered by two toolsets goes to the first.
+    """
+    toolsets: list[Toolset] = []
+    if web is not None:
+        toolsets.append(web)
+    toolsets.append(ConversationTools())
+    if memory is not None:
+        toolsets.append(MemoryTools(memory))
+    if facts is not None:
+        toolsets.append(facts)
+    # Only with [attachments] (change add-attachments, design D8).
+    if attachments is not None:
+        toolsets.append(attachments)
+    if reminders is not None:
+        toolsets.append(reminders)
+    toolsets.append(BrainTools(brains))
+    # Arithmetic and dates, on every turn (change add-utility-tools, design D7).
+    toolsets.append(CalculatorTools())
+    toolsets.append(DateTools(ZoneInfo(config.ai.timezone), now=now))
+    toolsets.append(McpTools.from_config(config, connect))
+    return toolsets

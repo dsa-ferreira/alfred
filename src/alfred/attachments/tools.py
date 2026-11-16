@@ -181,6 +181,61 @@ class AttachmentTools(LocalToolset):
             return await self._view(user, attachment_id, arguments.get("page"))
         return await self.read(user, attachment_id, arguments.get("pages"))
 
+    # --- read --------------------------------------------------------------------
+
+    async def read(self, user: str, attachment_id: int, pages_value: Any = None) -> ToolOutcome:
+        ref = await self.find(user, attachment_id)
+        if ref is None:
+            return _no_such(attachment_id)
+        if ref.kind != "pdf":
+            hint = " Look at it with alfred_view_attachment." if self._brains.current.vision else ""
+            return ToolOutcome(False, f"Error: attachment #{ref.id} is an image, not a PDF.{hint}")
+        count = ref.page_count or 0
+        span = _parse_pages(pages_value, count)
+        if span is None:
+            return ToolOutcome(False, 'Error: pages must be one page ("4") or a range ("3-5").')
+        first, last = span
+        if first > count:
+            return ToolOutcome(False, _page_count(ref))
+        last = min(last, count)
+        async with self._sessions() as session:
+            rows = await session.execute(
+                select(AttachmentPage.page, AttachmentPage.text)
+                .where(
+                    AttachmentPage.attachment_id == ref.id,
+                    AttachmentPage.page.between(first, last),
+                )
+                .order_by(AttachmentPage.page)
+            )
+            texts = {page: text_ for page, text_ in rows}
+        return ToolOutcome(True, self._render(ref, first, last, texts))
+
+    # --- access ------------------------------------------------------------------
+
+    async def find(self, user: str, attachment_id: int) -> AttachmentRef | None:
+        """The attachment, if ``user``'s current conversation may reach it (design D8)."""
+        async with self._sessions() as session:
+            current = await current_id(session, user, lock=False)
+            recalled = select(Entry.recalled_conversation_id).where(
+                Entry.conversation_id == current, Entry.kind == "recall"
+            )
+            row = (
+                await session.execute(
+                    ref_query()
+                    .join(Entry, Entry.id == Attachment.entry_id)
+                    .where(
+                        Attachment.id == attachment_id,
+                        Attachment.user_name == user,
+                        or_(
+                            Entry.conversation_id == current,
+                            Entry.conversation_id.in_(recalled.scalar_subquery()),
+                        ),
+                    )
+                )
+            ).first()
+            await session.commit()  # current_id may have created the conversation
+        return AttachmentRef(*row) if row is not None else None
+
     # --- view --------------------------------------------------------------------
 
     async def _view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
@@ -212,35 +267,6 @@ class AttachmentTools(LocalToolset):
         shown = f"page {page} of {ref.page_count}" if ref.kind == "pdf" else "the image"
         return ToolOutcome(True, f"{handle(ref)}: {shown}, attached.", (image,))
 
-    # --- read --------------------------------------------------------------------
-
-    async def read(self, user: str, attachment_id: int, pages_value: Any = None) -> ToolOutcome:
-        ref = await self.find(user, attachment_id)
-        if ref is None:
-            return _no_such(attachment_id)
-        if ref.kind != "pdf":
-            hint = " Look at it with alfred_view_attachment." if self._brains.current.vision else ""
-            return ToolOutcome(False, f"Error: attachment #{ref.id} is an image, not a PDF.{hint}")
-        count = ref.page_count or 0
-        span = _parse_pages(pages_value, count)
-        if span is None:
-            return ToolOutcome(False, 'Error: pages must be one page ("4") or a range ("3-5").')
-        first, last = span
-        if first > count:
-            return ToolOutcome(False, _page_count(ref))
-        last = min(last, count)
-        async with self._sessions() as session:
-            rows = await session.execute(
-                select(AttachmentPage.page, AttachmentPage.text)
-                .where(
-                    AttachmentPage.attachment_id == ref.id,
-                    AttachmentPage.page.between(first, last),
-                )
-                .order_by(AttachmentPage.page)
-            )
-            texts = {page: text_ for page, text_ in rows}
-        return ToolOutcome(True, self._render(ref, first, last, texts))
-
     def _render(self, ref: AttachmentRef, first: int, last: int, texts: dict[int, str]) -> str:
         """``--- page N ---`` blocks up to ``read_chars``, then where to continue."""
         limit = self._config.read_chars
@@ -267,32 +293,6 @@ class AttachmentTools(LocalToolset):
                 blocks.append(f"(continue from page {page})")
             break
         return "\n".join([handle(ref), *blocks])
-
-    # --- access ------------------------------------------------------------------
-
-    async def find(self, user: str, attachment_id: int) -> AttachmentRef | None:
-        """The attachment, if ``user``'s current conversation may reach it (design D8)."""
-        async with self._sessions() as session:
-            current = await current_id(session, user, lock=False)
-            recalled = select(Entry.recalled_conversation_id).where(
-                Entry.conversation_id == current, Entry.kind == "recall"
-            )
-            row = (
-                await session.execute(
-                    ref_query()
-                    .join(Entry, Entry.id == Attachment.entry_id)
-                    .where(
-                        Attachment.id == attachment_id,
-                        Attachment.user_name == user,
-                        or_(
-                            Entry.conversation_id == current,
-                            Entry.conversation_id.in_(recalled.scalar_subquery()),
-                        ),
-                    )
-                )
-            ).first()
-            await session.commit()  # current_id may have created the conversation
-        return AttachmentRef(*row) if row is not None else None
 
 
 class _OpenAttachmentTools(LocalToolset):
