@@ -58,14 +58,14 @@ class IdleCloser:
         )
         while True:
             try:
-                wait = await self.close_once()
+                wait = await self._close_once()
             except Exception:
                 # A database blip: nothing changed, look again soon.
                 log.exception("closing idle conversations failed; trying again later")
                 wait = _SKIPPED_RETRY_S
             await self._sleep(wait)
 
-    async def close_once(self) -> float:
+    async def _close_once(self) -> float:
         """Close what is due. Returns the seconds to sleep until the next pass."""
         now = self._now()
         cutoff = now - self._after

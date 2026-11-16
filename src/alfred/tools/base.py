@@ -134,12 +134,12 @@ class ModelImage:
     data: bytes
     mime: str  # image/jpeg or image/png
 
-    def data_url(self) -> str:
+    def _data_url(self) -> str:
         return f"data:{self.mime};base64,{base64.b64encode(self.data).decode('ascii')}"
 
     def part(self) -> dict[str, Any]:
         """The chat-completions content part that carries it."""
-        return {"type": "image_url", "image_url": {"url": self.data_url()}}
+        return {"type": "image_url", "image_url": {"url": self._data_url()}}
 
 
 @dataclass(frozen=True)

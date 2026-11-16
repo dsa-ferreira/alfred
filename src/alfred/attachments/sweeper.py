@@ -48,14 +48,14 @@ class OrphanSweeper:
         log.info("attachment sweeper started")
         while True:
             try:
-                await self.sweep_once()
+                await self._sweep_once()
             except StoreError as exc:  # already logged by the store, without secrets
                 log.warning("orphan sweep failed; next round in %gs: %s", self._interval_s, exc)
             except Exception:
                 log.exception("orphan sweep failed; next round in %gs", self._interval_s)
             await asyncio.sleep(self._interval_s)
 
-    async def sweep_once(self) -> int:
+    async def _sweep_once(self) -> int:
         """Delete the old objects no row refers to. Returns how many."""
         cutoff = self._now() - self._min_age
         old = [o.key async for o in self._store.list(PREFIX) if o.last_modified < cutoff]

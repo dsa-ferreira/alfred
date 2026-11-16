@@ -77,7 +77,7 @@ class House:
 
     async def say(self, user: str, message: str) -> None:
         await self.queue.enqueue_user(user, message)
-        while await self.worker.step():
+        while await self.worker._step():
             pass
 
 
@@ -149,7 +149,7 @@ async def test_two_users(sessions: async_sessionmaker[AsyncSession]) -> None:
     assert "buy milk (set by diogo; for ana)" in context(model, 9)[-1]
     house.clock.now = START + timedelta(hours=2)  # 18:00 Lisbon
     assert len(await house.reminders.claim_due(house.clock.now)) == 1
-    while await house.worker.step():
+    while await house.worker._step():
         pass
     assert context(model, 10)[-1].endswith("; set by diogo] buy milk")
     assert house.outbox.sent[-1] == (

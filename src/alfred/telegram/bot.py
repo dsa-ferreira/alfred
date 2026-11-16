@@ -183,7 +183,7 @@ class _AlbumCollector:
             timer.cancel()
         self._timers[group] = asyncio.create_task(self._later(group), name=f"album {group}")
 
-    async def drain(self) -> None:
+    async def _drain(self) -> None:
         """Wait for every album collected so far to be received (for tests)."""
         while self._timers:
             await asyncio.gather(*self._timers.values(), return_exceptions=True)

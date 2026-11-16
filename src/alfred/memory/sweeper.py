@@ -218,7 +218,7 @@ class Sweeper:
                 events.append(self._queue.activity.changed)
             await _wait_any(events, wait)
 
-    async def sweep_once(self) -> float | None:
+    async def _sweep_once(self) -> float | None:
         """Do the first due piece of work, or say how many seconds until one is due.
 
         Returns ``None`` after doing one. Doesn't wait for a quiet queue.

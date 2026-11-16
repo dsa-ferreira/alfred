@@ -65,11 +65,11 @@ async def test_closes_at_the_due_time_and_not_before(
     idle = closer(sessions, clock, nudges)
     cid = await wrote(sessions, "diogo", clock.now - timedelta(hours=5))
     # Due in an hour: sleep exactly that long, close nothing.
-    assert await idle.close_once() == pytest.approx(3600)
+    assert await idle._close_once() == pytest.approx(3600)
     assert await ended(sessions, cid) is None
 
     clock.now += timedelta(hours=1, seconds=1)
-    assert await idle.close_once() == SIX_HOURS.total_seconds()  # nothing current is due
+    assert await idle._close_once() == SIX_HOURS.total_seconds()  # nothing current is due
     assert await ended(sessions, cid) == "idle"
     assert nudges == [1]
     assert await History(sessions).current_conversation_id("diogo") != cid
@@ -81,7 +81,7 @@ async def test_a_notice_does_not_delay_it(sessions: async_sessionmaker[AsyncSess
     # Last wrote at 23:10, a notice at 02:00, now 05:11.
     cid = await wrote(sessions, "diogo", clock.now - timedelta(hours=6, minutes=1))
     await wrote(sessions, "diogo", clock.now - timedelta(hours=3, minutes=11), kind="notice")
-    await idle.close_once()
+    await idle._close_once()
     assert await ended(sessions, cid) == "idle"
 
 
@@ -89,7 +89,7 @@ async def test_only_notices_never_close(sessions: async_sessionmaker[AsyncSessio
     clock = Clock()
     idle = closer(sessions, clock)
     cid = await wrote(sessions, "diogo", clock.now - timedelta(days=4), kind="notice")
-    assert await idle.close_once() == SIX_HOURS.total_seconds()
+    assert await idle._close_once() == SIX_HOURS.total_seconds()
     assert await ended(sessions, cid) is None
 
 
@@ -99,14 +99,14 @@ async def test_a_skipped_candidate_is_retried(sessions: async_sessionmaker[Async
     ana = await wrote(sessions, "ana", clock.now - timedelta(hours=7))
     diogo = await wrote(sessions, "diogo", clock.now - timedelta(hours=7))
     item = await add_queue_item(sessions, user="ana")  # her message waits in the queue
-    assert await idle.close_once() == 60  # look again soon
+    assert await idle._close_once() == 60  # look again soon
     assert await ended(sessions, ana) is None
     assert await ended(sessions, diogo) == "idle"  # other users aren't held up
 
     async with sessions.begin() as session:
         await session.execute(update(QueueItem).where(QueueItem.id == item).values(status="done"))
     clock.now += timedelta(seconds=60)
-    await idle.close_once()
+    await idle._close_once()
     assert await ended(sessions, ana) == "idle"
 
 
@@ -116,13 +116,13 @@ async def test_sleep_never_passes_a_new_due_time(
     clock = Clock()
     idle = closer(sessions, clock)
     # Nothing current: sleep the whole idle time...
-    wait = await idle.close_once()
+    wait = await idle._close_once()
     assert wait == SIX_HOURS.total_seconds()
     # ...and a first message during the sleep is due no sooner than its end.
     clock.now += timedelta(seconds=1)
     await wrote(sessions, "diogo", clock.now)
     clock.now += timedelta(seconds=wait - 1)
-    assert await idle.close_once() == pytest.approx(1)
+    assert await idle._close_once() == pytest.approx(1)
 
 
 async def test_run_forever_sleeps_as_told(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -160,9 +160,9 @@ async def test_memory_command_is_not_a_user_message(
     [last] = await History(sessions).last_user_messages()
     assert (last.conversation_id, last.at) == (cid, earlier)
     # Still due an hour after the earlier message's five, not six hours from now.
-    assert await closer(sessions, clock).close_once() == pytest.approx(3600)
+    assert await closer(sessions, clock)._close_once() == pytest.approx(3600)
     clock.now += timedelta(hours=1, seconds=1)
-    await closer(sessions, clock).close_once()
+    await closer(sessions, clock)._close_once()
     assert await ended(sessions, cid) == "idle"
 
 
@@ -227,8 +227,8 @@ async def test_a_waiting_turn_holds_idle_close_until_it_expires(
         item, "ana", tool="t", arguments={}, question=Question("?", (Option("Yes", True),)),
         state={}, turn={}, expires_at=timedelta(minutes=-1),
     )  # fmt: skip
-    assert await idle.close_once() == 60
+    assert await idle._close_once() == 60
     assert await ended(sessions, cid) is None
     await requests.expire_due()  # the expiry loop ends it
-    await idle.close_once()
+    await idle._close_once()
     assert await ended(sessions, cid) == "idle"

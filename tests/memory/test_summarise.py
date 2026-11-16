@@ -225,7 +225,7 @@ async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSess
     reset = await history.reset("diogo")
     assert reset.archived_id is not None
     m = memory(sessions, FakeModel(), FakeEmbedder())
-    entries = await m.transcript_entries(reset.archived_id)
+    entries = await m._transcript_entries(reset.archived_id)
     assert render(entries) == (
         f"[reminder:#{reminder_id}] call mum\nalfred: Your call to mum, sir.\nUser: done"
     )

@@ -107,7 +107,7 @@ class Setup:
         self.nudges += 1
 
     async def drain(self) -> None:
-        while await self.worker.step():
+        while await self.worker._step():
             pass
 
     async def items(self) -> list[QueueItem]:
@@ -209,7 +209,7 @@ async def test_ai_server_down(sessions: async_sessionmaker[AsyncSession]) -> Non
     s = Setup(sessions, FakeModel([down, down, down, text("Here you go.")]))
     await s.queue.enqueue_user("diogo", "what's downloading?")
 
-    assert await s.worker.step()  # attempt 1 fails
+    assert await s.worker._step()  # attempt 1 fails
     (item,) = await s.items()
     assert item.status == "pending" and item.attempts == 1
     first_retry_at = item.next_attempt_at
@@ -237,11 +237,11 @@ async def test_head_of_line_waits_for_retry(sessions: async_sessionmaker[AsyncSe
         users=Users((DIOGO,)),
     )
     await s.queue.enqueue_user("diogo", "one")
-    await s.worker.step()  # fails, retry in 0.3 s
+    await s.worker._step()  # fails, retry in 0.3 s
     await s.queue.enqueue_user("diogo", "two")
     # The next step waits for the head's retry time instead of taking "two".
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(s.worker.step(), 0.1)
+        await asyncio.wait_for(s.worker._step(), 0.1)
     assert len(s.model.requests) == 1
     await s.drain()
     assert s.outbox.sent == ["first", "second"]
@@ -415,7 +415,7 @@ async def test_next_message_does_not_wait_for_the_summary(
     assert s.memory is not None
     await s.queue.enqueue_user("diogo", "we're done")
     await s.queue.enqueue_user("diogo", "new topic: what's for dinner?")
-    await s.worker.step()
+    await s.worker._step()
     # #41's summary is being made (and never finishes) while the next item runs.
     summarising = asyncio.create_task(s.memory.summarise(41))
     try:
@@ -509,7 +509,7 @@ async def test_typing_while_owner_turn_runs(sessions: async_sessionmaker[AsyncSe
     s.agent = Agent_()  # type: ignore[assignment]
     worker = typing_worker(s, events)
     await s.queue.enqueue_user("diogo", "add Dune")
-    while await worker.step():
+    while await worker._step():
         pass
     assert events == ["typing on", "turn", "typing off", "send Added Dune."]
 
@@ -519,7 +519,7 @@ async def test_no_typing_for_ask(sessions: async_sessionmaker[AsyncSession]) -> 
     s = Setup(sessions, FakeModel([text("disk alert")]))
     worker = typing_worker(s, events)
     await s.queue.enqueue_ask("disk-check", "93%", "diogo")
-    while await worker.step():
+    while await worker._step():
         pass
     assert events == ["send [disk-check] disk alert"]
 
@@ -530,11 +530,11 @@ async def test_typing_stops_during_retry_wait(sessions: async_sessionmaker[Async
     # Long enough that the second step is certainly the backoff wait.
     worker = typing_worker(s, events, QueueConfig(retry_initial_s=0.2, retry_max_s=1))
     await s.queue.enqueue_user("diogo", "what's downloading?")
-    assert await worker.step()  # attempt 1 fails and is scheduled for a retry
+    assert await worker._step()  # attempt 1 fails and is scheduled for a retry
     assert events == ["typing on", "typing off"]
-    assert await worker.step()  # the backoff wait: no turn runs, no typing
+    assert await worker._step()  # the backoff wait: no turn runs, no typing
     assert events == ["typing on", "typing off"]
-    while await worker.step():
+    while await worker._step():
         pass
     assert events == ["typing on", "typing off", "typing on", "typing off", "send Here you go."]
 
@@ -546,7 +546,7 @@ async def test_typing_stops_before_failure_notice(
     s = Setup(sessions, FakeModel([ModelFailed("model server answered HTTP 400")]))
     worker = typing_worker(s, events)
     await s.queue.enqueue_user("diogo", "status?")
-    while await worker.step():
+    while await worker._step():
         pass
     assert events == ["typing on", "typing off", f"send {notices.failed('sir')}"]
 
@@ -787,7 +787,7 @@ async def test_no_typing_for_reminders(sessions: async_sessionmaker[AsyncSession
     worker = typing_worker(s, events)
     worker._reminders = s.reminders
     await due_reminder(s)
-    while await worker.step():
+    while await worker._step():
         pass
     assert events == ["send Call mum, sir."]
 
@@ -828,7 +828,7 @@ async def test_retried_turn_links_attachments_once(
     pdf = NewAttachment("pdf", "application/pdf", 2000, "attachments/b", "x.pdf", pages=["p1"])
     item_id = await s.queue.enqueue_user("diogo", "what are these?", 5, [photo, pdf])
 
-    assert await s.worker.step()  # attempt 1: the owner entry is recorded, the AI is down
+    assert await s.worker._step()  # attempt 1: the owner entry is recorded, the AI is down
     await s.drain()
 
     async with sessions() as session:
@@ -967,7 +967,7 @@ async def test_typing_in_the_users_own_chat(sessions: async_sessionmaker[AsyncSe
         typing=RecordingTyping(events),
     )
     await s.queue.enqueue_user("ana", "hi")
-    while await worker.step():
+    while await worker._step():
         pass
     assert events == ["typing on for ana", "typing off", "send hello"]
 
@@ -1279,10 +1279,10 @@ async def test_answered_turn_goes_first(sessions: async_sessionmaker[AsyncSessio
         users=(DIOGO, CONFIRMING_ANA),
     )
     await s.queue.enqueue_user("ana", "add Dune")
-    await s.worker.step()  # ana's turn parks
+    await s.worker._step()  # ana's turn parks
     await s.queue.enqueue_user("diogo", "hello")
     await due_reminder(s)  # queued behind diogo's message
-    await s.worker.step()  # diogo's turn runs; ana taps meanwhile
+    await s.worker._step()  # diogo's turn runs; ana taps meanwhile
     await s.tap("ana")
     await s.drain()
     assert s.outbox.sent_to == [

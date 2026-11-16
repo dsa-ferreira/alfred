@@ -67,10 +67,10 @@ async def statuses(
 async def test_park_makes_the_item_wait(sessions: async_sessionmaker[AsyncSession]) -> None:
     item, request = await parked(sessions)
     assert await statuses(sessions, item, request) == ("waiting", "open")
-    (row,) = await store(sessions).open_for("ana")
+    (row,) = await store(sessions)._open_for("ana")
     assert row.question == QUESTION and row.tool == "mcparr_add_media"
     await store(sessions).set_message(request, "ana", 991)
-    assert (await store(sessions).open_for("ana"))[0].telegram_message_id == 991
+    assert (await store(sessions)._open_for("ana"))[0].telegram_message_id == 991
 
 
 async def test_answer_wakes_the_item(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -167,7 +167,7 @@ async def test_running_and_finish(sessions: async_sessionmaker[AsyncSession]) ->
 async def test_set_message_names_the_user(sessions: async_sessionmaker[AsyncSession]) -> None:
     _, request = await parked(sessions)
     await store(sessions).set_message(request, "diogo", 5)
-    assert (await store(sessions).open_for("ana"))[0].telegram_message_id is None
+    assert (await store(sessions)._open_for("ana"))[0].telegram_message_id is None
 
 
 async def test_one_live_request_per_item_after_an_answer(

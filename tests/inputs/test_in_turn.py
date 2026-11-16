@@ -96,7 +96,7 @@ class Alfred:
         )
 
     async def drain(self) -> None:
-        while await self.worker.step():
+        while await self.worker._step():
             pass
 
     def questions(self) -> list[SendMessage]:

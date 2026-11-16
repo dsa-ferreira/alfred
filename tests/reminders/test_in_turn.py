@@ -259,7 +259,7 @@ async def test_morning_briefing_uses_the_tools(
     )
     await store.set("dentist", monday.replace(hour=17), "diogo", ["diogo"])
     await store.claim_due(monday)
-    while await worker.step():
+    while await worker._step():
         pass
 
     reply = "Good morning, sir. Sunny, 18 degrees; Dune is half done; the dentist at 17:00."

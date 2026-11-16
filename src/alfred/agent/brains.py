@@ -50,7 +50,7 @@ class Brains:
         return [b.name for b in self.brains]
 
     @property
-    def others(self) -> list[str]:
+    def _others(self) -> list[str]:
         """The brains other than the current one, in configured order."""
         return [b.name for b in self.brains if b != self.current]
 
@@ -59,7 +59,7 @@ class Brains:
         return self.current.tag
 
     @property
-    def is_default(self) -> bool:
+    def _is_default(self) -> bool:
         return self.current == self.default
 
     def set(self, name: str) -> Literal["switched", "already", "unknown"]:
@@ -71,9 +71,9 @@ class Brains:
         self.current = brain
         return "switched"
 
-    def fall_back(self) -> bool:
+    def _fall_back(self) -> bool:
         """Make the startup brain current; false when it already was."""
-        if self.is_default:
+        if self._is_default:
             return False
         self.current = self.default
         return True

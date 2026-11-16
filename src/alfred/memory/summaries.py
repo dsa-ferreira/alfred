@@ -158,7 +158,7 @@ class Summaries:
     ) -> tuple[str, str] | _Preempted | None:
         """One model request. ``None`` (and a retry scheduled) on failure;
         ``PREEMPTED`` (and nothing recorded) when ``preempt`` won."""
-        entries = await self.transcript_entries(conversation_id)
+        entries = await self._transcript_entries(conversation_id)
         if not entries:
             return _EMPTY_TITLE, _EMPTY_SUMMARY
         transcript = cut_middle(render(entries), self._memory.summary_input_max_chars)
@@ -190,7 +190,7 @@ class Summaries:
                 await asyncio.gather(request, return_exceptions=True)
         return parsed.title, parsed.summary
 
-    async def transcript_entries(self, conversation_id: int) -> list[TranscriptEntry]:
+    async def _transcript_entries(self, conversation_id: int) -> list[TranscriptEntry]:
         async with self._sessions() as session:
             return await load_transcript(session, conversation_id)
 

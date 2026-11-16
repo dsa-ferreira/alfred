@@ -242,7 +242,7 @@ class InputRequests:
         where = (InputRequest.status == "open", InputRequest.expires_at <= func.now())
         return await self._end(where, "expired")
 
-    async def open_for(self, user: str) -> list[RequestRow]:
+    async def _open_for(self, user: str) -> list[RequestRow]:
         async with self._sessions() as session:
             rows = await session.scalars(
                 _ordered(

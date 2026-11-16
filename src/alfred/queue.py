@@ -286,10 +286,10 @@ class Worker:
     async def run_forever(self) -> None:
         log.info("queue worker started")
         while True:
-            if not await self.step():
+            if not await self._step():
                 await self._queue.signal.wait()
 
-    async def step(self) -> bool:
+    async def _step(self) -> bool:
         """Process or wait for the head item. Returns False when the queue is empty."""
         self._queue.signal.clear()  # before reading, so a new item is never missed
         item = await self._queue.head()

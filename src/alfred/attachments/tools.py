@@ -178,12 +178,12 @@ class AttachmentTools(LocalToolset):
             return ToolOutcome(False, "Error: id must be an attachment number, such as 7.")
         user = attempt.turn.user.name
         if name == VIEW_ATTACHMENT:
-            return await self.view(user, attachment_id, arguments.get("page"))
+            return await self._view(user, attachment_id, arguments.get("page"))
         return await self.read(user, attachment_id, arguments.get("pages"))
 
     # --- view --------------------------------------------------------------------
 
-    async def view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
+    async def _view(self, user: str, attachment_id: int, page_value: Any = None) -> ToolOutcome:
         if not self._brains.current.vision:
             return ToolOutcome(
                 False,

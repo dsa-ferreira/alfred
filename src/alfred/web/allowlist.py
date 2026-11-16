@@ -50,14 +50,14 @@ class Allowlist:
     def __init__(self, texts: Iterable[str] = ()) -> None:
         self._urls: set[str] = set()
         for text in texts:
-            self.add_from_text(text)
+            self._add_from_text(text)
 
     def add(self, url: str) -> None:
         normal = normalise(url)
         if normal is not None:
             self._urls.add(normal)
 
-    def add_from_text(self, text: str) -> None:
+    def _add_from_text(self, text: str) -> None:
         for url in _find_urls(text):
             self.add(url)
 

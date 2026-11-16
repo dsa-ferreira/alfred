@@ -122,7 +122,7 @@ class McpTools:
         _keep_allowed(tools, allow, turn.user.name)
         return _OpenMcpTools(self, tools)
 
-    async def _call(self, tools: TurnTools, name: str, raw_arguments: Any) -> ToolOutcome:
+    async def call_in(self, tools: TurnTools, name: str, raw_arguments: Any) -> ToolOutcome:
         return await call_tool(
             tools,
             name,
@@ -132,7 +132,7 @@ class McpTools:
             max_chars=self._max_chars,
         )
 
-    async def _resume(
+    async def resume_in(
         self, tools: TurnTools, name: str, raw_arguments: Any, state: dict[str, Any], answer: Any
     ) -> ToolOutcome:
         return await resume_tool(
@@ -167,7 +167,7 @@ class _OpenMcpTools:
         return name in self.tools.routes or name in self.tools.excluded
 
     async def call(self, name: str, raw_arguments: Any, attempt: AttemptContext) -> ToolOutcome:
-        return await self._owner._call(self.tools, name, raw_arguments)
+        return await self._owner.call_in(self.tools, name, raw_arguments)
 
     async def resume(
         self,
@@ -177,4 +177,4 @@ class _OpenMcpTools:
         answer: Any,
         attempt: AttemptContext,
     ) -> ToolOutcome:
-        return await self._owner._resume(self.tools, name, raw_arguments, state, answer)
+        return await self._owner.resume_in(self.tools, name, raw_arguments, state, answer)

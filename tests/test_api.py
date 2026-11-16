@@ -134,7 +134,7 @@ async def test_notify_while_ai_busy(env: Env) -> None:
         env.queue, BusyAgent(), env.history, env.outbox, make_config().queue, users=USERS
     )
     await env.queue.enqueue_user("diogo", "long job")
-    task = asyncio.create_task(worker.step())
+    task = asyncio.create_task(worker._step())
     await asyncio.wait_for(started.wait(), 5)
 
     response = await asyncio.wait_for(
@@ -188,7 +188,7 @@ async def run_ask(env: Env, answer: str) -> None:
     agent = make_agent(cfg, FakeModel([text(answer)]), env.history, env.sessions, in_process({}))
     worker = Worker(env.queue, agent, env.history, env.outbox, cfg.queue, users=USERS)
     await env.client.post("/ask", json={"prompt": "usage report"}, headers=DISK)
-    while await worker.step():
+    while await worker._step():
         pass
 
 

@@ -246,7 +246,7 @@ async def test_three_photos_in_one_album(sessions: async_sessionmaker[AsyncSessi
     for update in (parts[2], parts[0], parts[1]):  # delivered out of order
         await dispatcher.feed_update(bot, update)
     assert await queued(sessions) == []  # still collecting
-    await dispatcher["albums"].drain()
+    await dispatcher["albums"]._drain()
 
     (item,) = await queued(sessions)
     assert (item.text, item.telegram_message_id) == (
@@ -270,7 +270,7 @@ async def test_album_with_a_refused_part(sessions: async_sessionmaker[AsyncSessi
         await dispatcher.feed_update(
             bot, message_update(**photo(file_id, media_group_id="g2", **caption))
         )
-    await dispatcher["albums"].drain()
+    await dispatcher["albums"]._drain()
     (item,) = await queued(sessions)
     assert item.text == "compare"
     assert [a.width for a in await attachments_of(sessions)] == [100, 300]
@@ -285,7 +285,7 @@ async def test_separate_albums_are_separate_messages(
     dispatcher = files_dispatcher(sessions, files, FakeStore())
     await dispatcher.feed_update(bot, message_update(**photo("a", media_group_id="g3")))
     await dispatcher.feed_update(bot, message_update(**photo("b", media_group_id="g4")))
-    await dispatcher["albums"].drain()
+    await dispatcher["albums"]._drain()
     assert len(await queued(sessions)) == 2
 
 
@@ -390,7 +390,7 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
 
     await dispatcher.feed_update(bot, message_update(text="status?"))
     await dispatcher.feed_update(bot, message_update(text="and now?"))
-    while await worker.step():
+    while await worker._step():
         pass
 
     first, second = session.sent()
@@ -508,7 +508,7 @@ async def test_second_user_photo_and_album_are_hers(
         await dispatcher.feed_update(
             bot, message_update(user_id=ANA_ID, media_group_id="g", **photo(f"p{i}"))
         )
-    await dispatcher["albums"].drain()
+    await dispatcher["albums"]._drain()
     items = await queued(sessions)
     assert [i.user_name for i in items] == ["ana", "ana"]
     assert {a.user_name for a in await attachments_of(sessions)} == {"ana"}
@@ -977,7 +977,7 @@ async def test_memory_command_leaves_the_turn_waiting(
     )
     await dispatcher.feed_update(bot, message_update(text="/memory"))
     assert await item_status(sessions, item) == "waiting"
-    assert len(await requests.open_for("diogo")) == 1 and edits(session) == []
+    assert len(await requests._open_for("diogo")) == 1 and edits(session) == []
 
 
 async def test_another_users_message_leaves_the_turn_waiting(

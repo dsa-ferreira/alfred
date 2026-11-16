@@ -92,7 +92,7 @@ async def test_current_conversation_left_alone(
 ) -> None:
     await History(sessions).append("diogo", "user", "still talking")
     mem = memory(sessions, FakeModel(), FakeEmbedder())
-    assert await mem.sweep_once() == 900  # nothing pending: wait the longest delay
+    assert await mem._sweep_once() == 900  # nothing pending: wait the longest delay
 
 
 async def test_retries_with_backoff(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -101,22 +101,22 @@ async def test_retries_with_backoff(sessions: async_sessionmaker[AsyncSession]) 
     model = FakeModel([ModelUnreachable("asleep"), ModelUnreachable("asleep"), text(REPLY)])
     mem = memory(sessions, model, FakeEmbedder(default=[1.0]), clock=clock)
 
-    assert await mem.sweep_once() is None  # attempt 1 fails
-    assert await mem.sweep_once() == 30  # not due for 30 s; no model request
+    assert await mem._sweep_once() is None  # attempt 1 fails
+    assert await mem._sweep_once() == 30  # not due for 30 s; no model request
     assert len(model.requests) == 1
 
     clock.now += timedelta(seconds=30)
-    assert await mem.sweep_once() is None  # attempt 2 fails
-    assert await mem.sweep_once() == 60  # the delay doubled
+    assert await mem._sweep_once() is None  # attempt 2 fails
+    assert await mem._sweep_once() == 60  # the delay doubled
     stored = await row(sessions, cid)
     assert stored.summary_attempts == 2
 
     clock.now += timedelta(seconds=60)
-    assert await mem.sweep_once() is None  # attempt 3 succeeds
+    assert await mem._sweep_once() is None  # attempt 3 succeeds
     stored = await row(sessions, cid)
     assert stored.title == "Chicken thighs recipe"
     assert stored.summary_attempts == 0 and stored.summary_next_at is None
-    assert await mem.sweep_once() == 900
+    assert await mem._sweep_once() == 900
 
 
 async def test_one_failing_conversation_does_not_hold_up_others(
@@ -127,8 +127,8 @@ async def test_one_failing_conversation_does_not_hold_up_others(
     clock = Clock()
     model = FakeModel([ModelUnreachable("x"), text(REPLY)])
     mem = memory(sessions, model, FakeEmbedder(default=[1.0]), clock=clock)
-    await mem.sweep_once()
-    await mem.sweep_once()
+    await mem._sweep_once()
+    await mem._sweep_once()
     assert (await row(sessions, stuck)).summary is None
     assert (await row(sessions, other)).summary is not None
 
@@ -151,7 +151,7 @@ async def test_reembeds_rows_from_another_model(
     model = FakeModel()
     embedder = FakeEmbedder([[0.0, 1.0, 0.0]], model="new-model")
     mem = memory(sessions, model, embedder)
-    assert await mem.sweep_once() is None
+    assert await mem._sweep_once() is None
     assert model.requests == []  # the summary is kept
     assert embedder.documents == ["Chicken thighs recipe. Lemon and garlic."]
     stored = await row(sessions, cid)
@@ -555,7 +555,7 @@ async def test_changing_the_embedding_model_reembeds_facts(
     await old_facts.embed(fid)
     embedder = FakeEmbedder(default=[0.0, 1.0, 0.0], model="new-model")
     mem, _ = fact_sweeper(sessions, embedder)
-    assert await mem.sweep_once() is None
+    assert await mem._sweep_once() is None
     assert embedder.documents == ["runs a homelab"]
     stored = await _fact_row(sessions, fid)
     assert stored.embedding_model == "new-model" and len(stored.embedding) == 3
