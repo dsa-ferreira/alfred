@@ -182,16 +182,16 @@ class Agent:
         history: History,
         sessions: async_sessionmaker[AsyncSession],
         *,
+        brains: Brains,
+        attachments: InlineAttachments | None,
+        facts: _Facts,
         toolsets: Sequence[Toolset] = (),
-        brains: Brains | None = None,
-        attachments: InlineAttachments | None = None,
-        facts: _Facts | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
         self._facts = facts
         self._attachments = attachments
-        self._brains = brains or Brains.from_config(config.ai)
+        self._brains = brains
         self._model = model
         self._history = history
         self._sessions = sessions
@@ -252,7 +252,7 @@ class Agent:
     async def _facts_block(self, turn: TurnInput) -> FactsBlock | None:
         """The user's facts for every attempt of this turn, read once."""
         memory = self._config.memory
-        if not memory.facts_in_context or self._facts is None:
+        if not memory.facts_in_context:
             return None
         name = turn.user.name
         block = facts_block(name, await self._facts.list(name), memory.facts_context_max_chars)

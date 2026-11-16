@@ -14,6 +14,7 @@ from alfred import notices
 from alfred.agent.messages import _STAMP
 from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
+from alfred.brains import Brains
 from alfred.history import History
 from alfred.memory.search import RECALL_CONVERSATION, SEARCH_CONVERSATIONS
 from alfred.model import ModelFailed, ModelUnreachable
@@ -55,6 +56,7 @@ from tests.agent.turn_helpers import (
     two_brains,
     web_tools,
 )
+from tests.fakes import NoFacts
 from tests.helpers import (
     DIOGO,
     FakeEmbedder,
@@ -479,7 +481,16 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
     recorder = Recorder()
     brains = two_brains("bonsai")
     model = FakeModel([BAD_MODEL, text("gemma's answer")])
-    a = Agent(make_config(), model, History(sessions), sessions, toolsets=[recorder], brains=brains)
+    a = Agent(
+        make_config(),
+        model,
+        History(sessions),
+        sessions,
+        toolsets=[recorder],
+        brains=brains,
+        attachments=None,
+        facts=NoFacts(),
+    )
     await a.run(await owner_turn(sessions, "hi"))
     assert recorder.opened == 1  # the MCP servers are listed once per turn
     assert len(recorder.attempts) == 2
@@ -553,7 +564,16 @@ async def test_tool_result_with_images(
     sessions: async_sessionmaker[AsyncSession], count: int, note: str
 ) -> None:
     model = FakeModel([calls(("snap", "{}")), text("A red square, sir.")])
-    a = Agent(make_config(), model, History(sessions), sessions, toolsets=[Camera(count)])
+    a = Agent(
+        make_config(),
+        model,
+        History(sessions),
+        sessions,
+        toolsets=[Camera(count)],
+        brains=Brains.from_config(make_config().ai),
+        attachments=None,
+        facts=NoFacts(),
+    )
     await a.run(await owner_turn(sessions, "look"))
     result = model.requests[1][0][-1]
     assert result["role"] == "tool" and result["tool_call_id"] == "c0"
@@ -570,7 +590,16 @@ async def test_tool_result_without_images_stays_text(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     model = FakeModel([calls(("snap", "{}")), text("Nothing there.")])
-    a = Agent(make_config(), model, History(sessions), sessions, toolsets=[Camera(0)])
+    a = Agent(
+        make_config(),
+        model,
+        History(sessions),
+        sessions,
+        toolsets=[Camera(0)],
+        brains=Brains.from_config(make_config().ai),
+        attachments=None,
+        facts=NoFacts(),
+    )
     await a.run(await owner_turn(sessions, "look"))
     assert model.requests[1][0][-1]["content"] == "Here it is."
     assert (await tool_rows(sessions))[0].result_excerpt == "Here it is."
@@ -780,6 +809,9 @@ async def test_images_in_the_tail_are_replaced_by_a_note(
             )._toolsets,
         ],
         now=lambda: NOW,
+        brains=Brains.from_config(config.ai),
+        attachments=None,
+        facts=NoFacts(),
     )
     turn = await owner_turn(sessions, "look, then add", CONFIRMS_ADD)
     result = await alfred.run(turn)

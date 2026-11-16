@@ -19,6 +19,7 @@ from alfred.history import History
 from alfred.tools.base import TurnInput
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
+from tests.fakes import NoFacts
 from tests.helpers import (
     DIOGO,
     FakeModel,
@@ -62,6 +63,7 @@ def make(
         sessions,
         brains=the_brains or brains(vision),
         attachments=InlineAttachments(store, config),
+        facts=NoFacts(),
     )
 
 

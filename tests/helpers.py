@@ -44,6 +44,7 @@ from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
 from alfred.tools.base import AllowList
 from alfred.web.tools import WebTools
+from tests.fakes import NoFacts
 
 OWNER = 42  # diogo's Telegram user ID
 ANA_ID = 222
@@ -231,7 +232,7 @@ def make_agent(
         toolsets=toolsets,
         brains=brains,
         attachments=inline,
-        facts=facts.facts if facts is not None else None,
+        facts=facts.facts if facts is not None else NoFacts(),
         now=now,
     )
 

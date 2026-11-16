@@ -26,6 +26,7 @@ from alfred.memory.search import ConversationSearch
 from alfred.tools.base import AllowList, AttemptContext, ToolOutcome, TurnInput
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
+from tests.fakes import NoFacts
 from tests.helpers import (
     ANA,
     DIOGO,
@@ -309,7 +310,16 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     toolset = AttachmentTools(store, sessions, the_brains, SETTINGS)  # read_chars 8000
     model = FakeModel([calls((READ_DOCUMENT, '{"id": 1}')), text("Read.")])
     item = (await owner_with_files(sessions, "read it", []))[0]
-    agent = Agent(config, model, History(sessions), sessions, toolsets=[toolset], brains=the_brains)
+    agent = Agent(
+        config,
+        model,
+        History(sessions),
+        sessions,
+        toolsets=[toolset],
+        brains=the_brains,
+        attachments=None,
+        facts=NoFacts(),
+    )
     await agent.run(TurnInput("chat", "read it", item, user=DIOGO))
     result = model.requests[1][0][-1]["content"]
     assert len(result) > 6000
@@ -331,7 +341,14 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     model = FakeModel([BAD_MODEL, calls((VIEW_ATTACHMENT, '{"id": 1}')), text("Sorry, sir.")])
     item = (await owner_with_files(sessions, "what's on it?", []))[0]
     agent = Agent(
-        make_config(), model, History(sessions), sessions, toolsets=[toolset], brains=the_brains
+        make_config(),
+        model,
+        History(sessions),
+        sessions,
+        toolsets=[toolset],
+        brains=the_brains,
+        attachments=None,
+        facts=NoFacts(),
     )
     await agent.run(TurnInput("chat", "what's on it?", item, user=DIOGO))
     assert model.models[:2] == ["bonsai-2:27b", GEMMA]
