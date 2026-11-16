@@ -27,7 +27,7 @@ commit(s). No task changes what a test asserts.
 - [x] 3.4 Give `attachments.intake` an `Enqueue` protocol in place of `Queue`; verify `attachments` no longer imports `queue`
 - [x] 3.5 Split `queue.py` into `queue.py` (`Queue`, `QueueActivity`) and `worker.py` (`Worker` and its protocols), moving tests to match; verify `api` and `telegram` don't import `worker` or `agent`
 - [x] 3.6 Add check 5 of design D2 (no two packages import each other) to `scripts/check_layout.py`; verify it passes now and fails on a deliberate back-import, which is then removed
-- [ ] 3.7 Update `AGENTS.md` for the moved names (the "Adding a tool group" section mentions `turn.py`); verify every module path it names exists
+- [x] 3.7 Update `AGENTS.md` for the moved names (the "Adding a tool group" section mentions `turn.py`); verify every module path it names exists
 
 ## 4. Required dependencies
 

@@ -58,9 +58,9 @@ Everything the model can call is a toolset. The contract lives in
   query, never in the prompt.
 - Add the tool's name to `alfred/tools/catalog.py`, so exact
   `alfred_*` allow-list entries naming it pass the startup check.
-- Add it to `build_toolsets` in `app.py`. The list order is the order the
+- Add it to `_build_toolsets` in `app.py`. The list order is the order the
   tools are offered in; alfred's own tools come before `McpTools`.
-- Exceptions from `call` become error results for the model (`safe_call`).
+- Exceptions from `call` become error results for the model (`_safe_call`).
 - Test the toolset alone, and a whole turn with `tests/agent/turn_helpers.py`.
 
 ## Code layout
