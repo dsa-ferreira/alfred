@@ -10,13 +10,13 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
 from alfred.db.models import Conversation, Fact
+from alfred.facts.extraction_job import FactExtractionJob
+from alfred.facts.store import FactStore
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
-from alfred.memory.extract import FactExtractionJob
-from alfred.memory.facts import FactStore
-from alfred.memory.summaries import Summaries
-from alfred.memory.sweeper import Sweeper
+from alfred.turns.background import Sweeper
 from tests.fakes import QuietQueue
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
@@ -325,7 +325,7 @@ async def test_outcome_logged_without_fact_text(
     extract, facts = job(sessions, FakeModel([reply]))
     await facts.add("diogo", "diogo lives in Lisbon.", "learned")
     cid = await archived(sessions, "diogo", *chat("I moved to Porto with my two cats"))
-    with caplog.at_level(logging.INFO, logger="alfred.memory.extract"):
+    with caplog.at_level(logging.INFO, logger="alfred.facts.extraction_job"):
         await run_due(extract)
     lines = [
         r.getMessage() for r in caplog.records if f"conversation {cid} facts:" in r.getMessage()
@@ -403,7 +403,7 @@ async def test_wrong_or_missing_quote_is_an_addition(
         "teach", "teach is adding low-calorie, high-protein recipes to the cookbook.", "learned"
     )
     cid = await archived(sessions, "teach", *chat("I live in Lisbon"))
-    with caplog.at_level(logging.INFO, logger="alfred.memory.extract"):
+    with caplog.at_level(logging.INFO, logger="alfred.facts.extraction_job"):
         await run_due(extract)
     assert [f.id for f in await facts.list("teach")][0] == recipes
     assert len(await facts.list("teach")) == 2

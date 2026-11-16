@@ -19,11 +19,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from alfred.facts.extraction_prompt import DuplicateParseError, duplicate_messages, parse_duplicates
+from alfred.facts.store import FactStore
 from alfred.llm.chat import ModelError, token_counts
 from alfred.llm.protocols import ChatModel
 from alfred.llm.streaming import complete_unless_preempted
-from alfred.memory.extraction import DuplicateParseError, duplicate_messages, parse_duplicates
-from alfred.memory.facts import FactStore
 
 log = logging.getLogger(__name__)
 

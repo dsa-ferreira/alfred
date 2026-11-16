@@ -1,7 +1,7 @@
 """Facts about each user.
 
 A fact is ``told`` (the user asked alfred to remember it) or ``learned``
-(extracted from an archived conversation, ``alfred.memory.extract``). Every
+(extracted from an archived conversation, ``alfred.facts.extraction_job``). Every
 read and write names the user, and only active facts (``removed_at IS NULL``)
 are ever read by id, so another user's fact and a removed one both read as
 not found.
@@ -16,7 +16,7 @@ Each fact is embedded (:meth:`FactStore.embed`, by ``alfred_remember``
 inline and by the sweeper's ``FactEmbeddingJob``) and then checked for
 duplicates: embedding distance only picks the user's closest other facts
 (:meth:`FactStore.duplicate_candidates`), and the model decides which say
-the same thing (``alfred.memory.duplicates``). Measured distances can't
+the same thing (``alfred.facts.duplicate_job``). Measured distances can't
 tell a duplicate from a related or contradicting fact, so distance alone
 never removes one.
 """

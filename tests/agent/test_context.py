@@ -194,7 +194,7 @@ async def _facts_turn(
     count: int,
     budget: int = 3000,
 ) -> tuple[TurnInput, FakeModel]:
-    from alfred.memory.facts import FactStore, FactTools
+    from alfred.facts.store import FactStore, FactTools
     from tests.helpers import FakeEmbedder
 
     cfg = make_config(memory={"facts_in_context": True})

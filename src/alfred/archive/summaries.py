@@ -1,6 +1,6 @@
 """Summaries of archived conversations: title, summary and embedding.
 
-``summarise`` runs in the background memory sweeper (``alfred.memory.sweeper``)
+``summarise`` runs in the background memory sweeper (``alfred.turns.background``)
 only; ending a conversation just wakes it. It never raises: on any failure it
 schedules a retry on the conversation row and the sweeper picks it up later.
 

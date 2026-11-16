@@ -32,9 +32,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.summaries import Summaries
 from alfred.config import Config
 from alfred.db.models import Conversation
-from alfred.memory.summaries import Summaries
 
 if TYPE_CHECKING:
     from alfred.queue import QueueActivity

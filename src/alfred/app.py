@@ -29,6 +29,8 @@ from aiogram import Bot, Dispatcher
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent
 from alfred.api import create_app
+from alfred.archive.search import ConversationSearch, MemoryTools, Searcher
+from alfred.archive.summaries import Summaries
 from alfred.attachments.intake import Intake
 from alfred.attachments.store import S3Store
 from alfred.attachments.sweeper import OrphanSweeper
@@ -40,6 +42,9 @@ from alfred.conversations.idle import IdleCloser
 from alfred.conversations.store import History
 from alfred.conversations.tools import ConversationTools
 from alfred.db.engine import make_engine, make_session_factory
+from alfred.facts.duplicate_job import FactDuplicateJob
+from alfred.facts.extraction_job import FactExtractionJob
+from alfred.facts.store import FactEmbeddingJob, FactStore, FactTools
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message, run_expiry_loop
 from alfred.inputs.parking import Parking
@@ -49,12 +54,6 @@ from alfred.llm.chat import ModelClient
 from alfred.llm.embedding import EmbeddingClient
 from alfred.mcp.client import Connector, http_connector
 from alfred.mcp.toolset import McpTools
-from alfred.memory.duplicates import FactDuplicateJob
-from alfred.memory.extract import FactExtractionJob
-from alfred.memory.facts import FactEmbeddingJob, FactStore, FactTools
-from alfred.memory.search import ConversationSearch, MemoryTools, Searcher
-from alfred.memory.summaries import Summaries
-from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue
 from alfred.reminders.loop import run_due_loop
 from alfred.reminders.tools import ReminderTools
@@ -69,6 +68,7 @@ from alfred.telegram.bot import (
 )
 from alfred.toolbox.calculator import CalculatorTools
 from alfred.toolbox.dates import DateTools
+from alfred.turns.background import Sweeper
 from alfred.web.tools import WebTools
 from alfred.worker import Worker
 

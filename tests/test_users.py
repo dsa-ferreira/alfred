@@ -14,11 +14,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.messages import strip_stamp
+from alfred.archive.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS, ConversationSearch
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.inputs.parking import Parking
 from alfred.kernel.users import User
-from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS, ConversationSearch
 from alfred.queue import Queue
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools

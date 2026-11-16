@@ -10,13 +10,13 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.summaries import Summaries
 from alfred.db.models import Fact
+from alfred.facts.duplicate_job import FactDuplicateJob
+from alfred.facts.store import FactEmbeddingJob, FactStore
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
-from alfred.memory.duplicates import FactDuplicateJob
-from alfred.memory.facts import FactEmbeddingJob, FactStore
-from alfred.memory.summaries import Summaries
-from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue
+from alfred.turns.background import Sweeper
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)

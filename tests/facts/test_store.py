@@ -10,8 +10,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.db.models import Fact
+from alfred.facts.store import _DUPLICATE_CANDIDATES, FactStore, _DuplicateCheck, _FactsNotFound
 from alfred.llm.embedding import _EmbeddingUnreachable
-from alfred.memory.facts import _DUPLICATE_CANDIDATES, FactStore, _DuplicateCheck, _FactsNotFound
 from tests.helpers import FakeEmbedder, make_config
 
 NOW = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)

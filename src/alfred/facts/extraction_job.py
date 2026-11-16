@@ -34,10 +34,7 @@ from alfred.backoff import backoff_s
 from alfred.config import Config
 from alfred.conversations.transcript import cut_middle, load_transcript, render
 from alfred.db.models import Conversation
-from alfred.llm.chat import ModelError, token_counts
-from alfred.llm.protocols import ChatModel
-from alfred.llm.streaming import complete_unless_preempted
-from alfred.memory.extraction import (
+from alfred.facts.extraction_prompt import (
     ExtractionParseError,
     NewFact,
     extraction_entries,
@@ -45,7 +42,10 @@ from alfred.memory.extraction import (
     parse_facts,
     quote_matches,
 )
-from alfred.memory.facts import FactStore, insert_fact, lock_user
+from alfred.facts.store import FactStore, insert_fact, lock_user
+from alfred.llm.chat import ModelError, token_counts
+from alfred.llm.protocols import ChatModel
+from alfred.llm.streaming import complete_unless_preempted
 
 log = logging.getLogger(__name__)
 

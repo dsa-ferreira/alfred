@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from alfred.conversations.transcript import TranscriptEntry, render
-from alfred.memory.extraction import (
+from alfred.facts.extraction_prompt import (
     DuplicateParseError,
     ExtractionParseError,
     NewFact,

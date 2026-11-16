@@ -173,12 +173,12 @@ async def test_memory_command_is_not_a_user_message(
 async def test_unattended_conversation_is_summarised_without_fact_requests(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    from alfred.memory.extract import FactExtractionJob
-    from alfred.memory.facts import FactStore
-    from alfred.memory.summaries import Summaries
-    from alfred.memory.sweeper import Sweeper
+    from alfred.archive.summaries import Summaries
+    from alfred.facts.extraction_job import FactExtractionJob
+    from alfred.facts.store import FactStore
+    from alfred.turns.background import Sweeper
     from tests.helpers import FakeEmbedder, FakeModel, make_config, text
-    from tests.memory.test_sweeper import until
+    from tests.turns.test_background import until
 
     cfg = make_config(queue={"retry_initial_s": 30, "retry_max_s": 900})
     summary_model = FakeModel([text("Title: Morning briefing\nSummary: Sunny, Dune at 50%.")])

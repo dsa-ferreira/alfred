@@ -21,6 +21,7 @@ from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.intake import DownloadFailed, Intake
 from alfred.conversations.store import History
 from alfred.db.models import Attachment, QueueItem
+from alfred.facts.store import FactStore
 from alfred.inputs import render
 from alfred.inputs.callbacks import Taps
 from alfred.inputs.loop import cancel_on_new_message
@@ -29,7 +30,6 @@ from alfred.inputs.store import InputRequests
 from alfred.kernel.access import _confirm_question
 from alfred.kernel.questions import Option, Question
 from alfred.kernel.users import Users
-from alfred.memory.facts import FactStore
 from alfred.queue import Queue
 from alfred.telegram import bot as bot_module
 from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatcher
@@ -643,7 +643,7 @@ async def test_memory_line_has_the_date(sessions: async_sessionmaker[AsyncSessio
 
     class OneFact:
         async def list(self, user_name: str) -> list[Any]:
-            from alfred.memory.facts import _FactRow
+            from alfred.facts.store import _FactRow
 
             return [
                 _FactRow(12, "allergic to shellfish", "told", datetime(2026, 11, 3, tzinfo=UTC))

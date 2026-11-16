@@ -7,20 +7,20 @@ from typing import Any
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
 from alfred.db.models import Conversation, Fact, QueueItem
+from alfred.facts.duplicate_job import FactDuplicateJob
+from alfred.facts.store import FactEmbeddingJob, FactStore
 from alfred.inputs.parking import Parking
 from alfred.llm.chat import ModelReply, ModelUnreachable
 from alfred.llm.embedding import _EmbeddingUnreachable
-from alfred.memory.duplicates import FactDuplicateJob
-from alfred.memory.facts import FactEmbeddingJob, FactStore
-from alfred.memory.summaries import Summaries
-from alfred.memory.sweeper import Sweeper
 from alfred.queue import Queue
+from alfred.turns.background import Sweeper
 from alfred.worker import Worker
+from tests.archive.test_summaries import REPLY, archived, row
 from tests.fakes import NoInputRequests, NoQuestions, NoReminders, QuietQueue, no_typing
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text
-from tests.memory.test_summarise import REPLY, archived, row
 
 FAST = {"retry_initial_s": 0.01, "retry_max_s": 0.04}
 

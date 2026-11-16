@@ -630,7 +630,7 @@ class _Turn:
 
 
 class _Facts(Protocol):
-    """Where the turn reads its user's facts (``alfred.memory.facts.FactStore``)."""
+    """Where the turn reads its user's facts (``alfred.facts.store.FactStore``)."""
 
     async def list(self, user_name: str) -> Sequence[KnownFact]: ...
 

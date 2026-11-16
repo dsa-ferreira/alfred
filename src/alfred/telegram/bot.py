@@ -311,7 +311,7 @@ class _Fact(Protocol):
 
 
 class _Facts(Protocol):
-    """The user's facts (``alfred.memory.facts.FactStore``)."""
+    """The user's facts (``alfred.facts.store.FactStore``)."""
 
     async def list(self, user_name: str) -> Sequence[_Fact]: ...
 

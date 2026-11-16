@@ -7,6 +7,7 @@ import json
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.attachments.tools import _READ_DOCUMENT, _TEXT_ONLY_NOTE, _VIEW_ATTACHMENT, _VISION_NOTE
 from alfred.brains.config import BrainEntry
 from alfred.brains.registry import Brains
@@ -14,7 +15,6 @@ from alfred.brains.tools import _SET_MODEL
 from alfred.conversations.store import History
 from alfred.conversations.tools import _END_CONVERSATION
 from alfred.kernel.turn import ChatTurn
-from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.toolbox.calculator import _CALCULATE
 from alfred.toolbox.dates import _DATE
 from alfred.web.tools import _WEB_FETCH, _WEB_SEARCH

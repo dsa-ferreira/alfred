@@ -17,6 +17,7 @@ from pydantic import SecretStr
 
 import alfred.app
 from alfred.agent.inline import InlineAttachments
+from alfred.archive.search import ConversationSearch, MemoryTools
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.intake import Intake
 from alfred.attachments.sweeper import OrphanSweeper
@@ -26,13 +27,12 @@ from alfred.brains.tools import BrainTools
 from alfred.config import _ServerConfig
 from alfred.conversations.idle import IdleCloser
 from alfred.conversations.tools import ConversationTools
+from alfred.facts.store import FactTools
 from alfred.mcp.toolset import McpTools
-from alfred.memory.facts import FactTools
-from alfred.memory.search import ConversationSearch, MemoryTools
-from alfred.memory.sweeper import Sweeper
 from alfred.reminders.tools import ReminderTools
 from alfred.toolbox.calculator import CalculatorTools
 from alfred.toolbox.dates import DateTools
+from alfred.turns.background import Sweeper
 from alfred.web.tools import WebTools
 from tests.helpers import FakeStore, make_config
 from tests.telegram.fake_bot import TOKEN, FakeSession

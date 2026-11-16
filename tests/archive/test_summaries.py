@@ -9,12 +9,12 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.summaries import Summaries
 from alfred.conversations.store import History
 from alfred.conversations.transcript import _SUMMARY_PROMPT
 from alfred.db.models import Conversation
 from alfred.llm.chat import ModelReply, ModelUnreachable, _Usage
 from alfred.llm.embedding import _EmbeddingUnreachable
-from alfred.memory.summaries import Summaries
 from tests.helpers import FakeEmbedder, FakeModel, make_config, text
 
 NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
@@ -179,7 +179,7 @@ def summary_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         r.getMessage()
         for r in caplog.records
-        if r.name == "alfred.memory.summaries" and " summary: " in r.getMessage()
+        if r.name == "alfred.archive.summaries" and " summary: " in r.getMessage()
     ]
 
 

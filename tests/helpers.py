@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent.inline import InlineAttachments
 from alfred.agent.turn import Agent, _Model
 from alfred.app import _build_toolsets
+from alfred.archive.search import Searcher
 from alfred.attachments import NewAttachment
 from alfred.attachments.config import AttachmentsConfig, S3Key
 from alfred.attachments.store import StoreError, _StoredObject
@@ -33,12 +34,11 @@ from alfred.config import (
 from alfred.conversations.config import HistoryConfig
 from alfred.conversations.store import History
 from alfred.db.models import QueueItem
+from alfred.facts.store import FactTools
 from alfred.kernel.access import AllowList
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
-from alfred.memory.facts import FactTools
-from alfred.memory.search import Searcher
 from alfred.queue import Queue
 from alfred.reminders.tools import ReminderTools
 from alfred.web.tools import WebTools

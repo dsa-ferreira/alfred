@@ -10,6 +10,7 @@ from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.agent.turn import Agent
+from alfred.archive.search import ConversationSearch
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.tools import (
     _READ_DOCUMENT,
@@ -27,7 +28,6 @@ from alfred.kernel.access import AllowList
 from alfred.kernel.toolset import AttemptContext, ToolOutcome
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn, TurnInput
 from alfred.kernel.users import User
-from alfred.memory.search import ConversationSearch
 from tests.agent.turn_helpers import BAD_MODEL, GEMMA
 from tests.attachments.files import image_bytes, scanned_pdf, text_pdf
 from tests.fakes import NoFacts

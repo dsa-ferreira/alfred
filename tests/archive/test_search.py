@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.search import _NO_MEANING_NOTE, ConversationSearch
 from alfred.db.models import Conversation, Entry
 from alfred.llm.embedding import _EmbeddingUnreachable
-from alfred.memory.search import _NO_MEANING_NOTE, ConversationSearch
 from tests.helpers import FakeEmbedder, make_config
 
 CHICKEN = [1.0, 0.0, 0.0]

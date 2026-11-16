@@ -3,11 +3,11 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.archive.search import _OMITTED, ConversationSearch
 from alfred.conversations.store import History
 from alfred.db.models import Entry
-from alfred.memory.search import _OMITTED, ConversationSearch
+from tests.archive.test_search import at, seed
 from tests.helpers import FakeEmbedder, make_config
-from tests.memory.test_search import at, seed
 
 TRANSCRIPT = (
     '#41 "Chicken thighs recipe", Tue 3 Nov 2026 to Tue 3 Nov 2026\n'

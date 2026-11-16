@@ -14,6 +14,7 @@ from alfred import notices
 from alfred.agent.messages import _STAMP
 from alfred.agent.prompts import _NO_REPLY, _butler_persona, brain_line, is_no_reply
 from alfred.agent.turn import Agent, Fallback, TurnFailed, TurnResult
+from alfred.archive.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.brains.registry import Brains
 from alfred.brains.tools import _SET_MODEL
 from alfred.conversations.store import History
@@ -23,7 +24,6 @@ from alfred.kernel.content import ModelImage
 from alfred.kernel.toolset import AttemptContext, LocalToolset, ToolOutcome
 from alfred.kernel.turn import AskTurn, TurnInput
 from alfred.llm.chat import ModelFailed, ModelUnreachable
-from alfred.memory.search import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
 from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET
 from alfred.toolbox.calculator import _CALCULATE
