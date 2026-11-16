@@ -17,7 +17,7 @@ commit(s). No task changes what a test asserts.
 
 - [x] 2.1 Remove the `(change X, design DY)`, `(design DY)` and `(DY)` references from `src/alfred/`, keeping each comment's reason (design D4); verify `grep -rEn "change [a-z]+-[a-z-]+|design D[0-9]+|\(D[0-9]+\)" src/alfred` finds nothing
 - [x] 2.2 Rewrite module docstrings that narrate history (`agent/turn.py`, `app.py`, `queue.py` and others found by 2.1) to describe the module as it is; verify by reading each changed docstring against its code
-- [ ] 2.3 Add the commits of 2.1-2.2 to `.git-blame-ignore-revs`; verify `make lint` and `make test` pass
+- [x] 2.3 Add the commits of 2.1-2.2 to `.git-blame-ignore-revs`; verify `make lint` and `make test` pass
 
 ## 3. History split and import cycles
 

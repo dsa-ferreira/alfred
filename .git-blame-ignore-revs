@@ -7,3 +7,7 @@
 ca57c40fa5025adcc65d5d0a8f204c0924a15678
 # refactor: reorder modules and classes to the layout rule
 cc15c2847caed588fd170be7eef87878d7134cc4
+# docs: drop the openspec change and design references from comments
+2be535f428c555a2d8d7a7b1da4527934ec570c1
+# docs: group the turn and queue docstrings by topic
+20ca077ef66e7c53f353d1d818ff25c46fdecdec
