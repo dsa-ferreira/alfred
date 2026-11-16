@@ -27,37 +27,8 @@ import uvicorn
 from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.inline import InlineAttachments
-from alfred.agent.turn import Agent
-from alfred.archive.search import ConversationSearch
-from alfred.archive.summaries import Summaries, recalled
-from alfred.archive.summary_job import SummaryJob
-from alfred.archive.tools import MemoryTools, Searcher
-from alfred.attachments.intake import Intake
-from alfred.attachments.store import S3Store
-from alfred.attachments.sweeper import OrphanSweeper
-from alfred.attachments.tools import AttachmentTools
-from alfred.brains.registry import Brains
-from alfred.brains.tools import BrainTools
-from alfred.config import Config
-from alfred.conversations.idle import IdleCloser
-from alfred.conversations.store import History
-from alfred.conversations.tools import ConversationTools
-from alfred.db.engine import make_engine, make_session_factory
-from alfred.facts.duplicate_job import FactDuplicateJob
-from alfred.facts.embedding_job import FactEmbeddingJob
-from alfred.facts.extraction_job import FactExtractionJob
-from alfred.facts.store import FactStore
-from alfred.facts.tools import FactTools
-from alfred.http.api import create_app
-from alfred.kernel.toolset import Toolset
-from alfred.llm.chat import ModelClient
-from alfred.llm.embedding import EmbeddingClient
-from alfred.mcp.client import Connector, http_connector
-from alfred.mcp.toolset import McpTools
-from alfred.reminders.tools import ReminderTools
-from alfred.startup import check_tool_names, warn_unknown_users
-from alfred.telegram.bot import (
+from alfred.adapters.http.api import create_app
+from alfred.adapters.telegram.bot import (
     ALLOWED_UPDATES,
     MemoryCommand,
     TelegramDownloader,
@@ -65,22 +36,51 @@ from alfred.telegram.bot import (
     make_dispatcher,
     register_commands,
 )
-from alfred.telegram.taps import Taps
-from alfred.toolbox.calculator import CalculatorTools
-from alfred.toolbox.dates import DateTools
-from alfred.turns.background import Sweeper
-from alfred.turns.call_log import ToolCallLog
-from alfred.turns.due_reminders import run_due_loop
-from alfred.turns.exchange import Exchange
-from alfred.turns.inputs.endings import Endings
-from alfred.turns.inputs.loop import cancel_on_new_message, run_expiry_loop
-from alfred.turns.inputs.parking import Parking
-from alfred.turns.inputs.store import InputRequests
-from alfred.turns.intake import ChatIntake
-from alfred.turns.kinds import Kinds
-from alfred.turns.queue import Queue, busy
-from alfred.turns.worker import Worker
-from alfred.web.tools import WebTools
+from alfred.adapters.telegram.taps import Taps
+from alfred.config import Config
+from alfred.features.archive.search import ConversationSearch
+from alfred.features.archive.summaries import Summaries, recalled
+from alfred.features.archive.summary_job import SummaryJob
+from alfred.features.archive.tools import MemoryTools, Searcher
+from alfred.features.attachments.intake import Intake
+from alfred.features.attachments.store import S3Store
+from alfred.features.attachments.sweeper import OrphanSweeper
+from alfred.features.attachments.tools import AttachmentTools
+from alfred.features.brains.registry import Brains
+from alfred.features.brains.tools import BrainTools
+from alfred.features.conversations.idle import IdleCloser
+from alfred.features.conversations.store import History
+from alfred.features.conversations.tools import ConversationTools
+from alfred.features.facts.duplicate_job import FactDuplicateJob
+from alfred.features.facts.embedding_job import FactEmbeddingJob
+from alfred.features.facts.extraction_job import FactExtractionJob
+from alfred.features.facts.store import FactStore
+from alfred.features.facts.tools import FactTools
+from alfred.features.mcp.client import Connector, http_connector
+from alfred.features.mcp.toolset import McpTools
+from alfred.features.reminders.tools import ReminderTools
+from alfred.features.toolbox.calculator import CalculatorTools
+from alfred.features.toolbox.dates import DateTools
+from alfred.features.web.tools import WebTools
+from alfred.infra.db.engine import make_engine, make_session_factory
+from alfred.infra.llm.chat import ModelClient
+from alfred.infra.llm.embedding import EmbeddingClient
+from alfred.kernel.toolset import Toolset
+from alfred.runtime.agent.inline import InlineAttachments
+from alfred.runtime.agent.turn import Agent
+from alfred.runtime.turns.background import Sweeper
+from alfred.runtime.turns.call_log import ToolCallLog
+from alfred.runtime.turns.due_reminders import run_due_loop
+from alfred.runtime.turns.exchange import Exchange
+from alfred.runtime.turns.inputs.endings import Endings
+from alfred.runtime.turns.inputs.loop import cancel_on_new_message, run_expiry_loop
+from alfred.runtime.turns.inputs.parking import Parking
+from alfred.runtime.turns.inputs.store import InputRequests
+from alfred.runtime.turns.intake import ChatIntake
+from alfred.runtime.turns.kinds import Kinds
+from alfred.runtime.turns.queue import Queue, busy
+from alfred.runtime.turns.worker import Worker
+from alfred.startup import check_tool_names, warn_unknown_users
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def configure_logging(level: str) -> None:
 async def serve(config: Config) -> None:
     """Run everything until stopped.
 
-    Raises :class:`~alfred.settings.ConfigError` before connecting to anything
+    Raises :class:`~alfred.infra.settings.ConfigError` before connecting to anything
     when an allow-list names a tool alfred doesn't have.
     """
     check_tool_names(config.users, _TOOLSET_TYPES)
@@ -156,7 +156,7 @@ def _build_toolsets(
     """What the model may call, in the order it is offered; alfred's own tools first.
 
     Each toolset decides on which turns it is offered; the turn user's
-    allow-list then gates every one of them (``alfred.agent.turn``). A name
+    allow-list then gates every one of them (``alfred.runtime.agent.turn``). A name
     offered by two toolsets goes to the first.
     """
     toolsets: list[Toolset] = []

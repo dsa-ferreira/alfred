@@ -17,11 +17,11 @@ from typing import Any
 
 from aiogram.types import CallbackQuery
 
-from alfred.agent.prompts import KnownFact
+from alfred.features.reminders.store import ReminderRow
 from alfred.kernel.questions import Question
 from alfred.kernel.users import User
-from alfred.reminders.store import ReminderRow
-from alfred.turns.inputs.store import RequestRow
+from alfred.runtime.agent.prompts import KnownFact
+from alfred.runtime.turns.inputs.store import RequestRow
 
 
 class NoInputRequests:

@@ -11,48 +11,48 @@ from zoneinfo import ZoneInfo
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.framing import Framing
-from alfred.agent.inline import InlineAttachments
-from alfred.agent.results import TurnResult
-from alfred.agent.turn import Agent, _Model
+from alfred.adapters.http.config import ServerConfig, Service
 from alfred.app import _build_toolsets
-from alfred.archive.summaries import Summaries
-from alfred.archive.summary_job import SummaryJob
-from alfred.archive.tools import Searcher
-from alfred.attachments import NewAttachment
-from alfred.attachments.config import AttachmentsConfig, S3Key
-from alfred.attachments.store import StoreError, _StoredObject
-from alfred.attachments.tools import AttachmentTools
-from alfred.brains.registry import Brains
 from alfred.config import Config, _AIConfig, _MemoryConfig
-from alfred.conversations.config import HistoryConfig
-from alfred.conversations.store import History
-from alfred.facts.tools import FactTools
-from alfred.http.config import ServerConfig, Service
+from alfred.features.archive.summaries import Summaries
+from alfred.features.archive.summary_job import SummaryJob
+from alfred.features.archive.tools import Searcher
+from alfred.features.attachments import NewAttachment
+from alfred.features.attachments.config import AttachmentsConfig, S3Key
+from alfred.features.attachments.store import StoreError, _StoredObject
+from alfred.features.attachments.tools import AttachmentTools
+from alfred.features.brains.registry import Brains
+from alfred.features.conversations.config import HistoryConfig
+from alfred.features.conversations.store import History
+from alfred.features.facts.tools import FactTools
+from alfred.features.mcp.client import Connector
+from alfred.features.mcp.config import McpConfig, McpServer
+from alfred.features.reminders.config import RemindersConfig
+from alfred.features.reminders.store import Reminders
+from alfred.features.reminders.tools import ReminderTools
+from alfred.features.web.config import WebConfig
+from alfred.features.web.tools import WebTools
+from alfred.infra.llm.chat import ModelReply, ToolCall
 from alfred.kernel.access import AllowList
 from alfred.kernel.turn import TurnInput
 from alfred.kernel.users import User, Users
-from alfred.llm.chat import ModelReply, ToolCall
-from alfred.mcp.client import Connector
-from alfred.mcp.config import McpConfig, McpServer
-from alfred.reminders.config import RemindersConfig
-from alfred.reminders.store import Reminders
-from alfred.reminders.tools import ReminderTools
-from alfred.turns.background import Sweeper
-from alfred.turns.call_log import ToolCallLog
-from alfred.turns.config import QueueConfig
-from alfred.turns.due_reminders import _claim_once
-from alfred.turns.exchange import Exchange
-from alfred.turns.inputs.endings import Endings
-from alfred.turns.intake import ChatIntake
-from alfred.turns.kinds import Kinds
-from alfred.turns.kinds.ask import AskPayload
-from alfred.turns.kinds.chat import ChatPayload
-from alfred.turns.kinds.reminder import ReminderPayload
-from alfred.turns.queue import Queue, read_item
-from alfred.turns.tables import QueueItem
-from alfred.web.config import WebConfig
-from alfred.web.tools import WebTools
+from alfred.runtime.agent.framing import Framing
+from alfred.runtime.agent.inline import InlineAttachments
+from alfred.runtime.agent.results import TurnResult
+from alfred.runtime.agent.turn import Agent, _Model
+from alfred.runtime.turns.background import Sweeper
+from alfred.runtime.turns.call_log import ToolCallLog
+from alfred.runtime.turns.config import QueueConfig
+from alfred.runtime.turns.due_reminders import _claim_once
+from alfred.runtime.turns.exchange import Exchange
+from alfred.runtime.turns.inputs.endings import Endings
+from alfred.runtime.turns.intake import ChatIntake
+from alfred.runtime.turns.kinds import Kinds
+from alfred.runtime.turns.kinds.ask import AskPayload
+from alfred.runtime.turns.kinds.chat import ChatPayload
+from alfred.runtime.turns.kinds.reminder import ReminderPayload
+from alfred.runtime.turns.queue import Queue, read_item
+from alfred.runtime.turns.tables import QueueItem
 from tests.fakes import NoFacts
 
 OWNER = 42  # diogo's Telegram user ID

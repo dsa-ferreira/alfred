@@ -6,13 +6,13 @@ registers them on :data:`metadata`.
 
 from __future__ import annotations
 
-from alfred.archive import tables as _archive  # noqa: F401  (registers its tables)
-from alfred.attachments.tables import Attachment
-from alfred.conversations.tables import Conversation
-from alfred.db.base import Base
-from alfred.facts import tables as _facts  # noqa: F401  (registers its tables)
-from alfred.reminders.tables import Reminder, ReminderRecipient
-from alfred.turns.tables import QueueItem
+from alfred.features.archive import tables as _archive  # noqa: F401  (registers its tables)
+from alfred.features.attachments.tables import Attachment
+from alfred.features.conversations.tables import Conversation
+from alfred.features.facts import tables as _facts  # noqa: F401  (registers its tables)
+from alfred.features.reminders.tables import Reminder, ReminderRecipient
+from alfred.infra.db.base import Base
+from alfred.runtime.turns.tables import QueueItem
 
 metadata = Base.metadata
 

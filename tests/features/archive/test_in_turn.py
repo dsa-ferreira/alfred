@@ -1,0 +1,124 @@
+"""Memory search and recall in a turn."""
+
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from alfred.features.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
+from alfred.features.conversations.store import History
+from alfred.features.conversations.tables import Entry
+from alfred.kernel.turn import AskTurn
+from alfred.runtime.agent.prompts import _NO_REPLY
+from tests.features.archive.test_search import CHICKEN, at, seed
+from tests.helpers import DIOGO, FakeEmbedder, FakeModel, add_queue_item, calls, text
+from tests.runtime.agent.turn_helpers import agent, contents, memory, owner_turn, tool_rows
+
+# --- memory tools ------------------------------------------------------------------
+
+
+async def test_memory_tools_offered_on_owner_turns(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel([text("ok")])
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        await owner_turn(sessions, "hi")
+    )
+    assert {_SEARCH_CONVERSATIONS, _RECALL_CONVERSATION} <= model.tool_names()
+    search = next(
+        t["function"]
+        for t in model.requests[0][1]
+        if t["function"]["name"] == _SEARCH_CONVERSATIONS
+    )
+    assert set(search["parameters"]["properties"]) == {"query", "after", "before"}
+    assert "required" not in search["parameters"]
+    assert "ask the user which one they meant" in search["description"]
+    assert "recall it and tell the user which conversation you picked" in search["description"]
+
+
+async def test_memory_tools_not_offered_on_ask_turns(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed(sessions, 41, "Chicken thighs recipe", "Lemon.", started=at(1))
+    item = await add_queue_item(sessions, "ask", "x", "disk-check")
+    model = FakeModel([calls((_RECALL_CONVERSATION, '{"id": 41}')), text(_NO_REPLY)])
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        AskTurn("x", item, "disk-check", user=DIOGO)
+    )
+    assert not {_SEARCH_CONVERSATIONS, _RECALL_CONVERSATION} & model.tool_names()
+    assert "unknown tool" in model.requests[1][0][-1]["content"]
+    async with sessions() as session:
+        assert list(await session.scalars(select(Entry).where(Entry.kind == "recall"))) == []
+
+
+async def test_search_then_recall_then_follow_up(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed(
+        sessions,
+        41,
+        "Chicken thighs recipe",
+        "Lemon-garlic thighs, 40 minutes at 200°C.",
+        started=at(1),
+        embedding=CHICKEN,
+        entries=("chicken thighs tonight?", "40 minutes at 200°C"),
+    )
+    mem = memory(sessions, FakeEmbedder([CHICKEN]))
+    model = FakeModel(
+        [
+            calls((_SEARCH_CONVERSATIONS, '{"query": "chicken recipe"}')),
+            calls((_RECALL_CONVERSATION, '{"id": 41}')),
+            text("That was #41, sir: lemon and garlic."),
+            text("40 minutes, sir."),
+        ]
+    )
+    turn = await owner_turn(sessions, "remember the chicken recipe?")
+    result = await agent(sessions, model, memory=mem).run(turn)
+    assert result.reply == "That was #41, sir: lemon and garlic."
+
+    search_result = model.requests[1][0][-1]
+    assert (
+        search_result["role"] == "tool"
+        and '#41 "Chicken thighs recipe"' in search_result["content"]
+    )
+    recall_result = model.requests[2][0][-1]["content"]
+    assert recall_result.startswith('#41 "Chicken thighs recipe", Sun 1 Nov 2026')
+    rows = await tool_rows(sessions)
+    assert [(r.tool, r.arguments, r.ok) for r in rows] == [
+        (_SEARCH_CONVERSATIONS, {"query": "chicken recipe"}, True),
+        (_RECALL_CONVERSATION, {"id": 41}, True),
+    ]
+
+    # The recall stays in the conversation: the next turn still sees it.
+    await History(sessions).append("diogo", "assistant", result.reply, turn_id=turn.queue_item_id)
+    await agent(sessions, model, memory=mem).run(
+        await owner_turn(sessions, "and how long in the oven?")
+    )
+    texts = contents(model.requests[3][0][1:])
+    assert texts[0] == "remember the chicken recipe?"
+    assert texts[1].startswith('[recall:#41 "Chicken thighs recipe"] #41 ')
+    assert "User: 40 minutes at 200°C" in texts[1]
+    assert texts[-1] == "and how long in the oven?"
+
+
+async def test_memory_tool_errors_reach_the_model(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    model = FakeModel(
+        [calls((_SEARCH_CONVERSATIONS, "{}"), (_RECALL_CONVERSATION, '{"id": 9999}')), text("?")]
+    )
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        await owner_turn(sessions, "remember?")
+    )
+    results = [m["content"] for m in model.requests[1][0] if m["role"] == "tool"]
+    assert results[0].startswith("Error: give a query")
+    assert results[1] == "Error: there is no conversation #9999."
+    assert [r.ok for r in await tool_rows(sessions)] == [False, False]
+
+
+async def test_memory_tool_with_invalid_json(sessions: async_sessionmaker[AsyncSession]) -> None:
+    model = FakeModel([calls((_RECALL_CONVERSATION, "{oops")), text("?")])
+    await agent(sessions, model, memory=memory(sessions, FakeEmbedder())).run(
+        await owner_turn(sessions, "remember 41")
+    )
+    assert "not valid JSON" in model.requests[1][0][-1]["content"]

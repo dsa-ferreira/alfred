@@ -3,7 +3,7 @@
 A turn is a :class:`ChatTurn`, an :class:`AskTurn` or a :class:`ReminderTurn`
 (``TurnInput`` is their union): plain data. Toolsets tell them apart with
 ``isinstance`` (``alfred.kernel.toolset.chat_only``); everything a kind does
-is in ``alfred.turns.kinds``.
+is in ``alfred.runtime.turns.kinds``.
 """
 
 from __future__ import annotations

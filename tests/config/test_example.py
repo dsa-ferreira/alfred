@@ -10,11 +10,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alfred.archive.config import ArchiveConfig
 from alfred.config import _FileConfig, _McpServerEntry, _ServiceEntry, _UserEntry, load_config
-from alfred.facts.config import FactsConfig
-from alfred.llm.config import EmbeddingConfig
-from alfred.mcp.config import servers_for
+from alfred.features.archive.config import ArchiveConfig
+from alfred.features.facts.config import FactsConfig
+from alfred.features.mcp.config import servers_for
+from alfred.infra.llm.config import EmbeddingConfig
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "alfred.toml.example"

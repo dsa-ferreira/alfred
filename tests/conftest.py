@@ -19,8 +19,8 @@ import pytest
 from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alfred.db.engine import make_engine, make_session_factory
-from alfred.web.fetch import make_http_client
+from alfred.features.web.fetch import make_http_client
+from alfred.infra.db.engine import make_engine, make_session_factory
 
 # Ryuk (the reaper container) needs a privileged socket that rootless podman
 # doesn't give it; containers are stopped by the fixture instead.

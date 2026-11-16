@@ -11,9 +11,9 @@ from typing import ClassVar, Protocol
 from sqlalchemy import select, union
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.infra.settings import ConfigError
 from alfred.kernel.users import Users
 from alfred.schema import USER_NAME_COLUMNS
-from alfred.settings import ConfigError
 
 log = logging.getLogger(__name__)
 

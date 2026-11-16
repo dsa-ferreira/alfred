@@ -5,7 +5,7 @@ Revises:
 Create Date: 2026-11-16 13:41:04.820595
 
 Replaces revisions 0001-0010: databases created by alfred 0.16 or older
-can't be upgraded (``alfred.db.migrate`` refuses them). Generated from
+can't be upgraded (``alfred.infra.db.migrate`` refuses them). Generated from
 ``alfred.schema.metadata`` and edited by hand: the ``vector`` check, the
 generated ``search_tsv`` column, and the partial and expression indexes.
 Needs the ``vector`` extension, which only a superuser can create.
@@ -18,7 +18,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
-from alfred.db.migrate import MigrationError
+from alfred.infra.db.migrate import MigrationError
 
 # revision identifiers, used by Alembic.
 revision: str = "s001"

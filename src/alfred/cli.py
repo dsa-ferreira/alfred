@@ -14,7 +14,7 @@ def run() -> None:
 
 def _cmd_serve() -> int:
     from alfred.config import load_config
-    from alfred.settings import ConfigError
+    from alfred.infra.settings import ConfigError
 
     try:
         config = load_config()
@@ -41,8 +41,8 @@ def _cmd_serve() -> int:
 def _cmd_migrate() -> int:
     # Needs only ALFRED_DATABASE_URL, so migrations run without the rest of the config.
     from alfred.config import load_database_url
-    from alfred.db import migrate
-    from alfred.settings import ConfigError
+    from alfred.infra.db import migrate
+    from alfred.infra.settings import ConfigError
 
     try:
         url = load_database_url()

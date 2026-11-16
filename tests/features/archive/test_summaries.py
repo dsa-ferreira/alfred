@@ -1,0 +1,308 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from alfred.features.archive.prompts import _SUMMARY_PROMPT
+from alfred.features.archive.summaries import Summaries
+from alfred.features.archive.tables import ConversationSummary
+from alfred.features.conversations.store import History
+from alfred.features.conversations.tables import EntryOrigin
+from alfred.infra.llm.chat import ModelReply, ModelUnreachable, _Usage
+from alfred.infra.llm.embedding import _EmbeddingUnreachable
+from tests.helpers import FakeEmbedder, FakeModel, make_config, text
+
+NOW = datetime(2026, 11, 2, 14, 5, tzinfo=UTC)
+REPLY = "Title: Chicken thighs recipe\nSummary: A lemon-garlic recipe, saved as recipe 12."
+
+
+def memory(
+    sessions: async_sessionmaker[AsyncSession],
+    model: FakeModel,
+    embedder: FakeEmbedder,
+    **memory_config: object,
+) -> Summaries:
+    cfg = make_config(
+        queue={"retry_initial_s": 30, "retry_max_s": 900},
+        memory=memory_config,  # type: ignore[arg-type]
+    )
+    return Summaries(cfg.memory, cfg.queue, sessions, model, embedder, now=lambda: NOW)
+
+
+async def archived(sessions: async_sessionmaker[AsyncSession], *lines: str) -> int:
+    history = History(sessions)
+    await history.current_conversation_id("diogo")  # exists even with no entries
+    for i, line in enumerate(lines):
+        await history.append("diogo", "user" if i % 2 == 0 else "assistant", line)
+    reset = await history.reset("diogo")
+    assert reset.archived_id is not None
+    return reset.archived_id
+
+
+async def row(
+    sessions: async_sessionmaker[AsyncSession], conversation_id: int
+) -> ConversationSummary:
+    """The conversation's summary row; a blank one (no attempts) while it has none."""
+    async with sessions() as session:
+        found = await session.get(ConversationSummary, conversation_id)
+    return found or ConversationSummary(conversation_id=conversation_id, attempts=0)
+
+
+async def test_summary_and_embedding_stored(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cid = await archived(sessions, "chicken thighs tonight?", "Lemon and garlic, sir.")
+    model = FakeModel([text(REPLY)])
+    embedder = FakeEmbedder([[0.1, 0.2, 0.3]])
+    title = await memory(sessions, model, embedder).summarise(cid)
+
+    assert title == "Chicken thighs recipe"
+    assert len(model.requests) == 1
+    messages, tools = model.requests[0]
+    assert tools == []
+    assert messages[0] == {"role": "system", "content": _SUMMARY_PROMPT}
+    assert messages[1]["content"] == "User: chicken thighs tonight?\nalfred: Lemon and garlic, sir."
+    assert embedder.documents == [
+        "Chicken thighs recipe. A lemon-garlic recipe, saved as recipe 12."
+    ]
+    stored = await row(sessions, cid)
+    assert stored.title == "Chicken thighs recipe"
+    assert stored.summary == "A lemon-garlic recipe, saved as recipe 12."
+    assert stored.summarised_at == NOW
+    assert [round(x, 3) for x in stored.embedding] == [0.1, 0.2, 0.3]
+    assert stored.embedding_model == "nomic-embed-text:v1.5"
+    assert stored.attempts == 0 and stored.next_at is None
+
+
+async def test_embedding_failure_keeps_title_and_summary(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    mem = memory(sessions, FakeModel([text(REPLY)]), FakeEmbedder([_EmbeddingUnreachable("down")]))
+    assert await mem.summarise(cid) == "Chicken thighs recipe"
+    stored = await row(sessions, cid)
+    assert stored.title == "Chicken thighs recipe" and stored.summary is not None
+    assert stored.embedding is None and stored.embedding_model is None
+    assert stored.attempts == 1
+    assert stored.next_at == NOW + timedelta(seconds=30)
+    assert mem.changed.is_set()
+
+
+async def test_model_failure_schedules_retry(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    embedder = FakeEmbedder()
+    mem = memory(sessions, FakeModel([ModelUnreachable("refused")]), embedder)
+    assert await mem.summarise(cid) is None
+    stored = await row(sessions, cid)
+    assert stored.title is None and stored.summary is None and stored.embedding is None
+    assert stored.attempts == 1
+    assert stored.next_at == NOW + timedelta(seconds=30)
+    assert embedder.documents == []
+    assert mem.changed.is_set()
+
+
+async def test_backoff_grows_with_attempts(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    mem = memory(sessions, FakeModel([ModelUnreachable("x")] * 3), FakeEmbedder())
+    for _ in range(3):
+        await mem.summarise(cid)
+    stored = await row(sessions, cid)
+    assert stored.attempts == 3
+    assert stored.next_at == NOW + timedelta(seconds=120)
+
+
+async def test_unusable_reply_schedules_retry(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    mem = memory(sessions, FakeModel([text("I'd rather not.")]), FakeEmbedder())
+    assert await mem.summarise(cid) is None
+    assert (await row(sessions, cid)).attempts == 1
+
+
+async def test_success_after_failure_clears_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    mem = memory(
+        sessions, FakeModel([ModelUnreachable("x"), text(REPLY)]), FakeEmbedder(default=[1.0])
+    )
+    assert await mem.summarise(cid) is None
+    assert await mem.summarise(cid) == "Chicken thighs recipe"
+    stored = await row(sessions, cid)
+    assert stored.attempts == 0 and stored.next_at is None
+
+
+async def test_only_embedding_redone(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = FakeModel([text(REPLY)])
+    first = memory(sessions, model, FakeEmbedder([_EmbeddingUnreachable("down")]))
+    await first.summarise(cid)
+    second = memory(sessions, model, FakeEmbedder([[0.5]]))
+    assert await second.summarise(cid) == "Chicken thighs recipe"
+    assert len(model.requests) == 1  # no second summary request
+    assert (await row(sessions, cid)).embedding is not None
+
+
+async def test_long_transcript_is_shortened(sessions: async_sessionmaker[AsyncSession]) -> None:
+    cid = await archived(sessions, "start " + "x" * 3000, "y" * 3000 + " end")
+    model = FakeModel([text(REPLY)])
+    mem = memory(sessions, model, FakeEmbedder(default=[1.0]), summary_input_max_chars=1000)
+    assert await mem.summarise(cid) == "Chicken thighs recipe"
+    sent = model.requests[0][0][1]["content"]
+    assert len(sent) <= 1000
+    assert sent.startswith("User: start") and sent.endswith(" end")
+    assert "characters omitted" in sent
+
+
+async def test_current_conversation_is_not_summarised(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await History(sessions).append("diogo", "user", "still talking")
+    cid = await History(sessions).current_conversation_id("diogo")
+    model = FakeModel()
+    assert await memory(sessions, model, FakeEmbedder()).summarise(cid) is None
+    assert model.requests == []
+
+
+async def test_empty_conversation_needs_no_model(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions)
+    model = FakeModel()
+    assert await memory(sessions, model, FakeEmbedder([[1.0]])).summarise(cid) == (
+        "Empty conversation"
+    )
+    assert model.requests == []
+
+
+def summary_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "alfred.features.archive.summaries" and " summary: " in r.getMessage()
+    ]
+
+
+async def test_summary_token_counts_logged(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = FakeModel([replace(text(REPLY), usage=_Usage(3120, 58))])
+    with caplog.at_level(logging.INFO):
+        await memory(sessions, model, FakeEmbedder([[0.1, 0.2, 0.3]])).summarise(cid)
+    assert summary_lines(caplog) == [
+        f"conversation {cid} summary: 3120 prompt tokens, 58 completion tokens"
+    ]
+
+
+async def test_summary_stored_without_token_counts(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    with caplog.at_level(logging.INFO):
+        title = await memory(
+            sessions, FakeModel([text(REPLY)]), FakeEmbedder([[0.1, 0.2, 0.3]])
+        ).summarise(cid)
+    assert title == "Chicken thighs recipe"
+    assert summary_lines(caplog) == [f"conversation {cid} summary: token counts not reported"]
+    stored = await row(sessions, cid)
+    assert stored.title == "Chicken thighs recipe" and stored.summary is not None
+
+
+async def test_transcript_with_a_reminder(sessions: async_sessionmaker[AsyncSession]) -> None:
+    from alfred.features.conversations.transcript import render
+    from alfred.features.reminders.store import Reminders
+
+    reminder_id = await Reminders(sessions).set("call mum", NOW, "diogo", ["diogo"])
+    history = History(sessions)
+    await history.append(
+        "diogo", "reminder", "call mum", origin=EntryOrigin(reminder_id, NOW, "diogo")
+    )
+    await history.append(
+        "diogo",
+        "reminder_reply",
+        "Your call to mum, sir.",
+        origin=EntryOrigin(reminder_id, NOW, "diogo"),
+    )
+    await history.append("diogo", "user", "done")
+    reset = await history.reset("diogo")
+    assert reset.archived_id is not None
+    m = memory(sessions, FakeModel(), FakeEmbedder())
+    entries = await m._transcript_entries(reset.archived_id)
+    assert render(entries) == (
+        f"[reminder:#{reminder_id}] call mum\nalfred: Your call to mum, sir.\nUser: done"
+    )
+
+
+# --- giving way to the queue (change close-idle-conversations, design D6) ---------
+
+
+class BlockingModel:
+    """Never answers until cancelled; records the request and the cancellation."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def complete_streamed(self, messages: list[dict[str, Any]]) -> ModelReply:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+
+async def test_preempt_cancels_the_summary_request(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    model = BlockingModel()
+    embedder = FakeEmbedder([[0.5]])
+    preempt = asyncio.Event()
+    mem = memory(sessions, model, embedder)  # type: ignore[arg-type]
+    task = asyncio.create_task(mem.summarise(cid, preempt=preempt))
+    await asyncio.wait_for(model.started.wait(), 5)
+    preempt.set()
+    assert await asyncio.wait_for(task, 5) is None
+    assert model.cancelled
+    assert embedder.documents == []
+    stored = await row(sessions, cid)
+    assert stored.title is None and stored.summary is None and stored.embedding is None
+    # Not a failure: no attempt counted and no backoff.
+    assert stored.attempts == 0 and stored.next_at is None
+
+
+async def test_preempt_set_before_the_request_starts(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    preempt = asyncio.Event()
+    preempt.set()
+    mem = memory(sessions, BlockingModel(), FakeEmbedder([[0.5]]))  # type: ignore[arg-type]
+    assert await asyncio.wait_for(mem.summarise(cid, preempt=preempt), 5) is None
+    assert (await row(sessions, cid)).attempts == 0
+
+
+async def test_preempt_does_not_stop_the_embedding(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    cid = await archived(sessions, "chicken?", "Lemon.")
+    preempt = asyncio.Event()
+
+    class SlowEmbedder(FakeEmbedder):
+        async def embed_document(self, text: str) -> list[float]:
+            preempt.set()  # a message arrives while the embedding is made
+            await asyncio.sleep(0.01)
+            return await super().embed_document(text)
+
+    mem = memory(sessions, FakeModel([text(REPLY)]), SlowEmbedder([[0.1, 0.2]]))
+    assert await mem.summarise(cid, preempt=preempt) == "Chicken thighs recipe"
+    stored = await row(sessions, cid)
+    assert stored.title == "Chicken thighs recipe" and stored.summary is not None
+    assert stored.embedding is not None
+    assert stored.attempts == 0

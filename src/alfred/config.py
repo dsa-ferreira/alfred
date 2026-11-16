@@ -29,19 +29,17 @@ from pydantic import (
     ValidationError,
 )
 
-from alfred.agent.config import AgentConfig
-from alfred.archive.config import ArchiveConfig
-from alfred.attachments.config import AttachmentsConfig, S3Key
-from alfred.brains.config import BrainsConfig
-from alfred.conversations.config import HistoryConfig
-from alfred.facts.config import FactsConfig
-from alfred.http.config import ServerConfig, Service
-from alfred.kernel.access import AllowList
-from alfred.kernel.users import User, Users
-from alfred.llm.config import ChatConfig, EmbeddingConfig
-from alfred.mcp.config import McpConfig, McpServer
-from alfred.reminders.config import RemindersConfig
-from alfred.settings import (
+from alfred.adapters.http.config import ServerConfig, Service
+from alfred.features.archive.config import ArchiveConfig
+from alfred.features.attachments.config import AttachmentsConfig, S3Key
+from alfred.features.brains.config import BrainsConfig
+from alfred.features.conversations.config import HistoryConfig
+from alfred.features.facts.config import FactsConfig
+from alfred.features.mcp.config import McpConfig, McpServer
+from alfred.features.reminders.config import RemindersConfig
+from alfred.features.web.config import WebConfig
+from alfred.infra.llm.config import ChatConfig, EmbeddingConfig
+from alfred.infra.settings import (
     TOKEN_ENV,
     ConfigError,
     HttpUrlStr,
@@ -50,8 +48,10 @@ from alfred.settings import (
     Section,
     TokenEnv,
 )
-from alfred.turns.config import InputRequestsConfig, QueueConfig
-from alfred.web.config import WebConfig
+from alfred.kernel.access import AllowList
+from alfred.kernel.users import User, Users
+from alfred.runtime.agent.config import AgentConfig
+from alfred.runtime.turns.config import InputRequestsConfig, QueueConfig
 
 log = logging.getLogger(__name__)
 

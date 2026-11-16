@@ -16,27 +16,27 @@ from aiogram.types import User
 from pydantic import SecretStr
 
 import alfred.app
-from alfred.agent.inline import InlineAttachments
-from alfred.archive.search import ConversationSearch
-from alfred.archive.tools import MemoryTools
-from alfred.attachments.config import AttachmentsConfig, S3Key
-from alfred.attachments.intake import Intake
-from alfred.attachments.sweeper import OrphanSweeper
-from alfred.attachments.tools import AttachmentTools
-from alfred.brains.config import BrainEntry
-from alfred.brains.tools import BrainTools
-from alfred.conversations.idle import IdleCloser
-from alfred.conversations.tools import ConversationTools
-from alfred.facts.tools import FactTools
-from alfred.http.config import ServerConfig
-from alfred.mcp.toolset import McpTools
-from alfred.reminders.tools import ReminderTools
-from alfred.toolbox.calculator import CalculatorTools
-from alfred.toolbox.dates import DateTools
-from alfred.turns.background import Sweeper
-from alfred.web.tools import WebTools
+from alfred.adapters.http.config import ServerConfig
+from alfred.features.archive.search import ConversationSearch
+from alfred.features.archive.tools import MemoryTools
+from alfred.features.attachments.config import AttachmentsConfig, S3Key
+from alfred.features.attachments.intake import Intake
+from alfred.features.attachments.sweeper import OrphanSweeper
+from alfred.features.attachments.tools import AttachmentTools
+from alfred.features.brains.config import BrainEntry
+from alfred.features.brains.tools import BrainTools
+from alfred.features.conversations.idle import IdleCloser
+from alfred.features.conversations.tools import ConversationTools
+from alfred.features.facts.tools import FactTools
+from alfred.features.mcp.toolset import McpTools
+from alfred.features.reminders.tools import ReminderTools
+from alfred.features.toolbox.calculator import CalculatorTools
+from alfred.features.toolbox.dates import DateTools
+from alfred.features.web.tools import WebTools
+from alfred.runtime.agent.inline import InlineAttachments
+from alfred.runtime.turns.background import Sweeper
+from tests.adapters.telegram.fake_bot import TOKEN, FakeSession
 from tests.helpers import FakeStore, make_config
-from tests.telegram.fake_bot import TOKEN, FakeSession
 
 
 def toolset(agent_kwargs: dict[str, Any], kind: type) -> Any:

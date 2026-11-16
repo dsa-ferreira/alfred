@@ -13,21 +13,21 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.messages import strip_stamp
-from alfred.archive.search import ConversationSearch
-from alfred.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
-from alfred.conversations.store import History
-from alfred.conversations.tools import _END_CONVERSATION
+from alfred.features.archive.search import ConversationSearch
+from alfred.features.archive.tools import _RECALL_CONVERSATION, _SEARCH_CONVERSATIONS
+from alfred.features.conversations.store import History
+from alfred.features.conversations.tools import _END_CONVERSATION
+from alfred.features.reminders.store import Reminders
+from alfred.features.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.kernel.users import User
-from alfred.reminders.store import Reminders
-from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
-from alfred.turns.inputs.parking import Parking
-from alfred.turns.intake import ChatIntake
-from alfred.turns.kinds import Kinds
-from alfred.turns.queue import Queue
-from alfred.turns.worker import Worker
-from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
+from alfred.runtime.agent.messages import strip_stamp
+from alfred.runtime.turns.inputs.parking import Parking
+from alfred.runtime.turns.intake import ChatIntake
+from alfred.runtime.turns.kinds import Kinds
+from alfred.runtime.turns.queue import Queue
+from alfred.runtime.turns.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
+from tests.features.mcp.servers import in_process, make_cookbook, make_mcparr
 from tests.helpers import (
     ANA,
     DIOGO,
@@ -39,7 +39,7 @@ from tests.helpers import (
     make_config,
     text,
 )
-from tests.mcp.servers import in_process, make_cookbook, make_mcparr
+from tests.runtime.agent.turn_helpers import COOKBOOK, MCPARR, Clock
 
 LISBON = ZoneInfo("Europe/Lisbon")
 START = datetime(2026, 11, 9, 16, 0, tzinfo=UTC)  # 16:00 in Lisbon

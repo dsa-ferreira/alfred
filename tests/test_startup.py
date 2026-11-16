@@ -11,23 +11,23 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.app import _TOOLSET_TYPES, _build_toolsets, serve
-from alfred.archive.search import ConversationSearch
-from alfred.attachments.tools import AttachmentTools
-from alfred.brains.registry import Brains
-from alfred.conversations.store import History
-from alfred.conversations.tables import Conversation
-from alfred.facts.store import FactStore
-from alfred.facts.tools import FactTools
+from alfred.features.archive.search import ConversationSearch
+from alfred.features.attachments.tools import AttachmentTools
+from alfred.features.brains.registry import Brains
+from alfred.features.conversations.store import History
+from alfred.features.conversations.tables import Conversation
+from alfred.features.facts.store import FactStore
+from alfred.features.facts.tools import FactTools
+from alfred.features.mcp.toolset import McpTools
+from alfred.features.reminders.tables import Reminder, ReminderRecipient
+from alfred.features.reminders.tools import ReminderTools
+from alfred.features.web.tools import WebTools
+from alfred.infra.settings import ConfigError
 from alfred.kernel.access import AllowList
 from alfred.kernel.turn import AskTurn, ChatTurn, ReminderTurn
 from alfred.kernel.users import Users
-from alfred.mcp.toolset import McpTools
-from alfred.reminders.tables import Reminder, ReminderRecipient
-from alfred.reminders.tools import ReminderTools
-from alfred.settings import ConfigError
+from alfred.runtime.turns.tables import QueueItem
 from alfred.startup import check_tool_names, warn_unknown_users
-from alfred.turns.tables import QueueItem
-from alfred.web.tools import WebTools
 from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeStore, make_config
 
 

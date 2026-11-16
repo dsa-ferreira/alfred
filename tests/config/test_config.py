@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from alfred.config import load_config
-from alfred.mcp.config import servers_for
-from alfred.settings import ConfigError
+from alfred.features.mcp.config import servers_for
+from alfred.infra.settings import ConfigError
 
 USER = """
 [[users]]
