@@ -19,6 +19,7 @@ from alfred.history import History
 from alfred.queue import Queue
 from alfred.telegram.bot import TelegramOutbox
 from alfred.worker import Worker
+from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeModel, make_agent, make_config, text
 from tests.mcp.servers import in_process
 from tests.telegram.fake_bot import make_bot
@@ -132,7 +133,17 @@ async def test_notify_while_ai_busy(env: Env) -> None:
             return TurnResult("done", False, False)
 
     worker = Worker(
-        env.queue, BusyAgent(), env.history, env.outbox, make_config().queue, users=USERS
+        env.queue,
+        BusyAgent(),
+        env.history,
+        env.outbox,
+        make_config().queue,
+        users=USERS,
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
+        nudge=ignore,
     )
     await env.queue.enqueue_user("diogo", "long job")
     task = asyncio.create_task(worker._step())
@@ -187,7 +198,19 @@ async def test_ask_empty_prompt(env: Env, body: dict) -> None:
 async def run_ask(env: Env, answer: str) -> None:
     cfg = make_config()
     agent = make_agent(cfg, FakeModel([text(answer)]), env.history, env.sessions, in_process({}))
-    worker = Worker(env.queue, agent, env.history, env.outbox, cfg.queue, users=USERS)
+    worker = Worker(
+        env.queue,
+        agent,
+        env.history,
+        env.outbox,
+        cfg.queue,
+        users=USERS,
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
+        nudge=ignore,
+    )
     await env.client.post("/ask", json={"prompt": "usage report"}, headers=DISK)
     while await worker._step():
         pass

@@ -38,7 +38,7 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from alfred import notices
@@ -49,7 +49,7 @@ from alfred.config import QueueConfig, User, Users
 from alfred.db.models import QueueItem
 from alfred.history import History
 from alfred.inputs.render import reminder_label, title
-from alfred.inputs.store import InputRequests, RequestRow
+from alfred.inputs.store import EndReason, RequestRow
 from alfred.outbox import Outbox
 from alfred.queue import Queue
 from alfred.reminders.store import ReminderRow
@@ -68,13 +68,13 @@ class Worker:
         config: QueueConfig,
         *,
         users: Users,
-        nudge: Callable[[], None] | None = None,
-        typing: Callable[[User], AbstractAsyncContextManager[None]] | None = None,
-        reminders: _ReminderLookup | None = None,
+        inputs: _Inputs,
+        questions: _QuestionOutbox,
+        reminders: _ReminderLookup,
+        typing: Callable[[User], AbstractAsyncContextManager[None]],
+        nudge: Callable[[], None],
         zone: ZoneInfo | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
-        inputs: InputRequests | None = None,
-        questions: _QuestionOutbox | None = None,
         expire_after: timedelta = timedelta(minutes=60),
     ) -> None:
         self._queue = queue
@@ -84,7 +84,7 @@ class Worker:
         self._expire_after = expire_after
         # Shown in a user's chat while their own chat turn runs.
         self._typing = typing
-        # Wakes the memory sweeper after a reset; None in tests.
+        # Wakes the memory sweeper after a reset.
         self._nudge = nudge
         self._agent = agent
         self._history = history
@@ -127,10 +127,9 @@ class Worker:
             await self._queue.finish(item.id, "failed", reason)
             return
         request: RequestRow | None = None
-        if self._inputs is not None:
-            if await self._resumed_before(item, user):
-                return
-            request = await self._inputs.take_answered(item.id, user.name)
+        if await self._resumed_before(item, user):
+            return
+        request = await self._inputs.take_answered(item.id, user.name)
         if item.kind == "user" and request is None:
             # A conversation closed for inactivity is told before the reply. Claimed before it
             # is sent, so a retried turn doesn't send it again.
@@ -146,11 +145,7 @@ class Worker:
             turn = dataclasses.replace(
                 turn, resume=Resume(request.turn, request.state, request.answer)
             )
-        indicator = (
-            self._typing(user)
-            if self._typing is not None and item.kind == "user"
-            else contextlib.nullcontext()
-        )
+        indicator = self._typing(user) if item.kind == "user" else contextlib.nullcontext()
         try:
             async with indicator:
                 result = await self._run(turn, request)
@@ -184,7 +179,7 @@ class Worker:
         try:
             return await self._agent.run(turn)
         finally:
-            if request is not None and self._inputs is not None:
+            if request is not None:
                 await self._inputs.finish(request.id, request.user_name)
 
     async def _resumed_before(self, item: QueueItem, user: User) -> bool:
@@ -193,7 +188,6 @@ class Worker:
         Then the call may have run: the item fails with the partial notice
         and is never run again.
         """
-        assert self._inputs is not None
         stuck = await self._inputs.running_for(item.id, user.name)
         if stuck is None:
             return False
@@ -223,19 +217,6 @@ class Worker:
         assert waiting is not None
         user = turn.user
         await self._tell_fallback(item, user, result.fallback)
-        if self._inputs is None or self._questions is None:
-            # Not wired (only in tests): nothing could ever answer it.
-            await self._turn_failed(
-                item,
-                turn,
-                TurnFailed(
-                    "a tool needed the user's answer, but questions are off",
-                    notices.failed(user.address, True),
-                    retryable=False,
-                    side_effects_possible=True,
-                ),
-            )
-            return
         question = dataclasses.replace(waiting.need.question, title=self._title(item, turn))
         arguments = parse_arguments(waiting.call.arguments)
         request_id = await self._inputs.park(
@@ -285,7 +266,7 @@ class Worker:
         """
         due_at = item.reminder_due_at
         reminder = None
-        if self._reminders is not None and item.reminder_id is not None:
+        if item.reminder_id is not None:
             reminder = await self._reminders.get(item.reminder_id)
         if reminder is None:
             log.error("queue item %s: reminder #%s not found", item.id, item.reminder_id)
@@ -418,7 +399,7 @@ class Worker:
             reset.archived_id,
             reset.new_id,
         )
-        if self._nudge is not None and reset.archived_id is not None:
+        if reset.archived_id is not None:
             self._nudge()
         await self._send(item, user, _reset_marker(reset.archived_id, reset.new_id))
 
@@ -428,6 +409,33 @@ class Worker:
         except Exception:
             # The turn already ran; re-running it would repeat tool actions.
             log.exception("queue item %s: could not deliver a message to %s", item.id, user.name)
+
+
+class _Inputs(Protocol):
+    """Parked turns' input requests (``alfred.inputs.store.InputRequests``)."""
+
+    async def running_for(self, item_id: int, user: str) -> RequestRow | None: ...
+
+    async def take_answered(self, item_id: int, user: str) -> RequestRow | None: ...
+
+    async def finish(self, request_id: int, user: str) -> None: ...
+
+    async def park(
+        self,
+        item_id: int,
+        user: str,
+        *,
+        tool: str,
+        arguments: dict[str, Any],
+        question: Question,
+        state: dict[str, Any],
+        turn: dict[str, Any],
+        expires_at: datetime | timedelta,
+    ) -> int: ...
+
+    async def set_message(self, request_id: int, user: str, message_id: int) -> None: ...
+
+    async def cancel(self, request_id: int, user: str, reason: EndReason) -> object: ...
 
 
 class _QuestionOutbox(Protocol):

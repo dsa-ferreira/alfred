@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 
 _Answered = Literal["answered", "not_open", "not_yours"]
 # Why a request ended unanswered (``notices.NOT_DONE_REASONS``).
-_EndReason = Literal["new_message", "expired", "not_delivered"]
+EndReason = Literal["new_message", "expired", "not_delivered"]
 
 
 @dataclass(frozen=True)
@@ -216,12 +216,12 @@ class InputRequests:
                 .values(status="done")
             )
 
-    async def cancel_for(self, user: str, reason: _EndReason = "new_message") -> list[RequestRow]:
+    async def cancel_for(self, user: str, reason: EndReason = "new_message") -> list[RequestRow]:
         """End all of ``user``'s open requests (``answered`` ones go ahead)."""
         where = (InputRequest.user_name == user, InputRequest.status == "open")
         return await self._end(where, reason)
 
-    async def cancel(self, request_id: int, user: str, reason: _EndReason) -> list[RequestRow]:
+    async def cancel(self, request_id: int, user: str, reason: EndReason) -> list[RequestRow]:
         """End one open request, such as one whose question couldn't be sent."""
         return await self._end(_by_id(request_id, user), reason)
 
@@ -241,14 +241,14 @@ class InputRequests:
             )
             return [RequestRow.of(r) for r in rows]
 
-    async def _end(self, where: Sequence[Any], reason: _EndReason) -> list[RequestRow]:
+    async def _end(self, where: Sequence[Any], reason: EndReason) -> list[RequestRow]:
         async with self._sessions.begin() as session:
             ended = await self._end_in(session, where, reason)
         await self._record_endings(ended)
         return ended
 
     async def _end_in(
-        self, session: AsyncSession, where: Sequence[Any], reason: _EndReason
+        self, session: AsyncSession, where: Sequence[Any], reason: EndReason
     ) -> list[RequestRow]:
         """``open -> cancelled`` (``expired`` for expiry) and the items ``-> cancelled``."""
         status = "expired" if reason == "expired" else "cancelled"

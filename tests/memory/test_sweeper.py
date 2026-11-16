@@ -17,6 +17,7 @@ from alfred.memory.sweeper import Sweeper
 from alfred.model import ModelReply, ModelUnreachable
 from alfred.queue import Queue
 from alfred.worker import Worker
+from tests.fakes import NoInputRequests, NoQuestions, NoReminders, no_typing
 from tests.helpers import FakeEmbedder, FakeModel, make_agent, make_config, text
 from tests.memory.test_summarise import REPLY, archived, row
 
@@ -186,7 +187,17 @@ async def test_owner_messages_answered_while_sweeper_fails(
 
     agent = make_agent(cfg, FakeModel([text("one"), text("two")]), history, sessions, _no_mcp)
     worker = Worker(
-        queue, agent, history, Outbox(), cfg.queue, users=cfg.users, nudge=mem.summaries.changed.set
+        queue,
+        agent,
+        history,
+        Outbox(),
+        cfg.queue,
+        users=cfg.users,
+        nudge=mem.summaries.changed.set,
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
     )
     tasks = [asyncio.create_task(mem.run_forever()), asyncio.create_task(worker.run_forever())]
     try:

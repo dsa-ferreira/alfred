@@ -31,6 +31,7 @@ from tests.agent.turn_helpers import (
     reminder_turn,
     tool_rows,
 )
+from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
 from tests.helpers import (
     ANA,
     DIOGO,
@@ -248,7 +249,18 @@ async def test_morning_briefing_uses_the_tools(
     a = make_agent(cfg, model, history, sessions, connect, reminders=tools, now=lambda: monday)
     queue, outbox = Queue(sessions), FakeOutbox()
     worker = Worker(
-        queue, a, history, outbox, cfg.queue, users=cfg.users, reminders=store, zone=LISBON
+        queue,
+        a,
+        history,
+        outbox,
+        cfg.queue,
+        users=cfg.users,
+        reminders=store,
+        zone=LISBON,
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        typing=no_typing,
+        nudge=ignore,
     )
     rule = parse_rule(repeat="weekdays", at="08:00")
     briefing = await store.set(

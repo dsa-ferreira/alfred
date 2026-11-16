@@ -31,6 +31,7 @@ from alfred.telegram.bot import TelegramDownloader, TelegramOutbox, make_dispatc
 from alfred.tools.base import Option, Question, _confirm_question
 from tests.attachments.files import image_bytes, text_pdf
 from tests.attachments.test_intake import FakeDownloader
+from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore, add_queue_item
 from tests.telegram.fake_bot import OWNER, TOKEN, callback_update, make_bot, message_update
 
@@ -386,6 +387,11 @@ async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSe
         TelegramOutbox(bot),
         cfg.queue,
         users=cfg.users,
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
+        nudge=ignore,
     )
 
     await dispatcher.feed_update(bot, message_update(text="status?"))

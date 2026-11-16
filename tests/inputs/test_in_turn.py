@@ -28,6 +28,7 @@ from alfred.telegram.bot import TelegramOutbox, make_dispatcher
 from alfred.tools.base import AllowList
 from alfred.worker import Worker
 from tests.agent.turn_helpers import LISBON, tool_rows
+from tests.fakes import ignore, no_typing
 from tests.helpers import ANA, ANA_ID, DIOGO, OWNER, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import config as server_config
 from tests.mcp.servers import in_process, make_asking
@@ -89,6 +90,8 @@ class Alfred:
             zone=LISBON,
             inputs=self.requests,
             questions=outbox,
+            typing=no_typing,
+            nudge=ignore,
         )
         self.dispatcher: Dispatcher = make_dispatcher(
             users,

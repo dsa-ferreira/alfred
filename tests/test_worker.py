@@ -33,6 +33,7 @@ from alfred.tools.base import AllowList, Question
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.worker import Worker, _reset_marker
 from tests.agent.turn_helpers import tool_rows
+from tests.fakes import NoInputRequests, NoQuestions, NoReminders, ignore, no_typing
 from tests.helpers import (
     ANA,
     DIOGO,
@@ -104,6 +105,9 @@ class Setup:
             nudge=self._nudge,
             reminders=self.reminders,
             zone=LISBON,
+            inputs=NoInputRequests(),
+            questions=NoQuestions(),
+            typing=no_typing,
         )
 
     def _nudge(self) -> None:
@@ -170,7 +174,17 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
 
     s = Setup(sessions, FakeModel())
     worker = Worker(
-        s.queue, SlowAgent(), s.history, s.outbox, QueueConfig(**FAST), users=Users((DIOGO,))
+        s.queue,
+        SlowAgent(),
+        s.history,
+        s.outbox,
+        QueueConfig(**FAST),
+        users=Users((DIOGO,)),
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
+        nudge=ignore,
     )
     task = asyncio.create_task(worker.run_forever())
     for i in range(3):
@@ -238,6 +252,11 @@ async def test_head_of_line_waits_for_retry(sessions: async_sessionmaker[AsyncSe
         s.outbox,
         QueueConfig(retry_initial_s=0.3, retry_max_s=1),
         users=Users((DIOGO,)),
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
+        nudge=ignore,
     )
     await s.queue.enqueue_user("diogo", "one")
     await s.worker._step()  # fails, retry in 0.3 s
@@ -316,6 +335,11 @@ async def test_unexpected_error_fails_item(sessions: async_sessionmaker[AsyncSes
         s.outbox,
         QueueConfig(**FAST),
         users=Users((dataclasses.replace(DIOGO, address="Mr. Ferreira"),)),
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        typing=no_typing,
+        nudge=ignore,
     )
     await s.queue.enqueue_user("diogo", "hi")
     await s.drain()
@@ -495,6 +519,10 @@ def typing_worker(s: Setup, events: list[str], queue: QueueConfig | None = None)
         queue or QueueConfig(**FAST),
         users=Users((DIOGO,)),
         typing=RecordingTyping(events),
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        nudge=ignore,
     )
 
 
@@ -953,6 +981,10 @@ async def test_typing_in_the_users_own_chat(sessions: async_sessionmaker[AsyncSe
         QueueConfig(**FAST),
         users=Users((DIOGO, ANA)),
         typing=RecordingTyping(events),
+        inputs=NoInputRequests(),
+        questions=NoQuestions(),
+        reminders=NoReminders(),
+        nudge=ignore,
     )
     await s.queue.enqueue_user("ana", "hi")
     while await worker._step():
@@ -1172,9 +1204,10 @@ class Waits(Setup):
             users=self.users,
             reminders=self.reminders,
             zone=LISBON,
-            typing=typing,
+            typing=typing or no_typing,
             inputs=self.requests,
             questions=self.questions,
+            nudge=ignore,
         )
 
     async def tap(self, user: str, option: int = 0, which: int = -1) -> None:

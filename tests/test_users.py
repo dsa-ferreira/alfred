@@ -27,6 +27,7 @@ from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.tools.conversation import END_CONVERSATION
 from alfred.worker import Worker
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
+from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
 from tests.helpers import ANA, DIOGO, FakeEmbedder, FakeModel, calls, make_agent, make_config, text
 from tests.mcp.servers import in_process, make_cookbook, make_mcparr
 
@@ -75,6 +76,10 @@ class House:
             users=cfg.users,
             reminders=self.reminders,
             zone=LISBON,
+            inputs=NoInputRequests(),
+            questions=NoQuestions(),
+            typing=no_typing,
+            nudge=ignore,
         )
 
     async def say(self, user: str, message: str) -> None:
