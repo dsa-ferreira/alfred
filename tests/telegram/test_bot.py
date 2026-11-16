@@ -36,9 +36,8 @@ from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
-from alfred.turns.inputs.titles import title
 from alfred.turns.intake import ChatIntake
-from alfred.turns.payloads import ChatPayload
+from alfred.turns.kinds.chat import ChatPayload
 from alfred.turns.queue import Item, Queue, read_item
 from alfred.turns.tables import QueueItem
 from tests.attachments.files import image_bytes, text_pdf
@@ -51,7 +50,7 @@ from tests.fakes import (
     no_taps,
     no_typing,
 )
-from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore, add_queue_item
+from tests.helpers import ANA, ANA_ID, DIOGO, FakeStore, add_queue_item, make_endings
 from tests.telegram.fake_bot import OWNER, TOKEN, callback_update, make_bot, message_update
 
 PDF = "application/pdf"
@@ -419,7 +418,6 @@ async def test_long_replies_are_split() -> None:
 
 
 async def test_reply_to_every_owner_message(sessions: async_sessionmaker[AsyncSession]) -> None:
-    from alfred.conversations.store import History
     from alfred.llm.chat import ModelFailed
     from alfred.turns.worker import Worker
     from tests.helpers import FakeModel, make_agent, make_config, text
@@ -820,7 +818,7 @@ async def test_confirmation_shows_the_real_call() -> None:
 
 async def test_request_from_a_service() -> None:
     bot, session = make_bot()
-    question = titled(DUNE, title("ask", source="jellyfin"))
+    question = titled(DUNE, "For a request from jellyfin:")
     await TelegramOutbox(bot).send_question(DIOGO, 3, question)
     assert "jellyfin" in session.sent()[0].text
 
@@ -888,9 +886,9 @@ async def tap_setup(
     sessions: async_sessionmaker[AsyncSession], *, expires_at: datetime | None = None
 ) -> tuple[Any, Any, Dispatcher, InputRequests, int, int, Wakes]:
     bot, session = make_bot()
-    requests = InputRequests(sessions, History(sessions), USERS)
+    requests = InputRequests(sessions)
     wakes = Wakes()
-    taps = Taps(USERS, requests, TelegramOutbox(bot), wakes)
+    taps = Taps(USERS, requests, make_endings(sessions, USERS), TelegramOutbox(bot), wakes)
     dispatcher = make_dispatcher(
         USERS,
         ChatIntake(sessions, Queue(sessions)),
@@ -997,11 +995,13 @@ async def waiting_for_diogo(
     sessions: async_sessionmaker[AsyncSession], bot: Any
 ) -> tuple[ChatIntake, InputRequests, int]:
     """Chat intake wired as serve wires it, and diogo's parked turn: (intake, store, item id)."""
-    requests = InputRequests(sessions, History(sessions), USERS)
+    requests = InputRequests(sessions)
     queue = ChatIntake(
         sessions,
         Queue(sessions),
-        before_message=cancel_on_new_message(requests, TelegramOutbox(bot), USERS),
+        before_message=cancel_on_new_message(
+            requests, make_endings(sessions, USERS), TelegramOutbox(bot), USERS
+        ),
     )
     item = await add_queue_item(sessions, "chat", "add Dune")
     request = await requests.park(

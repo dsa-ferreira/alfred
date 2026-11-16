@@ -14,6 +14,11 @@ loop up to ai.max_requests_per_turn:
 fail "stopped after too many steps"
 ```
 
+**Kinds.** The agent names no kind either: the worker passes the turn's
+``Framing`` (``alfred.agent.framing``), which says which turn rules the
+system prompt adds, whether the history's attachments are shown inline, and
+what input line follows the history.
+
 **Tools.** The agent names no tool: what is offered on which turn, and what
 a call does, is up to the toolsets (``alfred.kernel.toolset``) that ``app.py``
 passes in, seen through the turn user's allow-list and confirm list
@@ -60,6 +65,7 @@ from alfred.agent import notices
 from alfred.agent.checkpoint import Checkpoint
 from alfred.agent.config import AgentConfig
 from alfred.agent.context import context_sizes, largest_tools
+from alfred.agent.framing import Framing
 from alfred.agent.inline import ImageCache, InlineAttachments
 from alfred.agent.messages import stamped, strip_stamp, to_messages
 from alfred.agent.prompts import FactsBlock, KnownFact, brain_line, facts_block, system_prompt
@@ -79,7 +85,7 @@ from alfred.kernel.toolset import (
     dispatch_resume,
     parse_arguments,
 )
-from alfred.kernel.turn import ChatTurn, Resume, TurnInput
+from alfred.kernel.turn import Resume, TurnInput
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelFailed, ModelReply, ModelUnreachable, ToolCall, token_counts
 from alfred.times import format_now, format_when
@@ -121,9 +127,12 @@ class Agent:
         self._zone = ZoneInfo(ai.timezone)
         self._times = _Times(self._zone)
 
-    async def run(self, turn: TurnInput, *, hidden_items: Collection[int] = ()) -> TurnResult:
-        """Run ``turn``; the entries of the queue items ``hidden_items`` (other
-        parked turns) are left out of its history."""
+    async def run(
+        self, turn: TurnInput, framing: Framing, *, hidden_items: Collection[int] = ()
+    ) -> TurnResult:
+        """Run ``turn``, framed by its kind's ``framing``; the entries of the
+        queue items ``hidden_items`` (other parked turns) are left out of its
+        history."""
         opened: list[OpenToolset] = []
         for toolset in self._toolsets:
             open_toolset = await toolset.open(turn)
@@ -133,6 +142,7 @@ class Agent:
         definitions = [d for t in opened for d in t.definitions]
         this = _Turn(
             turn,
+            framing,
             opened,
             definitions,
             [n.text for t in opened for n in t.prompt_notes],
@@ -220,10 +230,14 @@ class Agent:
         )
         state.messages.append(self._system_message(this, brain, now))
         inline = {}
-        if self._attachments is not None and this.images is not None and isinstance(turn, ChatTurn):
+        if (
+            self._attachments is not None
+            and this.images is not None
+            and this.framing.inline_attachments
+        ):
             inline = await self._attachments.build(entries, vision=brain.vision, cache=this.images)
         state.messages += to_messages(entries, self._zone, inline)
-        line = turn.input_line(now, self._times)
+        line = this.framing.input_line(now, self._times)
         if line is not None:
             state.messages.append({"role": "user", "content": line})
         for open_toolset in this.opened:
@@ -279,16 +293,16 @@ class Agent:
         turn = this.input
         user = turn.user
         others = [b.name for b in self._brains.brains if b != brain]
-        flags = turn.prompt_flags()
+        rules = this.framing.rules
         return {
             "role": "system",
             "content": system_prompt(
                 self._ai.persona,
                 name=user.name,
                 address=user.address,
-                ask=flags.ask,
-                reminder=flags.reminder,
-                reminder_quiet=flags.reminder_quiet,
+                ask=rules.ask,
+                reminder=rules.reminder,
+                reminder_quiet=rules.reminder_quiet,
                 today=now.astimezone(self._zone).date(),
                 tools=this.offered,
                 others=[u.name for u in self._users if u.name != user.name],
@@ -500,6 +514,7 @@ class _Turn:
     """What stays the same across a turn's attempts."""
 
     input: TurnInput
+    framing: Framing
     opened: list[OpenToolset]
     definitions: list[dict[str, Any]]
     notes: list[str]
@@ -545,7 +560,7 @@ def _images_note(outcome: ToolOutcome) -> str:
 
 
 class _Times:
-    """Times in the user's zone, for the ask and reminder input lines."""
+    """Times in the user's zone, for the input lines (``framing.TimeFormat``)."""
 
     def __init__(self, zone: ZoneInfo) -> None:
         self._zone = zone

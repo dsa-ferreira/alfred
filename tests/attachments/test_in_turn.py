@@ -66,7 +66,8 @@ async def test_tool_order_with_attachments(
         store=FakeStore(),
         attachments=ATTACHMENTS,
     )
-    await a.run(ChatTurn("hi", item, user=DIOGO))
+    turn = ChatTurn("hi", item, user=DIOGO)
+    await a.run(turn)
     assert [t["function"]["name"] for t in model.requests[0][1]] == [
         _WEB_SEARCH,
         _WEB_FETCH,
@@ -109,7 +110,8 @@ async def test_owner_turn_views_an_earlier_photo(
     item, _ = await owner_with_files(sessions, "and the date on it?", [])
     model = FakeModel([calls((_VIEW_ATTACHMENT, json.dumps({"id": 1}))), text("9 November, sir.")])
     a = agent(sessions, model, brains=vision_brains(), store=store, attachments=ATTACHMENTS)
-    result = await a.run(ChatTurn("and the date on it?", item, user=DIOGO))
+    turn = ChatTurn("and the date on it?", item, user=DIOGO)
+    result = await a.run(turn)
 
     assert result.reply == "9 November, sir."
     system = model.requests[0][0][0]["content"]
@@ -131,7 +133,8 @@ async def test_text_only_brain_explains_no_view_tool(
     a = agent(
         sessions, model, brains=vision_brains(False), store=FakeStore(), attachments=ATTACHMENTS
     )
-    await a.run(ChatTurn("hi", item, user=DIOGO))
+    turn = ChatTurn("hi", item, user=DIOGO)
+    await a.run(turn)
     system = model.requests[0][0][0]["content"]
     assert _TEXT_ONLY_NOTE in system and _VIEW_ATTACHMENT not in system
     names = {t["function"]["name"] for t in model.requests[0][1]}

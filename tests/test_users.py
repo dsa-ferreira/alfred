@@ -23,6 +23,7 @@ from alfred.reminders.store import Reminders
 from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.intake import ChatIntake
+from alfred.turns.kinds import Kinds
 from alfred.turns.queue import Queue
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import COOKBOOK, MCPARR, Clock
@@ -86,7 +87,7 @@ class House:
             self.outbox,
             cfg.queue,
             users=cfg.users,
-            zone=LISBON,
+            kinds=Kinds.default(LISBON),
             parking=Parking(NoInputRequests(), NoQuestions()),
             typing=no_typing,
             nudge=ignore,

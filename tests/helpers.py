@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alfred.agent.framing import Framing
 from alfred.agent.inline import InlineAttachments
+from alfred.agent.results import TurnResult
 from alfred.agent.turn import Agent, _Model
 from alfred.app import _build_toolsets
 from alfred.archive.summaries import Summaries
@@ -27,6 +30,7 @@ from alfred.conversations.store import History
 from alfred.facts.tools import FactTools
 from alfred.http.config import ServerConfig, Service
 from alfred.kernel.access import AllowList
+from alfred.kernel.turn import TurnInput
 from alfred.kernel.users import User, Users
 from alfred.llm.chat import ModelReply, ToolCall
 from alfred.mcp.client import Connector
@@ -38,8 +42,13 @@ from alfred.turns.background import Sweeper
 from alfred.turns.call_log import ToolCallLog
 from alfred.turns.config import QueueConfig
 from alfred.turns.due_reminders import _claim_once
+from alfred.turns.exchange import Exchange
+from alfred.turns.inputs.endings import Endings
 from alfred.turns.intake import ChatIntake
-from alfred.turns.payloads import AskPayload, ChatPayload, Payload, ReminderPayload
+from alfred.turns.kinds import Kinds
+from alfred.turns.kinds.ask import AskPayload
+from alfred.turns.kinds.chat import ChatPayload
+from alfred.turns.kinds.reminder import ReminderPayload
 from alfred.turns.queue import Queue, read_item
 from alfred.turns.tables import QueueItem
 from alfred.web.config import WebConfig
@@ -57,6 +66,37 @@ ANA = User(
     "madam",
     tools=AllowList.of("alfred_*", "cookbook_*", "mcparr_find_media", "mcparr_add_media"),
 )
+
+# Every kind, with reminder notices in UTC (the worker's default).
+KINDS = Kinds.default(ZoneInfo("UTC"))
+
+
+def framing(turn: TurnInput) -> Framing:
+    """How the worker frames ``turn`` for the agent: its kind's framing."""
+    return KINDS.of(turn).framing(turn)
+
+
+class FramingAgent(Agent):
+    """An agent whose ``run`` frames the turn by its kind when not told, as the worker does."""
+
+    async def run(
+        self,
+        turn: TurnInput,
+        framing_: Framing | None = None,
+        *,
+        hidden_items: Collection[int] = (),
+    ) -> TurnResult:
+        return await super().run(turn, framing_ or framing(turn), hidden_items=hidden_items)
+
+
+def make_endings(
+    sessions: async_sessionmaker[AsyncSession],
+    users: Users,
+    history: History | None = None,
+    kinds: Kinds = KINDS,
+) -> Endings:
+    """Records ended input requests' turns, as ``serve`` wires it (nothing is sent)."""
+    return Endings(sessions, Exchange(history or History(sessions), _NoOutbox()), kinds, users)
 
 
 def make_config(
@@ -149,7 +189,7 @@ async def add_queue_item(
 ) -> int:
     """A pending queue item of ``kind`` for ``user``; its text is the message, prompt or
     reminder. Reminder items are a snapshot of reminder ``reminder_id``, due now."""
-    payload: Payload
+    payload: ChatPayload | AskPayload | ReminderPayload
     match kind:
         case "chat":
             payload = ChatPayload(text_)
@@ -239,7 +279,7 @@ def make_agent(
         attachments=attachments,
         now=now,
     )
-    return Agent(
+    return FramingAgent(
         model,
         history,
         ToolCallLog(sessions),
@@ -365,3 +405,8 @@ def reminder_of(item: QueueItem) -> ReminderPayload:
     """A reminder queue item's payload."""
     assert item.kind == "reminder", item.kind
     return ReminderPayload.from_json(item.payload)
+
+
+class _NoOutbox:
+    async def send(self, user: User, text_: str) -> None:
+        raise AssertionError("an ending is recorded, never sent")

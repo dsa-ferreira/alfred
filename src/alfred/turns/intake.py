@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.attachments import NewAttachment, rows
-from alfred.turns.payloads import ChatPayload
+from alfred.turns.kinds.chat import ChatPayload
 from alfred.turns.queue import Queue
 
 

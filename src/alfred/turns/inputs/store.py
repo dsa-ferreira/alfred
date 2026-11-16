@@ -13,14 +13,13 @@ it expects, so a double tap, a tap racing the expiry, or a restart applies
 nothing twice. Every query names the user the request belongs to.
 
 A request that ends without an answer (cancelled, expired, or a question that
-couldn't be sent) cancels its queue item in the same transaction. The turn's
-fixed entries are recorded after it, by item kind, written by alfred: the
-model sees in later turns what was not done.
+couldn't be sent) cancels its queue item in the same transaction, and is
+returned: whoever ended it records the turn's entries
+(``turns.inputs.endings``). This store records no history.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -29,16 +28,8 @@ from typing import Any, Literal
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.conversations.store import History
-from alfred.conversations.tables import EntryOrigin
 from alfred.kernel.questions import Question
-from alfred.kernel.users import Users
-from alfred.turns.inputs import notices
-from alfred.turns.payloads import AskPayload, ChatPayload, ReminderPayload
-from alfred.turns.queue import read_item
 from alfred.turns.tables import InputRequest, QueueItem
-
-log = logging.getLogger(__name__)
 
 # A request in these statuses keeps its turn parked.
 _LIVE_STATUSES = ("open", "answered", "running")
@@ -81,12 +72,8 @@ class RequestRow:
 
 
 class InputRequests:
-    def __init__(
-        self, sessions: async_sessionmaker[AsyncSession], history: History, users: Users
-    ) -> None:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
-        self._history = history
-        self._users = users
 
     async def park(
         self,
@@ -140,7 +127,8 @@ class InputRequests:
 
         Only the request's own user, only while it is open and not expired.
         The row is locked first, so of two taps at once the second sees it
-        answered. A tap past the expiry ends the request there and then.
+        answered. A tap past the expiry ends the request there and then, and
+        returns it (``expired``) for its turn's entries to be recorded.
         """
         async with self._sessions.begin() as session:
             found = (
@@ -178,7 +166,6 @@ class InputRequests:
                 )
                 await session.flush()
                 return _Answer("answered", RequestRow.of(row), options[option]["label"])
-        await self._record_endings([expired] if expired else [])
         return _Answer("not_open", expired, expired=expired is not None)
 
     async def take_answered(self, item_id: int, user: str) -> RequestRow | None:
@@ -258,9 +245,7 @@ class InputRequests:
 
     async def _end(self, where: Sequence[Any], reason: EndReason) -> list[RequestRow]:
         async with self._sessions.begin() as session:
-            ended = await self._end_in(session, where, reason)
-        await self._record_endings(ended)
-        return ended
+            return await self._end_in(session, where, reason)
 
     async def _end_in(
         self, session: AsyncSession, where: Sequence[Any], reason: EndReason
@@ -286,48 +271,6 @@ class InputRequests:
                 .values(status="cancelled", finished_at=func.now(), failure_reason=reason)
             )
         return sorted((RequestRow.of(r) for r in rows), key=lambda r: r.id)
-
-    async def _record_endings(self, ended: Sequence[RequestRow]) -> None:
-        """The fixed entries of each turn that ended unanswered, by its item's kind."""
-        for request in ended:
-            try:
-                await self._record_ending(request)
-            except Exception:
-                log.exception("input request %s: could not record its ending", request.id)
-
-    async def _record_ending(self, request: RequestRow) -> None:
-        async with self._sessions() as session:
-            item = await read_item(session, request.queue_item_id)
-        if item is None:
-            return
-        user = self._users.get(request.user_name)
-        address = user.address if user is not None else "sir"
-        text = notices.input_not_done(address, request.tool, request.cancel_reason or "")
-        name, history = request.user_name, self._history
-        log.info(
-            "input request %s (item %s, %s): ended unanswered (%s)",
-            request.id,
-            item.id,
-            name,
-            request.cancel_reason,
-        )
-        payload = item.payload
-        match payload:
-            case ChatPayload():
-                await history.append(name, "assistant", text, turn_id=item.id)
-            case AskPayload(source=source, prompt=prompt):
-                await history.append(name, "ask_prompt", prompt, source=source, turn_id=item.id)
-                await history.append(name, "ask_reply", text, source=source, turn_id=item.id)
-            case ReminderPayload():
-                origin = EntryOrigin(payload.reminder_id, payload.due_at, payload.created_by)
-                for kind, entry_text in (("reminder", payload.text), ("reminder_reply", text)):
-                    await history.append(
-                        name,
-                        kind,  # type: ignore[arg-type]
-                        entry_text,
-                        turn_id=item.id,
-                        origin=origin,
-                    )
 
 
 @dataclass(frozen=True)

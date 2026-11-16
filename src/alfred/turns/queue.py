@@ -21,31 +21,34 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.turns.payloads import AskPayload, Payload, TurnKind, payload_from_json
+from alfred.turns.kinds import payload_from_json, tag_of
+from alfred.turns.kinds.ask import AskPayload
 from alfred.turns.tables import QueueItem
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class Item:
+class Item[P = Any]:
     """A queue item as the worker and its kinds read it: its payload typed."""
 
     id: int
     # Whose turn it is: the sender, the /ask target or the reminder's recipient.
     user_name: str
-    payload: Payload
+    payload: P
     attempts: int
     next_attempt_at: datetime
     created_at: datetime
 
     @property
-    def kind(self) -> TurnKind:
-        return self.payload.kind
+    def kind(self) -> str:
+        """Its kind's tag (``alfred.turns.kinds``)."""
+        return tag_of(self.payload)
 
 
 class QueueActivity:
@@ -99,13 +102,14 @@ class Queue:
             )
         return found is not None
 
-    async def add(self, session: AsyncSession, user: str, payload: Payload) -> int:
+    async def add(self, session: AsyncSession, user: str, payload: object) -> int:
         """Queue a turn for ``user`` in the caller's transaction; the item's id.
 
-        The kind is the payload's. Nothing is told: the caller calls
-        :meth:`notify` once it has committed.
+        The kind is the one whose payload type ``payload`` is
+        (``turns.kinds``). Nothing is told: the caller calls :meth:`notify`
+        once it has committed.
         """
-        item = QueueItem(kind=payload.kind, user_name=user, payload=payload.to_json())
+        item = QueueItem(kind=tag_of(payload), user_name=user, payload=payload.to_json())  # type: ignore[attr-defined]
         session.add(item)
         await session.flush()
         return item.id

@@ -2,7 +2,7 @@
 
 - ``queue_items``: AI-bound work (users' messages, ``/ask`` prompts and due
   reminders), each for one user. What each kind carries is its ``payload``
-  (``turns.payloads``).
+  (``turns.kinds``).
 - ``turn_tool_calls``: the tool calls each turn made, for auditing.
 - ``input_requests``: a parked turn's question to its user and the turn's
   saved progress. Its queue item is ``waiting`` while the request is
@@ -53,7 +53,7 @@ class QueueItem(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     # Whose turn it is: the sender, the /ask target or the reminder's recipient.
     user_name: Mapped[str] = mapped_column(Text, nullable=False)
-    # The kind's data (``turns.payloads``).
+    # The kind's data (``turns.kinds``).
     payload: Mapped[Any] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

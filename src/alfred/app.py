@@ -71,10 +71,13 @@ from alfred.toolbox.dates import DateTools
 from alfred.turns.background import Sweeper
 from alfred.turns.call_log import ToolCallLog
 from alfred.turns.due_reminders import run_due_loop
+from alfred.turns.exchange import Exchange
+from alfred.turns.inputs.endings import Endings
 from alfred.turns.inputs.loop import cancel_on_new_message, run_expiry_loop
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
 from alfred.turns.intake import ChatIntake
+from alfred.turns.kinds import Kinds
 from alfred.turns.queue import Queue, busy
 from alfred.turns.worker import Worker
 from alfred.web.tools import WebTools
@@ -194,6 +197,7 @@ class _Services:
     queue: Queue
     reminders: ReminderTools
     inputs: InputRequests
+    endings: Endings
     outbox: TelegramOutbox
     brains: Brains
     orphans: OrphanSweeper | None
@@ -247,11 +251,17 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         on_archive=summaries.changed.set,
         recalled=recalled,
     )
+    # Chat, /ask and reminder turns: what each records and sends.
+    kinds = Kinds.default(ZoneInfo(config.ai.timezone))
     # Turns waiting for their user's answer: a user's new message
-    # cancels theirs before it is queued.
-    inputs = InputRequests(sessions, history, config.users)
+    # cancels theirs before it is queued, and the turns that end
+    # unanswered are recorded through their kinds.
+    inputs = InputRequests(sessions)
+    endings = Endings(sessions, Exchange(history, outbox), kinds, config.users)
     chat = ChatIntake(
-        sessions, queue, before_message=cancel_on_new_message(inputs, outbox, config.users)
+        sessions,
+        queue,
+        before_message=cancel_on_new_message(inputs, endings, outbox, config.users),
     )
     # User facts: extraction after the summaries, then embedding, which
     # needs no quiet queue, then the duplicate check.
@@ -332,10 +342,11 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         users=config.users,
         nudge=summaries.changed.set,
         typing=outbox.typing,
-        zone=ZoneInfo(config.ai.timezone),
+        kinds=kinds,
         parking=Parking(
             inputs,
             outbox,
+            endings=endings,
             expire_after=timedelta(minutes=config.input_requests.expire_after_min),
         ),
     )
@@ -345,7 +356,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         intake=intake,
         album_wait_s=config.attachments.album_wait_s if config.attachments else 2,
         memory=MemoryCommand(facts, ZoneInfo(config.ai.timezone)),
-        on_tap=Taps(config.users, inputs, outbox, queue.activity.notify),
+        on_tap=Taps(config.users, inputs, endings, outbox, queue.activity.notify),
     )
     await register_commands(bot)
     server = _Server(
@@ -373,6 +384,7 @@ async def _build_services(config: Config, stack: contextlib.AsyncExitStack) -> _
         queue=queue,
         reminders=reminders,
         inputs=inputs,
+        endings=endings,
         outbox=outbox,
         brains=brains,
         orphans=orphans,
@@ -406,7 +418,9 @@ async def _run_tasks(config: Config, services: _Services) -> asyncio.Task[object
         ),
         # On the reminders' clock; no setting of its own.
         asyncio.create_task(
-            run_expiry_loop(s.inputs, s.outbox, config.users, config.reminders.check_interval_s),
+            run_expiry_loop(
+                s.inputs, s.endings, s.outbox, config.users, config.reminders.check_interval_s
+            ),
             name="input-requests",
         ),
     }

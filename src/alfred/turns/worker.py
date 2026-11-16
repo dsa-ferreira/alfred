@@ -11,7 +11,21 @@ queue. Replies and fixed notices go to that user, in their form of address;
 a brain fallback is also told to the admin.
 
 **Kinds.** What differs between chat, ``/ask`` and reminder turns (what is
-recorded, what is sent, what a failure sends) is in :mod:`alfred.turns.kinds`.
+recorded, what is sent, what a failure sends) is decided by their kinds
+(:mod:`alfred.turns.kinds`); the worker does it through
+:class:`alfred.turns.exchange.Exchange`:
+
+```
+start      o = kind.opening(item, turn); [tell idle marker]; record(o.entries)
+success    text = kind.answer(turn, reply, now)
+           if text: deliver(...)                 # the exchange first...
+           finish("done")                        # ...then the item
+failure    retryable -> retry later
+           Deliver(text): deliver(...); finish("failed")
+           Tell(text):    finish("failed"); send(text)
+           Silent:        finish("failed")
+```
+
 A turn that asks to reset the conversation archives it afterwards; the
 memory sweeper summarises it in the background, so the next item never
 waits.
@@ -30,10 +44,11 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from alfred.agent import notices as agent_notices
+from alfred.agent.framing import Framing
 from alfred.agent.results import Fallback, TurnFailed, TurnResult
 from alfred.backoff import backoff_s
 from alfred.conversations import notices as conversations_notices
@@ -43,10 +58,11 @@ from alfred.kernel.turn import TurnInput
 from alfred.kernel.users import User, Users
 from alfred.turns import notices as turns_notices
 from alfred.turns.config import QueueConfig
+from alfred.turns.exchange import Exchange
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import RequestRow
-from alfred.turns.kinds import AskKind, ChatKind, Kind, ReminderKind
-from alfred.turns.payloads import TurnKind
+from alfred.turns.kinds import Kinds
+from alfred.turns.kinds.base import Deliver, Silent, Tell, TurnKind
 from alfred.turns.queue import Item, Queue
 
 log = logging.getLogger(__name__)
@@ -65,7 +81,7 @@ class Worker:
         parking: Parking,
         typing: Callable[[User], AbstractAsyncContextManager[None]],
         nudge: Callable[[], None],
-        zone: ZoneInfo | None = None,
+        kinds: Kinds | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._queue = queue
@@ -77,15 +93,11 @@ class Worker:
         self._nudge = nudge
         self._agent = agent
         self._history = history
-        self._outbox = outbox
         self._config = config
         self._users = users
         self._now = now
-        self._kinds: dict[TurnKind, Kind] = {
-            "chat": ChatKind(history, self._send),
-            "ask": AskKind(history, self._send),
-            "reminder": ReminderKind(history, self._send, zone or ZoneInfo("UTC"), now),
-        }
+        self._kinds = kinds if kinds is not None else Kinds.default(ZoneInfo("UTC"))
+        self._exchange = Exchange(history, outbox)
 
     async def run_forever(self) -> None:
         log.info("queue worker started")
@@ -118,11 +130,11 @@ class Worker:
             log.error("queue item %s (%s): %s; marked failed", item.id, item.kind, reason)
             await self._queue.finish(item.id, "failed", reason)
             return
-        kind = self._kinds[item.kind]
+        kind = self._kinds.by_tag(item.kind)
         if await self._parking.stopped_mid_call(item.id, user.name):
             await self._turn_failed(
                 item,
-                await kind.turn(item, user),
+                kind.turn(item, user),
                 TurnFailed(
                     "stopped while an answered call was running; not run again",
                     agent_notices.failed(user.address, True),
@@ -132,15 +144,15 @@ class Worker:
             )
             return
         request = await self._parking.take_answer(item.id, user.name)
+        turn = kind.turn(item, user)
         if request is None:
-            await kind.start(item, user)
-        turn = await kind.turn(item, user)
-        if request is not None:
+            await self._exchange.open(item.id, user, kind.opening(item, turn))
+        else:
             turn = self._parking.resumed(turn, request)
         indicator = self._typing(user) if kind.shows_typing else contextlib.nullcontext()
         try:
             async with indicator:
-                result = await self._run(turn, request)
+                result = await self._run(turn, kind.framing(turn), request)
         except TurnFailed as failure:
             await self._turn_failed(item, turn, failure)
             return
@@ -159,11 +171,13 @@ class Worker:
             return
         if result.waiting is not None:
             await self._tell_fallback(item, user, result.fallback)
-            await self._parking.park(item, turn, result.waiting)
+            await self._parking.park(item, turn, result.waiting, kind.question_title(turn))
             return
         await self._complete(item, turn, result)
 
-    async def _run(self, turn: TurnInput, request: RequestRow | None) -> TurnResult:
+    async def _run(
+        self, turn: TurnInput, framing: Framing, request: RequestRow | None
+    ) -> TurnResult:
         """Run the turn; a resumed turn's request is ``done`` once it ends, however it ends.
 
         Before anything else happens with the result, so a turn that parks
@@ -171,7 +185,7 @@ class Worker:
         """
         try:
             hidden = await self._parking.others_parked(turn)
-            return await self._agent.run(turn, hidden_items=hidden)
+            return await self._agent.run(turn, framing, hidden_items=hidden)
         finally:
             if request is not None:
                 await self._parking.finish(request)
@@ -201,17 +215,27 @@ class Worker:
             )
             return
         log.error("queue item %s (%s) failed: %s", item.id, item.kind, failure.reason)
-
-        async def finish() -> None:
-            await self._queue.finish(item.id, "failed", failure.reason)
-
-        await self._kinds[item.kind].fail(item, turn, failure, finish)
+        kind = self._kinds.of(turn)
+        match kind.on_failure(turn, failure, self._now()):
+            case Deliver(text):
+                # The exchange before the item, so a crash repeats it, never loses it.
+                await self._exchange.deliver(item.id, kind, turn, text)
+                await self._queue.finish(item.id, "failed", failure.reason)
+            case Tell(text):
+                # A notice outside the exchange after the item, so a crash never repeats it.
+                await self._queue.finish(item.id, "failed", failure.reason)
+                await self._send(item, turn.user, text)
+            case Silent():
+                await self._queue.finish(item.id, "failed", failure.reason)
 
     async def _complete(self, item: Item, turn: TurnInput, result: TurnResult) -> None:
         # The brain choice changed, so it is told even when an /ask ends in NO_REPLY.
         await self._tell_fallback(item, turn.user, result.fallback)
         user = turn.user
-        await self._kinds[item.kind].deliver(item, turn, result.reply)
+        kind: TurnKind[Any, Any] = self._kinds.of(turn)
+        text = kind.answer(turn, result.reply, self._now())
+        if text is not None:
+            await self._exchange.deliver(item.id, kind, turn, text)
         await self._queue.finish(item.id, "done")
 
         if result.reset_requested:
@@ -235,12 +259,10 @@ class Worker:
         )
 
     async def _send(self, item: Item, user: User, text: str) -> None:
-        try:
-            await self._outbox.send(user, text)
-        except Exception:
-            # The turn already ran; re-running it would repeat tool actions.
-            log.exception("queue item %s: could not deliver a message to %s", item.id, user.name)
+        await self._exchange.send(item.id, user, text)
 
 
 class _TurnRunner(Protocol):
-    async def run(self, turn: TurnInput) -> TurnResult: ...
+    async def run(
+        self, turn: TurnInput, framing: Framing, *, hidden_items: set[int]
+    ) -> TurnResult: ...

@@ -58,6 +58,7 @@ from tests.helpers import (
     DIOGO,
     FakeEmbedder,
     FakeModel,
+    FramingAgent,
     add_queue_item,
     agent_settings,
     calls,
@@ -479,7 +480,7 @@ async def test_toolsets_opened_once_and_told_of_every_attempt(
     recorder = Recorder()
     brains = two_brains("bonsai")
     model = FakeModel([BAD_MODEL, text("gemma's answer")])
-    a = Agent(
+    a = FramingAgent(
         model,
         History(sessions),
         ToolCallLog(sessions),
@@ -560,7 +561,7 @@ async def test_tool_result_with_images(
     sessions: async_sessionmaker[AsyncSession], count: int, note: str
 ) -> None:
     model = FakeModel([calls(("snap", "{}")), text("A red square, sir.")])
-    a = Agent(
+    a = FramingAgent(
         model,
         History(sessions),
         ToolCallLog(sessions),
@@ -586,7 +587,7 @@ async def test_tool_result_without_images_stays_text(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     model = FakeModel([calls(("snap", "{}")), text("Nothing there.")])
-    a = Agent(
+    a = FramingAgent(
         model,
         History(sessions),
         ToolCallLog(sessions),
@@ -795,7 +796,7 @@ async def test_images_in_the_tail_are_replaced_by_a_note(
             return ToolOutcome(True, "two pictures", images=(image, image))
 
     config = make_config(mcp_servers=[MCPARR])
-    alfred = Agent(
+    alfred = FramingAgent(
         FakeModel([calls(("alfred_look", "{}"), ADD)]),
         History(sessions),
         ToolCallLog(sessions),

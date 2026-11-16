@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.turn import Agent
 from alfred.archive.search import ConversationSearch
 from alfred.attachments.config import AttachmentsConfig
 from alfred.attachments.tools import (
@@ -40,6 +39,7 @@ from tests.helpers import (
     FakeEmbedder,
     FakeModel,
     FakeStore,
+    FramingAgent,
     agent_settings,
     calls,
     image_file,
@@ -372,7 +372,7 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
     )  # read_chars 8000
     model = FakeModel([calls((_READ_DOCUMENT, '{"id": 1}')), text("Read.")])
     item = (await owner_with_files(sessions, "read it", []))[0]
-    agent = Agent(
+    agent = FramingAgent(
         model,
         History(sessions),
         ToolCallLog(sessions),
@@ -382,7 +382,8 @@ async def test_larger_than_the_global_limit(sessions: async_sessionmaker[AsyncSe
         attachments=None,
         facts=NoFacts(),
     )
-    await agent.run(ChatTurn("read it", item, user=DIOGO))
+    turn = ChatTurn("read it", item, user=DIOGO)
+    await agent.run(turn)
     result = model.requests[1][0][-1]["content"]
     assert len(result) > 6000
     assert all(p in result for p in pages)
@@ -402,7 +403,7 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
     toolset = AttachmentTools(store, sessions, the_brains, SETTINGS, History(sessions))
     model = FakeModel([BAD_MODEL, calls((_VIEW_ATTACHMENT, '{"id": 1}')), text("Sorry, sir.")])
     item = (await owner_with_files(sessions, "what's on it?", []))[0]
-    agent = Agent(
+    agent = FramingAgent(
         model,
         History(sessions),
         ToolCallLog(sessions),
@@ -412,7 +413,8 @@ async def test_fallback_mid_turn(sessions: async_sessionmaker[AsyncSession]) -> 
         attachments=None,
         facts=NoFacts(),
     )
-    await agent.run(ChatTurn("what's on it?", item, user=DIOGO))
+    turn = ChatTurn("what's on it?", item, user=DIOGO)
+    await agent.run(turn)
     assert model.models[:2] == ["bonsai-2:27b", GEMMA]
     assert model.requests[2][0][-1]["content"] == (
         'Error: the current brain "gemma" can\'t see images.'

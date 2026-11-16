@@ -8,14 +8,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alfred.agent.messages import to_messages
 from alfred.conversations.store import History
 from alfred.kernel.questions import Option, Question
-from alfred.kernel.users import Users
-from alfred.turns.inputs import notices
 from alfred.turns.inputs.store import InputRequests
 from alfred.turns.tables import InputRequest, QueueItem
-from tests.helpers import ANA, DIOGO, add_queue_item
+from tests.helpers import add_queue_item
 
 QUESTION = Question(
     "Run mcparr_add_media with these arguments?",
@@ -28,7 +25,7 @@ EARLIER = datetime.now(UTC) - timedelta(minutes=1)
 
 
 def store(sessions: async_sessionmaker[AsyncSession]) -> InputRequests:
-    return InputRequests(sessions, History(sessions), Users((DIOGO, ANA)))
+    return InputRequests(sessions)
 
 
 async def parked(
@@ -114,11 +111,8 @@ async def test_late_tap_expires_the_request(sessions: async_sessionmaker[AsyncSe
     assert result.outcome == "not_open" and result.expired
     assert result.request is not None and result.request.cancel_reason == "expired"
     assert await statuses(sessions, item, request) == ("cancelled", "expired")
-    # Its ending is recorded, once.
-    entries = await History(sessions).recent("ana", 30)
-    assert [e.text for e in entries] == [
-        notices.input_not_done("madam", "mcparr_add_media", "expired")
-    ]
+    # Returned for its ending to be recorded (test_endings); the store records nothing.
+    assert await History(sessions).recent("ana", 30) == []
 
 
 async def test_cancel_for_ends_only_that_users_open_requests(
@@ -190,58 +184,6 @@ async def test_one_live_request_per_item_after_an_answer(
         expires_at=LATER,
     )  # fmt: skip
     assert await statuses(sessions, item, again) == ("waiting", "open")
-
-
-# --- the ending path (design D5) -------------------------------------------------
-
-
-async def test_chat_ending_is_an_assistant_entry(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    history = History(sessions)
-    item, _ = await parked(sessions)
-    await history.append("ana", "user", "add Dune", turn_id=item)
-    await store(sessions).cancel_for("ana", "new_message")
-    entries = await history.recent("ana", 30)
-    assert [(e.kind, e.text) for e in entries] == [
-        ("user", "add Dune"),
-        ("assistant", notices.input_not_done("madam", "mcparr_add_media", "new_message")),
-    ]
-    # Later turn knows: the next turn's context carries it as alfred's reply.
-    messages = to_messages(entries)
-    assert messages[-1] == {
-        "role": "assistant",
-        "content": notices.input_not_done("madam", "mcparr_add_media", "new_message"),
-    }
-
-
-async def test_ask_ending_records_the_prompt_and_the_reply(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    _, request = await parked(sessions, "diogo", "ask", text_="anything to add?", source="jellyfin")
-    await store(sessions).cancel(request, "diogo", "not_delivered")
-    entries = await History(sessions).recent("diogo", 30)
-    assert [(e.kind, e.source, e.text) for e in entries] == [
-        ("ask_prompt", "jellyfin", "anything to add?"),
-        (
-            "ask_reply",
-            "jellyfin",
-            notices.input_not_done("sir", "mcparr_add_media", "not_delivered"),
-        ),
-    ]
-
-
-async def test_reminder_ending_is_its_delivered_message(
-    sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    due = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
-    await parked(sessions, "diogo", "reminder", text_="call mum", expires_at=EARLIER, due_at=due)
-    await store(sessions).expire_due()
-    entries = await History(sessions).recent("diogo", 30)
-    assert [(e.kind, e.text, e.reminder_due_at) for e in entries] == [
-        ("reminder", "call mum", due),
-        ("reminder_reply", notices.input_not_done("sir", "mcparr_add_media", "expired"), due),
-    ]
 
 
 async def test_queries_filter_on_the_user(sessions: async_sessionmaker[AsyncSession]) -> None:

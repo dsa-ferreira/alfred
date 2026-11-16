@@ -3,7 +3,7 @@
 ```
 new message from a user  -> cancel their open requests, then queue the message
 every check_interval_s   -> expire open requests past expires_at
-either way               -> the turns' entries are recorded (InputRequests),
+either way               -> the turns' entries are recorded (Endings),
                             and each question message is edited to say why
 ```
 
@@ -22,13 +22,14 @@ from typing import Protocol
 
 from alfred.kernel.users import User, Users
 from alfred.times import seconds_to_next_check
+from alfred.turns.inputs.endings import Endings
 from alfred.turns.inputs.store import InputRequests, RequestRow
 
 log = logging.getLogger(__name__)
 
 
 def cancel_on_new_message(
-    requests: InputRequests, outbox: _QuestionEditor, users: Users
+    requests: InputRequests, endings: Endings, outbox: _QuestionEditor, users: Users
 ) -> Callable[[str], Awaitable[None]]:
     """``ChatIntake``'s ``before_message``: a user's new message cancels their waiting turns."""
 
@@ -36,6 +37,7 @@ def cancel_on_new_message(
         ended = await requests.cancel_for(user_name, "new_message")
         if ended:
             log.info("%s sent a new message: cancelled %d waiting turn(s)", user_name, len(ended))
+            await endings.record(ended)
             await _edit_ended(outbox, users, ended)
 
     return cancel
@@ -43,6 +45,7 @@ def cancel_on_new_message(
 
 async def run_expiry_loop(
     requests: InputRequests,
+    endings: Endings,
     outbox: _QuestionEditor,
     users: Users,
     interval_s: float,
@@ -53,7 +56,7 @@ async def run_expiry_loop(
     log.info("input request expiry loop started (every %gs)", interval_s)
     while True:
         try:
-            await _expire_once(requests, outbox, users)
+            await _expire_once(requests, endings, outbox, users)
         except Exception:
             # The database may be briefly away; the next check tries again.
             log.exception("input request expiry check failed")
@@ -70,11 +73,12 @@ async def _edit_ended(outbox: _QuestionEditor, users: Users, ended: Sequence[Req
 
 
 async def _expire_once(
-    requests: InputRequests, outbox: _QuestionEditor, users: Users
+    requests: InputRequests, endings: Endings, outbox: _QuestionEditor, users: Users
 ) -> list[RequestRow]:
     ended = await requests.expire_due()
     if ended:
         log.info("%d input request(s) expired: %s", len(ended), [r.id for r in ended])
+        await endings.record(ended)
         await _edit_ended(outbox, users, ended)
     return ended
 

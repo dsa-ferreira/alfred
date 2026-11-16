@@ -28,6 +28,7 @@ from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests
 from alfred.turns.intake import ChatIntake
+from alfred.turns.kinds import Kinds
 from alfred.turns.queue import Queue
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import LISBON, tool_rows
@@ -42,6 +43,7 @@ from tests.helpers import (
     claim_due,
     make_agent,
     make_config,
+    make_endings,
     text,
 )
 from tests.mcp.servers import config as server_config
@@ -83,9 +85,13 @@ class Alfred:
         history = History(sessions)
         self.queue = Queue(sessions)
         outbox = TelegramOutbox(self.bot)
-        self.requests = InputRequests(sessions, history, users)
+        self.requests = InputRequests(sessions)
+        kinds = Kinds.default(LISBON)
+        endings = make_endings(sessions, users, history, kinds)
         self.chat = ChatIntake(
-            sessions, self.queue, before_message=cancel_on_new_message(self.requests, outbox, users)
+            sessions,
+            self.queue,
+            before_message=cancel_on_new_message(self.requests, endings, outbox, users),
         )
         agent = make_agent(
             config,
@@ -102,15 +108,15 @@ class Alfred:
             outbox,
             QueueConfig(retry_initial_s=0.01, retry_max_s=0.04),
             users=users,
-            zone=LISBON,
-            parking=Parking(self.requests, outbox),
+            kinds=kinds,
+            parking=Parking(self.requests, outbox, endings=endings),
             typing=no_typing,
             nudge=ignore,
         )
         self.dispatcher: Dispatcher = make_dispatcher(
             users,
             self.queue,
-            on_tap=Taps(users, self.requests, outbox, self.queue.activity.notify),
+            on_tap=Taps(users, self.requests, endings, outbox, self.queue.activity.notify),
             intake=None,
             memory=NoMemoryCommand(),
         )

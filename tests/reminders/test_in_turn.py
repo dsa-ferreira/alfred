@@ -20,6 +20,7 @@ from alfred.reminders.tools import _REMIND_SET, _REMINDERS_LIST, ReminderTools
 from alfred.toolbox.calculator import _CALCULATE
 from alfred.toolbox.dates import _DATE
 from alfred.turns.inputs.parking import Parking
+from alfred.turns.kinds import Kinds
 from tests.agent.turn_helpers import (
     DUE,
     LISBON,
@@ -256,7 +257,7 @@ async def test_morning_briefing_uses_the_tools(
         outbox,
         cfg.queue,
         users=cfg.users,
-        zone=LISBON,
+        kinds=Kinds.default(LISBON),
         parking=Parking(NoInputRequests(), NoQuestions()),
         typing=no_typing,
         nudge=ignore,

@@ -16,7 +16,7 @@ from alfred.turns.inputs import notices
 from alfred.turns.inputs.loop import _expire_once, run_expiry_loop
 from alfred.turns.inputs.store import InputRequests, RequestRow
 from alfred.turns.tables import QueueItem
-from tests.helpers import ANA, DIOGO, add_queue_item
+from tests.helpers import ANA, DIOGO, add_queue_item, make_endings
 
 USERS = Users((DIOGO, ANA))
 QUESTION = _confirm_question("mcparr_add_media", {"title": "Dune"})
@@ -43,7 +43,7 @@ async def waiting(
     history = History(sessions)
     item = await add_queue_item(sessions, "chat", "add Dune", user="ana")
     await history.append("ana", "user", "add Dune", turn_id=item)
-    requests = InputRequests(sessions, history, USERS)
+    requests = InputRequests(sessions)
     request = await requests.park(
         item, "ana", tool="mcparr_add_media", arguments={"title": "Dune"}, question=QUESTION,
         state={"via": "confirm"}, turn={}, expires_at=expires_in,
@@ -55,7 +55,7 @@ async def waiting(
 async def test_nobody_answers(sessions: async_sessionmaker[AsyncSession]) -> None:
     requests, item = await waiting(sessions, timedelta(minutes=-1))
     outbox = Edits()
-    ended = await _expire_once(requests, outbox, USERS)
+    ended = await _expire_once(requests, make_endings(sessions, USERS), outbox, USERS)
     assert [r.queue_item_id for r in ended] == [item]
     async with sessions() as session:
         row = await session.get(QueueItem, item)
@@ -71,7 +71,7 @@ async def test_nobody_answers(sessions: async_sessionmaker[AsyncSession]) -> Non
 async def test_open_requests_are_left_alone(sessions: async_sessionmaker[AsyncSession]) -> None:
     requests, item = await waiting(sessions, timedelta(hours=1))
     outbox = Edits()
-    assert await _expire_once(requests, outbox, USERS) == []
+    assert await _expire_once(requests, make_endings(sessions, USERS), outbox, USERS) == []
     assert outbox.edits == []
 
 
@@ -100,7 +100,7 @@ async def test_loop_keeps_checking_after_a_failure(
 
     with pytest.raises(asyncio.CancelledError):
         await run_expiry_loop(
-            requests, outbox, USERS, 30,
+            requests, make_endings(sessions, USERS), outbox, USERS, 30,
             now=lambda: datetime(2026, 11, 15, 12, 0, 10, tzinfo=UTC), sleep=sleep,
         )  # fmt: skip
     assert sleeps == [20, 20]  # on the clock: the next :30

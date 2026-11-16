@@ -1,7 +1,7 @@
 """Question messages: their Telegram HTML and buttons, and their outcome.
 
 Written by alfred, never by the model; the title is already on the question
-(``alfred.turns.inputs.titles``). ``detail`` (a call's arguments as JSON) is
+(the turn kind's ``question_title``). ``detail`` (a call's arguments as JSON) is
 preformatted and cut, with a marker, so the whole message fits one Telegram
 message with its buttons and the outcome line added later.
 

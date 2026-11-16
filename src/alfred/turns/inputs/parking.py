@@ -20,16 +20,16 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from alfred.kernel.questions import InputNeed, Question
 from alfred.kernel.toolset import parse_arguments
-from alfred.kernel.turn import AskTurn, ReminderTurn, Resume, TurnInput
+from alfred.kernel.turn import Resume, TurnInput
 from alfred.kernel.users import User
 from alfred.llm.chat import ToolCall
 from alfred.turns.inputs.store import EndReason, RequestRow
-from alfred.turns.inputs.titles import reminder_label, title
 from alfred.turns.queue import Item
 
 log = logging.getLogger(__name__)
@@ -41,10 +41,13 @@ class Parking:
         requests: _Requests,
         questions: _QuestionOutbox,
         *,
+        endings: _Endings | None = None,
         expire_after: timedelta = timedelta(minutes=60),
     ) -> None:
         self._requests = requests
         self._questions = questions
+        # Records the turn of a question that couldn't be sent.
+        self._endings = endings
         self._expire_after = expire_after
 
     async def stopped_mid_call(self, item_id: int, user: str) -> bool:
@@ -87,11 +90,14 @@ class Parking:
         """The resumed turn ended, however it ended: its request is ``done``."""
         await self._requests.finish(request.id, request.user_name)
 
-    async def park(self, item: Item, turn: TurnInput, waiting: _Parked) -> None:
-        """The turn waits for its user: store the request, then send the question."""
+    async def park(self, item: Item, turn: TurnInput, waiting: _Parked, title: str) -> None:
+        """The turn waits for its user: store the request, then send the question.
+
+        ``title`` says what asked (the turn kind's ``question_title``).
+        """
         user = turn.user
         call = waiting.checkpoint.call
-        question = dataclasses.replace(waiting.need.question, title=_title(turn))
+        question = dataclasses.replace(waiting.need.question, title=title)
         arguments = parse_arguments(call.arguments)
         request_id = await self._requests.park(
             item.id,
@@ -108,7 +114,9 @@ class Parking:
         except Exception:
             # The user can't answer what they never saw.
             log.exception("queue item %s: could not send question %s", item.id, request_id)
-            await self._requests.cancel(request_id, user.name, "not_delivered")
+            ended = await self._requests.cancel(request_id, user.name, "not_delivered")
+            if self._endings is not None:
+                await self._endings.record(ended)
             return
         await self._requests.set_message(request_id, user.name, message_id)
         log.info(
@@ -146,7 +154,15 @@ class _Requests(Protocol):
 
     async def set_message(self, request_id: int, user: str, message_id: int) -> None: ...
 
-    async def cancel(self, request_id: int, user: str, reason: EndReason) -> object: ...
+    async def cancel(
+        self, request_id: int, user: str, reason: EndReason
+    ) -> Sequence[RequestRow]: ...
+
+
+class _Endings(Protocol):
+    """Records ended requests' turns (:class:`alfred.turns.inputs.endings.Endings`)."""
+
+    async def record(self, ended: Sequence[RequestRow]) -> None: ...
 
 
 class _QuestionOutbox(Protocol):
@@ -172,11 +188,3 @@ class _Parked(Protocol):
 
     @property
     def checkpoint(self) -> _Checkpoint: ...
-
-
-def _title(turn: TurnInput) -> str:
-    if isinstance(turn, ReminderTurn):
-        return title("reminder", reminder=reminder_label(turn.reminder_id, turn.text))
-    if isinstance(turn, AskTurn):
-        return title("ask", source=turn.source)
-    return title("chat")

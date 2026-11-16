@@ -18,11 +18,12 @@ from alfred.turns.inputs.loop import cancel_on_new_message
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.inputs.store import InputRequests, RequestRow
 from alfred.turns.intake import ChatIntake
+from alfred.turns.kinds import Kinds
 from alfred.turns.tables import InputRequest
 from alfred.turns.worker import Worker
 from tests.agent.turn_helpers import tool_rows
 from tests.fakes import ignore, no_typing
-from tests.helpers import ANA, DIOGO, FakeModel, calls, text
+from tests.helpers import ANA, DIOGO, FakeModel, calls, make_endings, text
 from tests.turns.test_worker import (
     FAST,
     LISBON,
@@ -82,12 +83,16 @@ class Waits(Setup):
     ) -> None:
         super().__init__(sessions, model, users=users)
         self.users = Users(users)
-        self.requests = InputRequests(sessions, self.history, self.users)
+        self.requests = InputRequests(sessions)
+        self.kinds = Kinds.default(LISBON)
+        self.endings = make_endings(sessions, self.users, self.history, self.kinds)
         self.questions = FakeQuestions(events)
         self.chat = ChatIntake(
             sessions,
             self.queue,
-            before_message=cancel_on_new_message(self.requests, self.questions, self.users),
+            before_message=cancel_on_new_message(
+                self.requests, self.endings, self.questions, self.users
+            ),
         )
         self.worker = self.new_worker(typing=typing, events=events)
 
@@ -101,9 +106,9 @@ class Waits(Setup):
             EventOutbox(events) if events is not None else self.outbox,
             QueueConfig(**FAST),
             users=self.users,
-            zone=LISBON,
+            kinds=self.kinds,
             typing=typing or no_typing,
-            parking=Parking(self.requests, self.questions),
+            parking=Parking(self.requests, self.questions, endings=self.endings),
             nudge=ignore,
         )
 

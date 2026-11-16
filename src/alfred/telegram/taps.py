@@ -4,7 +4,8 @@
 tap -> the sender is a configured user, in their private chat?   (else: log the ID, ignore)
     -> InputRequests.answer(request, option, user)
          answered  -> wake the worker; edit the message to the outcome, no buttons
-         not_open  -> "no longer open" (an expired one is ended and its message edited)
+         not_open  -> "no longer open" (an expired one is ended, its turn recorded
+                      and its message edited)
          not_yours -> refused; logged with the tapper's ID only
     -> always answer the callback, so the client stops showing it as loading
 ```
@@ -21,6 +22,7 @@ from aiogram.types import CallbackQuery
 
 from alfred.kernel.users import User, Users
 from alfred.telegram.questions import answered_line, ended_html, outcome_html, parse_callback
+from alfred.turns.inputs.endings import Endings
 from alfred.turns.inputs.store import InputRequests
 
 log = logging.getLogger(__name__)
@@ -34,11 +36,13 @@ class Taps:
         self,
         users: Users,
         requests: InputRequests,
+        endings: Endings,
         outbox: _QuestionEditor,
         notify: Callable[[], None],
     ) -> None:
         self._users = users
         self._requests = requests
+        self._endings = endings
         self._outbox = outbox
         # Wakes the worker (``QueueActivity.notify``).
         self._notify = notify
@@ -63,6 +67,8 @@ class Taps:
         if result.outcome == "not_open":
             await self._acknowledge(callback, _NO_LONGER_OPEN)
             ended = result.request
+            if result.expired and ended is not None:
+                await self._endings.record([ended])
             if result.expired and ended is not None and ended.telegram_message_id is not None:
                 html = ended_html(ended.question, "expired")
                 await self._outbox.edit_question(user, ended.telegram_message_id, html)

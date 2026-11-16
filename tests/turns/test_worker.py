@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alfred.agent import notices as agent_notices
 from alfred.agent.messages import strip_stamp
 from alfred.agent.prompts import _NO_REPLY
+from alfred.agent.results import TurnFailed, TurnResult
 from alfred.archive.summaries import Summaries
 from alfred.attachments import NewAttachment
 from alfred.attachments.tables import Attachment
@@ -35,13 +36,18 @@ from alfred.turns import notices as turns_notices
 from alfred.turns.config import QueueConfig
 from alfred.turns.inputs.parking import Parking
 from alfred.turns.intake import ChatIntake
-from alfred.turns.queue import Queue, busy
+from alfred.turns.kinds import Kinds
+from alfred.turns.kinds.ask import AskPayload
+from alfred.turns.kinds.chat import ChatPayload
+from alfred.turns.kinds.reminder import ReminderPayload
+from alfred.turns.queue import Item, Queue, busy
 from alfred.turns.tables import QueueItem
 from alfred.turns.worker import Worker
 from tests.fakes import NoInputRequests, NoQuestions, ignore, no_typing
 from tests.helpers import (
     ANA,
     DIOGO,
+    KINDS,
     FakeEmbedder,
     FakeModel,
     calls,
@@ -111,7 +117,7 @@ class Setup:
             cfg.queue,
             users=cfg.users,
             nudge=self._nudge,
-            zone=LISBON,
+            kinds=Kinds.default(LISBON),
             parking=Parking(NoInputRequests(), NoQuestions()),
             typing=no_typing,
         )
@@ -168,7 +174,7 @@ async def test_one_turn_at_a_time(sessions: async_sessionmaker[AsyncSession]) ->
     peak = 0
 
     class SlowAgent:
-        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
+        async def run(self, turn, framing, *, hidden_items=()):  # type: ignore[no-untyped-def]
             nonlocal running, peak
             running += 1
             peak = max(peak, running)
@@ -536,7 +542,7 @@ async def test_typing_while_owner_turn_runs(sessions: async_sessionmaker[AsyncSe
     events: list[str] = []
 
     class Agent_:
-        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
+        async def run(self, turn, framing, *, hidden_items=()):  # type: ignore[no-untyped-def]
             events.append("turn")
             from alfred.agent.results import TurnResult
 
@@ -783,7 +789,7 @@ async def test_repeating_reminder_turn_uses_the_items_due_time(
 
 async def test_reminder_unexpected_error(sessions: async_sessionmaker[AsyncSession]) -> None:
     class Broken:
-        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
+        async def run(self, turn, framing, *, hidden_items=()):  # type: ignore[no-untyped-def]
             raise RuntimeError("boom")
 
     s = Setup(sessions, FakeModel())
@@ -1153,3 +1159,92 @@ async def test_no_idle_marker_after_a_user_reset(
     await s.chat.enqueue_user("diogo", "hello again")
     await s.drain()
     assert s.outbox.sent == ["Bye", "— #41 archived —\n— new conversation #42 —", "Hi"]
+
+
+# --- delivery order: the exchange before the item, a notice after (design D3) -----
+
+
+class _Events:
+    """What the worker records, sends and finishes, in order."""
+
+    def __init__(self) -> None:
+        self.log: list[str] = []
+
+    async def append(self, user: str, kind: str, text_: str, **_: object) -> int:
+        self.log.append(f"record {kind}")
+        return len(self.log)
+
+    async def send(self, user: User, text_: str) -> None:
+        self.log.append(f"send {text_}")
+
+    async def finish(self, item_id: int, status: str, reason: str | None = None) -> None:
+        self.log.append(f"finish {status}")
+
+
+def _ordered_worker(events: _Events) -> Worker:
+    return Worker(
+        events,  # type: ignore[arg-type]
+        FakeModel([]),  # type: ignore[arg-type]
+        events,  # type: ignore[arg-type]
+        events,
+        QueueConfig(**FAST),
+        users=Users((DIOGO,)),
+        kinds=Kinds.default(LISBON),
+        parking=Parking(NoInputRequests(), NoQuestions()),
+        typing=no_typing,
+        nudge=ignore,
+        now=lambda: _DUE,
+    )
+
+
+def _queued(payload: object) -> Item:
+    now = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
+    return Item(7, "diogo", payload, 0, now, now)
+
+
+_FAILED = TurnFailed("boom", "It failed, sir.", retryable=False, side_effects_possible=False)
+_DUE = datetime(2026, 11, 9, 17, 0, tzinfo=UTC)
+
+
+async def test_deliver_ending_records_and_sends_before_finishing() -> None:
+    events = _Events()
+    worker = _ordered_worker(events)
+    item = _queued(ReminderPayload(12, _DUE, "call mum", "diogo"))
+    await worker._turn_failed(item, KINDS.by_tag("reminder").turn(item, DIOGO), _FAILED)
+    notice = reminders_notices.reminder("sir", "call mum", _DUE.astimezone(LISBON), _DUE.date())
+    assert events.log == [
+        "record reminder",
+        "record reminder_reply",
+        f"send {notice}",
+        "finish failed",
+    ]
+
+
+async def test_tell_ending_finishes_before_sending() -> None:
+    events = _Events()
+    worker = _ordered_worker(events)
+    item = _queued(ChatPayload("hi"))
+    await worker._turn_failed(item, KINDS.by_tag("chat").turn(item, DIOGO), _FAILED)
+    assert events.log == ["finish failed", "send It failed, sir."]
+
+
+async def test_silent_ending_only_finishes() -> None:
+    events = _Events()
+    worker = _ordered_worker(events)
+    item = _queued(AskPayload("backup", "done?"))
+    await worker._turn_failed(item, KINDS.by_tag("ask").turn(item, DIOGO), _FAILED)
+    assert events.log == ["finish failed"]
+
+
+async def test_a_reply_is_recorded_and_sent_before_finishing() -> None:
+    events = _Events()
+    worker = _ordered_worker(events)
+    item = _queued(AskPayload("backup", "done?"))
+    turn = KINDS.by_tag("ask").turn(item, DIOGO)
+    await worker._complete(item, turn, TurnResult("All done.", False, False))
+    assert events.log == [
+        "record ask_prompt",
+        "record ask_reply",
+        "send [backup] All done.",
+        "finish done",
+    ]

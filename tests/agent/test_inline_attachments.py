@@ -26,6 +26,7 @@ from tests.helpers import (
     DIOGO,
     FakeModel,
     FakeStore,
+    FramingAgent,
     agent_settings,
     image_file,
     make_config,
@@ -59,7 +60,7 @@ def make(
     **settings: object,
 ) -> Agent:
     config = SETTINGS.model_copy(update=settings)
-    return Agent(
+    return FramingAgent(
         model,
         History(sessions),
         ToolCallLog(sessions),
@@ -95,7 +96,8 @@ async def test_photo_question(sessions: async_sessionmaker[AsyncSession]) -> Non
         sessions, "what's the total?", [image_file(name="receipt.jpg")], store, [RECEIPT]
     )
     model = FakeModel([text("12.40 EUR, sir.")])
-    await make(sessions, model, store).run(ChatTurn("what's the total?", item, user=DIOGO))
+    turn = ChatTurn("what's the total?", item, user=DIOGO)
+    await make(sessions, model, store).run(turn)
     text_part, image_part = last_user(model)["content"]
     assert strip_stamp(text_part["text"]) == (
         'what\'s the total? [attachment #1: image "receipt.jpg"]'
@@ -110,7 +112,8 @@ async def test_text_pdf(sessions: async_sessionmaker[AsyncSession]) -> None:
     pages = [INVOICE_P1, *(f"page {n} body text here" for n in range(2, 13))]
     item, _ = await owner_with_files(sessions, "", [pdf_file(pages)], store, [text_pdf(pages)])
     model = FakeModel([text("Filed.")])
-    await make(sessions, model, store).run(ChatTurn("", item, user=DIOGO))
+    turn = ChatTurn("", item, user=DIOGO)
+    await make(sessions, model, store).run(turn)
     content = last_user(model)["content"]
     assert isinstance(content, str)  # no image part
     assert strip_stamp(content) == (
@@ -124,7 +127,8 @@ async def test_long_first_page_is_cut(sessions: async_sessionmaker[AsyncSession]
     long = "word " * 100
     item, _ = await owner_with_files(sessions, "", [pdf_file([long])], store, [b"%PDF"])
     model = FakeModel([text("ok")])
-    await make(sessions, model, store, first_page_chars=50).run(ChatTurn("", item, user=DIOGO))
+    turn = ChatTurn("", item, user=DIOGO)
+    await make(sessions, model, store, first_page_chars=50).run(turn)
     content = strip_stamp(last_user(model)["content"])
     assert content.endswith(
         "--- page 1 ---\n" + long.strip()[:50]
@@ -138,7 +142,8 @@ async def test_scanned_pdf(sessions: async_sessionmaker[AsyncSession]) -> None:
         sessions, "", [pdf_file(["3"], name="letter.pdf")], store, [scanned_pdf(1, (600, 800))]
     )
     model = FakeModel([text("A letter.")])
-    await make(sessions, model, store).run(ChatTurn("", item, user=DIOGO))
+    turn = ChatTurn("", item, user=DIOGO)
+    await make(sessions, model, store).run(turn)
     text_part, image_part = last_user(model)["content"]
     assert strip_stamp(text_part["text"]) == '[attachment #1: PDF "letter.pdf", 1 page, scanned]'
     assert image_size(image_part) == (1152, 1536)
@@ -151,7 +156,8 @@ async def test_follow_up_question(sessions: async_sessionmaker[AsyncSession]) ->
     await history.append("diogo", "assistant", "12.40 EUR, sir.")
     item, _ = await owner_with_files(sessions, "and the date on it?", [])
     model = FakeModel([text("9 November.")])
-    await make(sessions, model, store).run(ChatTurn("and the date on it?", item, user=DIOGO))
+    turn = ChatTurn("and the date on it?", item, user=DIOGO)
+    await make(sessions, model, store).run(turn)
     users = [strip_stamp(m["content"]) for m in model.requests[0][0] if m["role"] == "user"]
     assert users == ["what's the total? [attachment #1: image]", "and the date on it?"]
     assert images_in(model) == 0
@@ -165,7 +171,8 @@ async def test_inline_window_of_two(sessions: async_sessionmaker[AsyncSession]) 
         sessions, "and this?", [image_file("attachments/b")], store, [RECEIPT]
     )
     model = FakeModel([text("ok")])
-    await make(sessions, model, store, inline_turns=2).run(ChatTurn("and this?", item, user=DIOGO))
+    turn = ChatTurn("and this?", item, user=DIOGO)
+    await make(sessions, model, store, inline_turns=2).run(turn)
     assert images_in(model) == 2
 
 
@@ -186,7 +193,8 @@ async def test_pdf_on_a_text_only_brain(sessions: async_sessionmaker[AsyncSessio
     store = FakeStore()
     item, _ = await owner_with_files(sessions, "", [pdf_file([INVOICE_P1])], store, [b"%PDF"])
     model = FakeModel([text("ok")])
-    await make(sessions, model, store, vision=False).run(ChatTurn("", item, user=DIOGO))
+    turn = ChatTurn("", item, user=DIOGO)
+    await make(sessions, model, store, vision=False).run(turn)
     assert strip_stamp(last_user(model)["content"]) == (
         '[attachment #1: PDF "invoice.pdf", 1 page, text]\n--- page 1 ---\n' + INVOICE_P1
     )
@@ -200,7 +208,8 @@ async def test_store_failure_keeps_the_turn_going(
     store.failing = True
     model = FakeModel([text("I can't see it right now, sir.")])
     with caplog.at_level(logging.WARNING):
-        result = await make(sessions, model, store).run(ChatTurn("total?", item, user=DIOGO))
+        turn = ChatTurn("total?", item, user=DIOGO)
+        result = await make(sessions, model, store).run(turn)
     assert result.reply == "I can't see it right now, sir."
     assert strip_stamp(last_user(model)["content"]) == (
         "total? [attachment #1: image (not available right now)]"

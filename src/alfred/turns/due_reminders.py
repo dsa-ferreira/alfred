@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alfred.reminders.store import Reminders
 from alfred.times import seconds_to_next_check
-from alfred.turns.payloads import ReminderPayload
+from alfred.turns.kinds.reminder import ReminderPayload
 from alfred.turns.queue import Queue
 
 log = logging.getLogger(__name__)

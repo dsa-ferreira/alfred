@@ -130,7 +130,7 @@ async def test_notify_while_ai_busy(env: Env) -> None:
     started, release = asyncio.Event(), asyncio.Event()
 
     class BusyAgent:
-        async def run(self, turn, *, hidden_items=()):  # type: ignore[no-untyped-def]
+        async def run(self, turn, framing, *, hidden_items=()):  # type: ignore[no-untyped-def]
             started.set()
             await release.wait()
             return TurnResult("done", False, False)

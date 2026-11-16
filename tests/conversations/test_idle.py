@@ -237,15 +237,13 @@ async def test_a_waiting_turn_holds_idle_close_until_it_expires(
 ) -> None:
     """A turn waiting for its user's answer is busy (change add-user-input-requests)."""
     from alfred.kernel.questions import Option, Question
-    from alfred.kernel.users import Users
     from alfred.turns.inputs.store import InputRequests
-    from tests.helpers import ANA, DIOGO
 
     clock = Clock()
     idle = closer(sessions, clock)
     cid = await wrote(sessions, "ana", clock.now - timedelta(hours=7))
     item = await add_queue_item(sessions, user="ana")
-    requests = InputRequests(sessions, History(sessions), Users((DIOGO, ANA)))
+    requests = InputRequests(sessions)
     await requests.park(
         item, "ana", tool="t", arguments={}, question=Question("?", (Option("Yes", True),)),
         state={}, turn={}, expires_at=timedelta(minutes=-1),

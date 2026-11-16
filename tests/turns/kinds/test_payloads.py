@@ -8,13 +8,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from alfred.turns.payloads import (
-    AskPayload,
-    ChatPayload,
-    Payload,
-    ReminderPayload,
-    payload_from_json,
-)
+from alfred.turns.kinds import payload_from_json, tag_of
+from alfred.turns.kinds.ask import AskPayload
+from alfred.turns.kinds.chat import ChatPayload
+from alfred.turns.kinds.reminder import ReminderPayload
+
+Payload = ChatPayload | AskPayload | ReminderPayload
 
 DUE = datetime(2026, 11, 16, 8, 0, tzinfo=ZoneInfo("Europe/Lisbon"))
 
@@ -32,11 +31,16 @@ DUE = datetime(2026, 11, 16, 8, 0, tzinfo=ZoneInfo("Europe/Lisbon"))
 def test_round_trip(payload: Payload) -> None:
     # Through text, as JSONB stores it.
     stored = json.loads(json.dumps(payload.to_json()))
-    assert payload_from_json(payload.kind, stored) == payload
+    assert payload_from_json(tag_of(payload), stored) == payload
 
 
-def test_kinds() -> None:
-    assert (ChatPayload.kind, AskPayload.kind, ReminderPayload.kind) == ("chat", "ask", "reminder")
+def test_tags() -> None:
+    tags = [
+        tag_of(ChatPayload("")),
+        tag_of(AskPayload("s", "p")),
+        tag_of(ReminderPayload(1, DUE, "x", "d")),
+    ]
+    assert tags == ["chat", "ask", "reminder"]
 
 
 def test_due_time_keeps_its_instant() -> None:

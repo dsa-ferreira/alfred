@@ -30,7 +30,7 @@ from alfred.conversations.entry_files import link, refs_by_entry
 from alfred.conversations.tables import Conversation, Entry, EntryAttachment, EntryOrigin
 from alfred.conversations.transcript import Recalled, RecalledLookup, recalled_of
 
-_EntryKind = Literal[
+EntryKind = Literal[
     "user", "assistant", "notice", "ask_prompt", "ask_reply", "reminder", "reminder_reply"
 ]
 # The first entry of something that arrives without the user: a new one may
@@ -114,7 +114,7 @@ class History:
     async def append(
         self,
         user: str,
-        kind: _EntryKind,
+        kind: EntryKind,
         text_: str,
         source: str | None = None,
         turn_id: int | None = None,

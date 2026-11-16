@@ -826,16 +826,14 @@ async def test_other_parked_turns_are_left_out(
 ) -> None:
     """An entry of a turn waiting for its user's answer has no reply yet (0.16.1)."""
     from alfred.kernel.questions import Option, Question
-    from alfred.kernel.users import Users
     from alfred.turns.inputs.store import InputRequests
-    from tests.helpers import ANA, DIOGO
 
     history = History(sessions)
     await history.append("ana", "user", "hello")
     await history.append("ana", "assistant", "Good evening.")
     parked = await add_queue_item(sessions, "chat", "add Alien", user="ana")
     await history.append("ana", "user", "add Alien", turn_id=parked)
-    requests = InputRequests(sessions, history, Users((DIOGO, ANA)))
+    requests = InputRequests(sessions)
     request = await requests.park(
         parked, "ana", tool="t", arguments={}, question=Question("?", (Option("Yes", True),)),
         state={}, turn={}, expires_at=timedelta(hours=1),
