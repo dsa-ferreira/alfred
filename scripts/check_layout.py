@@ -8,9 +8,13 @@ Parses ``src/alfred/`` and ``migrations/`` and reports, as ``path:line: message`
    then ``_`` ones;
 4. class order: attributes, dunders, public methods, then ``_`` methods.
 
-An item may sit out of order when Python needs it there: it is used at import
-time (a base class, a decorator, a default value, a module-level call) by an
-item placed after it, and nothing that doesn't need it stands in between.
+Python's definition order wins over the sections:
+
+- an item that a later item needs at import time (a base class, a decorator,
+  a default value, a module-level call) may sit in that item's section,
+  directly above it;
+- a variable that needs a public class or function at import time (such as
+  ``X = A | B``) belongs to the public section, below what it needs.
 
 Usage: ``python scripts/check_layout.py [root]`` (root defaults to the repo).
 Exits 1 when it finds a violation. Uses only the standard library.
@@ -239,6 +243,15 @@ _CLASS_SECTIONS = ("class attribute", "dunder method", "public method", "_ metho
 
 
 def _module_order(tree: ast.Module) -> list[tuple[int, str]]:
+    return _order_problems(module_items(tree), pull_down=True)
+
+
+def _class_order(cls: ast.ClassDef) -> list[tuple[int, str]]:
+    return _order_problems(class_items(cls), pull_down=False)
+
+
+def module_items(tree: ast.Module) -> list[_Item]:
+    """The module's top-level items that have a section, in source order."""
     lazy = _has_future_annotations(tree)
     items = []
     for node in tree.body:
@@ -246,10 +259,11 @@ def _module_order(tree: ast.Module) -> list[tuple[int, str]]:
         if rank is not None:
             names = _bound_names(node)
             items.append(_Item(node, names, rank, _MODULE_SECTIONS[rank], _needs(node, lazy)))
-    return _order_problems(items)
+    return items
 
 
-def _class_order(cls: ast.ClassDef) -> list[tuple[int, str]]:
+def class_items(cls: ast.ClassDef) -> list[_Item]:
+    """The class body's items that have a section, in source order."""
     items = []
     for node in cls.body:
         rank = _class_rank(node)
@@ -258,7 +272,38 @@ def _class_order(cls: ast.ClassDef) -> list[tuple[int, str]]:
             # Class bodies resolve names as they run, so treat every lookup
             # in an attribute or decorator as needed now.
             items.append(_Item(node, names, rank, _CLASS_SECTIONS[rank], _needs(node, False)))
-    return _order_problems(items)
+    return items
+
+
+def effective_ranks(items: list[_Item], pull_down: bool) -> tuple[list[int], list[int]]:
+    """Each item's section once Python's definition order is applied.
+
+    Returns (down, effective). ``down``: with ``pull_down``, a variable that
+    needs a public class or function at import time belongs to the public
+    section, below what it needs. ``effective``: an item that a later item
+    needs at import time moves up to that item's section (it must then sit
+    directly above it).
+    """
+    down: list[int] = []
+    for index, item in enumerate(items):
+        rank = item.rank
+        if pull_down and rank == 0:
+            for earlier in range(index):
+                if items[earlier].rank <= 1 and _provides(items[earlier], item):
+                    rank = max(rank, down[earlier])
+        down.append(rank)
+    effective = list(down)
+    for index in reversed(range(len(items))):
+        for user in first_users(items, index):
+            effective[index] = min(effective[index], effective[user])
+    return down, effective
+
+
+def first_users(items: list[_Item], index: int) -> list[int]:
+    """Indexes of the later items that need ``items[index]`` at import time."""
+    return [
+        later for later in range(index + 1, len(items)) if _provides(items[index], items[later])
+    ]
 
 
 def _module_rank(node: ast.stmt) -> int | None:
@@ -279,42 +324,45 @@ def _class_rank(node: ast.stmt) -> int | None:
     return None
 
 
-def _order_problems(items: list[_Item]) -> list[tuple[int, str]]:
-    """Report each item placed after one from a later section.
+def _provides(item: _Item, user: _Item) -> bool:
+    return any(name in user.needs for name in item.names)
 
-    An earlier item may sit above a later-section item when an item between
-    them (or the later item itself) needs it at import time, directly or
-    through other items: Python needs it defined by then.
+
+def _order_problems(items: list[_Item], pull_down: bool) -> list[tuple[int, str]]:
+    """Report items below a later section's item, and helpers placed too high.
+
+    An item that a later item needs at import time may sit in that item's
+    section, directly above it (other such helpers may stand in between).
     """
+    down, effective = effective_ranks(items, pull_down)
     problems = []
+    highest: int | None = None
     for index, item in enumerate(items):
-        for position, earlier in enumerate(items[:index]):
-            if earlier.rank <= item.rank:
-                continue
-            users = items[position + 1 : index + 1]
-            if not any(id(earlier) in _needed_by(user, items[:index]) for user in users):
-                problems.append(
-                    (
-                        item.node.lineno,
-                        f"{item.label} {_name(item)} is below {earlier.label} "
-                        f"{_name(earlier)} (line {earlier.node.lineno})",
-                    )
+        if highest is not None and effective[index] < effective[highest]:
+            earlier = items[highest]
+            problems.append(
+                (
+                    item.node.lineno,
+                    f"{item.label} {_name(item)} is below {earlier.label} "
+                    f"{_name(earlier)} (line {earlier.node.lineno})",
                 )
-                break
+            )
+        elif highest is None or effective[index] >= effective[highest]:
+            highest = index
+    for index, item in enumerate(items):
+        if effective[index] == down[index]:
+            continue
+        user = first_users(items, index)[0]
+        between = range(index + 1, user)
+        if any(effective[other] == down[other] for other in between):
+            problems.append(
+                (
+                    item.node.lineno,
+                    f"{item.label} {_name(item)} is above {_name(items[user])} only "
+                    f"because that needs it; move it directly above it",
+                )
+            )
     return problems
-
-
-def _needed_by(item: _Item, earlier: list[_Item]) -> set[int]:
-    """The earlier items ``item`` needs at import time, directly or not."""
-    needed: set[int] = set()
-    pending = set(item.needs)
-    while pending:
-        name = pending.pop()
-        for candidate in earlier:
-            if name in candidate.names and id(candidate) not in needed:
-                needed.add(id(candidate))
-                pending |= candidate.needs
-    return needed
 
 
 def _name(item: _Item) -> str:
@@ -344,6 +392,7 @@ def _needs(node: ast.stmt, lazy_annotations: bool) -> set[str]:
         for statement in node.body:
             if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
                 roots += statement.decorator_list + statement.args.defaults
+                roots += [d for d in statement.args.kw_defaults if d is not None]
             else:
                 roots.append(statement)
     elif isinstance(node, ast.TypeAlias):

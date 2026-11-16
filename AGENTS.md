@@ -91,7 +91,9 @@ class
 - **Python's definition order wins.** A `_` item that a later item needs at
   import time (a base class, a decorator, a default value, a
   `default_factory`, something called at module level) goes directly above
-  its first such user, not in the internal section.
+  its first such user, not in the internal section. A variable that needs a
+  public class or function at import time (`X = A | B`) goes in the public
+  section, below what it needs.
 - A method is public when something outside its class calls it, including
   through a protocol (`Toolset.open`, `call`, `resume`). Method names follow
   the same `_` rule.
