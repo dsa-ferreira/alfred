@@ -11,7 +11,7 @@ commit(s). No task changes what a test asserts.
 - [x] 1.4 Rename methods by the same rule where something outside the class calls them, or nothing does (review by hand, design D1); verify `make test` is green
 - [x] 1.5 Reorder every module and class (design D1), only moving code in this commit; verify check rules 3-4 pass and `git diff --color-moved` shows only moves
 - [x] 1.6 Add `scripts/check_layout.py` to `make lint`; verify `make lint` passes and fails after a deliberate violation, which is then removed
-- [ ] 1.7 Add `.git-blame-ignore-revs` with the hashes of the rename and reorder commits and document `git config blame.ignoreRevsFile .git-blame-ignore-revs` in `AGENTS.md`; verify `git blame` on a reordered file shows the original commits
+- [x] 1.7 Add `.git-blame-ignore-revs` with the hashes of the rename and reorder commits and document `git config blame.ignoreRevsFile .git-blame-ignore-revs` in `AGENTS.md`; verify `git blame` on a reordered file shows the original commits
 
 ## 2. Comment cleanup
 

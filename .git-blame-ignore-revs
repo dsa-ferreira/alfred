@@ -1,0 +1,9 @@
+# Commits that only rename or move code. Use with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# refactor: rename top-level names to match who uses them
+4f9e09d6ac84c2c51105707c9bbdc7f50bd958ab
+# refactor: rename methods to match who calls them
+ca57c40fa5025adcc65d5d0a8f204c0924a15678
+# refactor: reorder modules and classes to the layout rule
+cc15c2847caed588fd170be7eef87878d7134cc4

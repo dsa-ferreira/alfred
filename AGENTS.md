@@ -104,6 +104,11 @@ class, or which public item is the main one; review covers those.
 
 ## Commits
 
+Commits that only rename, move or reword code are listed in
+`.git-blame-ignore-revs`; add yours there. Run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
+skips them.
+
 Before every commit, follow the `commit-messages` skill.
 
 ## MCP SDK v2 client notes (checked against `mcp` 2.3.0)
